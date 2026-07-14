@@ -20,17 +20,41 @@ See `README.md` for the product vision and glossary.
 
 ```
 src/
-  main.cpp        GUI entry point (Qt Widgets)
-  greeting.{h,cpp} Qt-free core logic
-tests/
-  test_greeting.cpp GoogleTest unit tests
-CMakeLists.txt    single top-level build file
+  core/                 pokedex_core — Qt-free, unit-tested; layered:
+    domain/             entities & value objects, pure logic (Pokémon,
+                          Region, Card, CardReference, CardCopy, Condition,
+                          Binder, Wishlist)
+    storage/            local-file persistence (CSV/JSON + media cache),
+                          workspace-directory resolution, repositories
+    app/                use-case services orchestrating domain + storage
+  gui/                  pokedex_tcg — Qt Widgets only; depends on core
+    main.cpp            GUI entry point
+    views/              one widget/window per screen
+    models/             Qt item models adapting core → widgets
+tests/                  mirrors src/core (domain/ storage/ app/)
+data/                   seed National Pokédex reference catalog shipped
+                          with the app (distinct from the user's workspace)
+docs/                   design notes / decisions (optional)
+CMakeLists.txt          single top-level build file
 ```
+
+Headers are **co-located** with their `.cpp` (no separate `include/`). The
+include root is `src/`, so includes read namespaced:
+`#include "core/domain/pokemon.h"`, `#include "gui/views/..."`.
+
+Folders are created as real code lands; the tree above is the target
+shape, not a scaffold to pre-create. `greeting.{h,cpp}` are bootstrap
+placeholders, removed once the first real domain type exists.
 
 **Architecture rule:** keep non-GUI logic in the Qt-free `pokedex_core`
 library so it stays unit-testable headlessly. The GUI layer (`pokedex_tcg`)
 depends on `pokedex_core` and Qt; tests depend only on `pokedex_core`. Do not
 pull Qt into the core library or into tests.
+
+**Layering rule (within core):** `domain/` depends on nothing; `storage/`
+and `app/` depend on `domain/`; `app/` may use `storage/`. `domain/` must
+never include from `storage/` or `app/`. Enforced by review — `pokedex_core`
+is a single library, layered by folder rather than separate targets.
 
 ## Common commands
 
