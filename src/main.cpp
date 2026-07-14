@@ -6,8 +6,6 @@
 
 #include <QString>
 
-#include "greeting.h"
-
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
 
@@ -15,7 +13,7 @@ int main(int argc, char *argv[]) {
     window.setWindowTitle("Pokedex TCG");
     window.resize(360, 160);
 
-    auto *label = new QLabel(QString::fromStdString(pokedex::greeting()));
+    auto *label = new QLabel(QStringLiteral("Hello, World! — Pokedex TCG"));
     label->setAlignment(Qt::AlignCenter);
     QFont font = label->font();
     font.setPointSize(20);
