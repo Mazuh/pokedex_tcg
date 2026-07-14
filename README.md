@@ -100,11 +100,39 @@ so my data is accessible and not locked by this app.
 
 ### OS Requirements
 
-TODO.
+macOS with [Homebrew](https://brew.sh) and Apple Clang (from Xcode Command
+Line Tools: `xcode-select --install`).
+
+Install the build dependencies:
+
+```sh
+brew install cmake ninja qt
+```
+
+- **cmake** — build system generator
+- **ninja** — fast build backend
+- **qt** — Qt 6 Widgets, the GUI toolkit
+
+Apple Clang provides the C++23 compiler. GoogleTest is fetched automatically
+by CMake, so there is nothing to install for it.
 
 ### Local Setup
 
-TODO.
+From the project root:
+
+```sh
+# Configure (points CMake at the Homebrew Qt install)
+cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH="$(brew --prefix qt)"
+
+# Build the app and the tests
+cmake --build build
+
+# Run the visual Hello World
+./build/pokedex_tcg
+
+# Run the tests
+ctest --test-dir build --output-on-failure
+```
 
 ## License and Legal Disclaimer
 
