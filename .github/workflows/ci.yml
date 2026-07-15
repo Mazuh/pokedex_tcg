@@ -32,7 +32,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build qt6-base-dev
+          sudo apt-get install -y cmake ninja-build qt6-base-dev libsqlite3-dev
 
       - name: Configure (macOS)
         if: runner.os == 'macOS'

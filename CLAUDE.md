@@ -12,6 +12,10 @@ See `README.md` for the product vision and glossary.
 
 - **Language:** C++23 (Apple Clang)
 - **GUI:** Qt 6 Widgets
+- **Storage:** SQLite — the **sole** persistence format (system libsqlite3 via
+  `find_package(SQLite3)`, linked PRIVATE into `pokedex_core`; the C API is used
+  directly, never Qt SQL, so core stays Qt-free). No CSV/JSON: they are not a
+  storage format and not an export target — out of scope.
 - **Build:** CMake + Ninja
 - **Tests:** GoogleTest (fetched via CMake `FetchContent`) run through CTest
 - **CI:** GitHub Actions matrix on `macos-latest` (Apple Clang) and
@@ -29,7 +33,7 @@ src/
                           CardCopy, Wishlist, CardReference, CardCondition,
                           CardOwnership); inferred (CollectionStatus,
                           CardBinderEntry) — see "Domain model" below
-    storage/            local-file persistence (CSV/JSON + media cache),
+    storage/            local-file persistence (SQLite DB + media cache),
                           workspace-directory resolution, repositories
     app/                use-case services orchestrating domain + storage
   gui/                  pokedex_tcg — Qt Widgets only; depends on core
@@ -48,9 +52,13 @@ include root is `src/`, so includes read namespaced:
 `#include "core/domain/pokemon.h"`, `#include "gui/views/..."`.
 
 Folders are created as real code lands; the tree above is the target
-shape, not a scaffold to pre-create. `domain/` is now populated; `storage/`
-and `app/` land as their code is written. (The `greeting.{h,cpp}` bootstrap
-placeholders were removed once real domain types existed.)
+shape, not a scaffold to pre-create. `domain/` is populated; `storage/` and
+`app/` now hold their first slice (workspace resolution, the SQLite `Database`
+wrapper + schema/migrations, and the `install_service` that creates a
+workspace) — the per-root repositories and their enum/timestamp codecs are the
+next slice. `gui/views/` holds the first-run setup dialog. (The
+`greeting.{h,cpp}` bootstrap placeholders were removed once real domain types
+existed.)
 
 **Architecture rule:** keep non-GUI logic in the Qt-free `pokedex_core`
 library so it stays unit-testable headlessly. The GUI layer (`pokedex_tcg`)

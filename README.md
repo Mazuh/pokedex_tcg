@@ -45,9 +45,13 @@ cloud services, so I can manage my private collection in my
 own machine with optional cloud storage backup,
 without vendor lockin of paid services, nor proprietary formats,
 nor personal data concerns.
-- As a operational system user, I want to inspect my storage
-in free formats like CSV, JSON and multimedia cache folders,
-so my data is accessible and not locked by this app.
+- As a operational system user, I want my storage kept in an open,
+non-proprietary SQLite database (inspectable with the `sqlite3` CLI or
+DB Browser for SQLite) alongside a multimedia cache folder, so my data is
+accessible and not locked by this app.
+- As a new user, on first launch I want to choose where my collection
+workspace folder lives (a local directory, or one inside iCloud, Dropbox,
+or a NAS), so the app can create its SQLite database there and remember it.
 
 ### Entities and Glossary
 

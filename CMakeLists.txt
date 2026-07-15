@@ -38,10 +38,20 @@ endif()
 
 # --- Core library (Qt-free, unit-testable) -----------------------------------
 # All non-GUI logic lives here so it can be tested headlessly in CI. The domain
-# layer is currently header-only, so pokedex_core is an INTERFACE library; it
-# becomes STATIC once storage/ and app/ contribute compiled sources.
-add_library(pokedex_core INTERFACE)
-target_include_directories(pokedex_core INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+# layer is header-only; storage/ and app/ contribute compiled sources, so
+# pokedex_core is a STATIC library. SQLite is linked PRIVATE — it is an
+# implementation detail that never appears in the public headers, keeping the
+# library Qt- and SQLite-agnostic at its interface.
+find_package(SQLite3 REQUIRED)
+
+add_library(pokedex_core STATIC
+    src/core/storage/workspace.cpp
+    src/core/storage/database.cpp
+    src/core/app/install_service.cpp
+)
+target_include_directories(pokedex_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(pokedex_core
+    PRIVATE pokedex_warnings SQLite3::SQLite3)
 
 # --- GUI application (Qt 6 Widgets) ------------------------------------------
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
@@ -50,6 +60,7 @@ qt_standard_project_setup()
 
 qt_add_executable(pokedex_tcg
     src/main.cpp
+    src/gui/views/first_run_dialog.cpp
 )
 target_link_libraries(pokedex_tcg PRIVATE pokedex_core pokedex_warnings Qt6::Widgets)
 
@@ -87,6 +98,9 @@ if(BUILD_TESTING)
         tests/domain/wishlist_test.cpp
         tests/domain/pokemon_test.cpp
         tests/domain/model_smoke_test.cpp
+        tests/storage/workspace_test.cpp
+        tests/storage/database_test.cpp
+        tests/app/install_service_test.cpp
     )
     target_link_libraries(pokedex_tests PRIVATE pokedex_core pokedex_warnings GTest::gtest_main)
 
