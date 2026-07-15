@@ -134,6 +134,16 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+**Quick build & run** — a `dev.sh` wrapper handles the CMake/Ninja steps
+(auto-configuring on first use) so day-to-day iteration is one command:
+
+```sh
+./dev.sh          # build the app and run it (default)
+./dev.sh test     # build and run the test suite
+./dev.sh build    # build only
+./dev.sh clean    # delete the build dir (forces a fresh configure)
+```
+
 ## License and Legal Disclaimer
 
 The original source code of this project
