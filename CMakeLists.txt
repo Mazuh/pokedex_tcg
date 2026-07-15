@@ -36,6 +36,34 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     endif()
 endif()
 
+# --- Sanitizers --------------------------------------------------------------
+# Opt-in Address + UndefinedBehavior sanitizers, run as a dedicated CI gate.
+# Because this app is developed largely by AI, these deterministic runtime
+# checks are a cheap, high-value backstop: they turn the tests we already run
+# into detectors for use-after-free, leaks, buffer overruns, and C++ UB — the
+# exact class of bugs a green GoogleTest run says nothing about, and the exact
+# risk surface of using the SQLite C API (raw handles, manual finalize/close)
+# directly. -fno-sanitize-recover=all makes UBSan abort with a nonzero exit so
+# CI actually fails on a violation rather than only printing. Leak detection is
+# Linux-only (Apple Clang's ASan does not report leaks at exit), so the CI job
+# runs this on Ubuntu.
+#
+# Carried as an INTERFACE target rather than directory-wide flags so only our
+# own code is instrumented — NOT the fetched GoogleTest, whose internal UB
+# would otherwise abort the gate on a third-party defect. Linked into every
+# first-party target (core, tests, GUI) so a full ASan build links cleanly; CI
+# builds only the test target, so the Qt GUI is never compiled under the
+# sanitizer there.
+option(POKEDEX_ASAN "Build with Address + UndefinedBehavior sanitizers" OFF)
+add_library(pokedex_sanitizers INTERFACE)
+if(POKEDEX_ASAN)
+    target_compile_options(pokedex_sanitizers INTERFACE
+        -fsanitize=address,undefined -fno-omit-frame-pointer
+        -fno-sanitize-recover=all)
+    target_link_options(pokedex_sanitizers INTERFACE
+        -fsanitize=address,undefined)
+endif()
+
 # --- Core library (Qt-free, unit-testable) -----------------------------------
 # All non-GUI logic lives here so it can be tested headlessly in CI. The domain
 # layer is header-only; storage/ and app/ contribute compiled sources, so
@@ -51,7 +79,7 @@ add_library(pokedex_core STATIC
 )
 target_include_directories(pokedex_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(pokedex_core
-    PRIVATE pokedex_warnings SQLite3::SQLite3)
+    PRIVATE pokedex_warnings pokedex_sanitizers SQLite3::SQLite3)
 
 # --- GUI application (Qt 6 Widgets) ------------------------------------------
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
@@ -62,7 +90,7 @@ qt_add_executable(pokedex_tcg
     src/main.cpp
     src/gui/views/first_run_dialog.cpp
 )
-target_link_libraries(pokedex_tcg PRIVATE pokedex_core pokedex_warnings Qt6::Widgets)
+target_link_libraries(pokedex_tcg PRIVATE pokedex_core pokedex_warnings pokedex_sanitizers Qt6::Widgets)
 
 # --- Tests (GoogleTest + CTest) ----------------------------------------------
 include(CTest)
@@ -102,8 +130,12 @@ if(BUILD_TESTING)
         tests/storage/database_test.cpp
         tests/app/install_service_test.cpp
     )
-    target_link_libraries(pokedex_tests PRIVATE pokedex_core pokedex_warnings GTest::gtest_main)
+    target_link_libraries(pokedex_tests PRIVATE pokedex_core pokedex_warnings pokedex_sanitizers GTest::gtest_main)
 
     include(GoogleTest)
-    gtest_discover_tests(pokedex_tests)
+    # PRE_TEST defers test enumeration to `ctest` time. Under POKEDEX_ASAN the
+    # default POST_BUILD mode would run the instrumented binary during the build
+    # step, where the sanitizer's runtime options (leak/symbolizer config) are
+    # not set — a report there would fail the build with an unhelpful trace.
+    gtest_discover_tests(pokedex_tests DISCOVERY_MODE PRE_TEST)
 endif()

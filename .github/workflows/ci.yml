@@ -11,19 +11,32 @@ concurrency:
 
 jobs:
   build-and-test:
-    name: build-and-test (${{ matrix.os }})
+    name: build-and-test (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        # macOS uses Apple Clang; Ubuntu uses GCC. Building on both exposes the
+        # code to two compilers so conformance issues one accepts, the other
+        # catches. The app ships on macOS only — the Ubuntu leg is a portability
+        # and second-compiler gate, not a Linux support target.
+        #
+        # The third entry reuses the Ubuntu leg's steps but flips on the
+        # Address + UndefinedBehavior sanitizers: a deterministic runtime gate
+        # for use-after-free, leaks, overruns, and UB that a green test run
+        # hides. It runs on Ubuntu because LeakSanitizer only reports leaks at
+        # exit on Linux (Apple Clang does not).
+        include:
+          - os: macos-latest
+            label: macos
+          - os: ubuntu-latest
+            label: ubuntu
+          - os: ubuntu-latest
+            label: ubuntu-asan+ubsan
+            asan: true
     steps:
       - uses: actions/checkout@v4
 
-      # macOS uses Apple Clang; Ubuntu uses GCC. Building on both exposes the
-      # code to two compilers so conformance issues one accepts, the other
-      # catches. The app ships on macOS only — the Ubuntu job is a portability
-      # and second-compiler gate, not a Linux support target.
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: brew install cmake ninja qt
@@ -38,12 +51,23 @@ jobs:
         if: runner.os == 'macOS'
         run: cmake -S . -B build -G Ninja -DPOKEDEX_WERROR=ON -DCMAKE_PREFIX_PATH="$(brew --prefix qt)"
 
+      # Debug carries -g so sanitizer reports resolve to file:line. Under ASan
+      # only the test target is built, so the Qt GUI is never compiled with the
+      # sanitizer runtime (it links uninstrumented system Qt, and we never run
+      # it here anyway).
       - name: Configure (Ubuntu)
         if: runner.os == 'Linux'
-        run: cmake -S . -B build -G Ninja -DPOKEDEX_WERROR=ON
+        run: cmake -S . -B build -G Ninja -DPOKEDEX_WERROR=ON ${{ matrix.asan && '-DPOKEDEX_ASAN=ON -DCMAKE_BUILD_TYPE=Debug' || '' }}
 
       - name: Build
-        run: cmake --build build
+        run: cmake --build build ${{ matrix.asan && '--target pokedex_tests' || '' }}
 
+      # detect_container_overflow=0: the system libstdc++ is not built with
+      # ASan, so its container annotations don't match our instrumented code and
+      # would raise spurious container-overflow reports. The sanitizer env is
+      # inert on the non-ASan legs.
       - name: Test
+        env:
+          ASAN_OPTIONS: ${{ matrix.asan && 'detect_leaks=1:abort_on_error=1:detect_container_overflow=0' || '' }}
+          UBSAN_OPTIONS: ${{ matrix.asan && 'print_stacktrace=1' || '' }}
         run: ctest --test-dir build --output-on-failure
