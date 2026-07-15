@@ -66,8 +66,9 @@ endif()
 
 # --- Core library (Qt-free, unit-testable) -----------------------------------
 # All non-GUI logic lives here so it can be tested headlessly in CI. The domain
-# layer is header-only; storage/ and app/ contribute compiled sources, so
-# pokedex_core is a STATIC library. SQLite is linked PRIVATE — it is an
+# layer is header-only apart from the generated Pokédex catalog table;
+# storage/ and app/ contribute compiled sources, so pokedex_core is a STATIC
+# library. SQLite is linked PRIVATE — it is an
 # implementation detail that never appears in the public headers, keeping the
 # library Qt- and SQLite-agnostic at its interface.
 find_package(SQLite3 REQUIRED)
@@ -91,6 +92,7 @@ if(NOT TARGET SQLite3::SQLite3)
 endif()
 
 add_library(pokedex_core STATIC
+    src/core/domain/pokemon_catalog.cpp
     src/core/storage/workspace.cpp
     src/core/storage/database.cpp
     src/core/app/install_service.cpp
@@ -143,6 +145,7 @@ if(BUILD_TESTING)
         tests/domain/card_binder_test.cpp
         tests/domain/wishlist_test.cpp
         tests/domain/pokemon_test.cpp
+        tests/domain/pokemon_catalog_test.cpp
         tests/domain/model_smoke_test.cpp
         tests/storage/workspace_test.cpp
         tests/storage/database_test.cpp
