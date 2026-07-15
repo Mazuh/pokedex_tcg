@@ -95,7 +95,11 @@ add_library(pokedex_core STATIC
     src/core/domain/pokemon_catalog.cpp
     src/core/storage/workspace.cpp
     src/core/storage/database.cpp
+    src/core/storage/statement.cpp
+    src/core/storage/codecs.cpp
+    src/core/storage/card_binder_repository.cpp
     src/core/app/install_service.cpp
+    src/core/app/binder_service.cpp
 )
 target_include_directories(pokedex_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(pokedex_core
@@ -109,6 +113,8 @@ qt_standard_project_setup()
 qt_add_executable(pokedex_tcg
     src/main.cpp
     src/gui/views/first_run_dialog.cpp
+    src/gui/views/binder_editor_dialog.cpp
+    src/gui/views/binders_window.cpp
 )
 target_link_libraries(pokedex_tcg PRIVATE pokedex_core pokedex_warnings pokedex_sanitizers Qt6::Widgets)
 
@@ -149,7 +155,10 @@ if(BUILD_TESTING)
         tests/domain/model_smoke_test.cpp
         tests/storage/workspace_test.cpp
         tests/storage/database_test.cpp
+        tests/storage/codecs_test.cpp
+        tests/storage/card_binder_repository_test.cpp
         tests/app/install_service_test.cpp
+        tests/app/binder_service_test.cpp
     )
     target_link_libraries(pokedex_tests PRIVATE pokedex_core pokedex_warnings pokedex_sanitizers GTest::gtest_main)
 

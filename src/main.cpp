@@ -1,16 +1,16 @@
 #include <QApplication>
 #include <QDialog>
-#include <QFont>
-#include <QLabel>
 #include <QMessageBox>
 #include <QString>
-#include <QVBoxLayout>
-#include <QWidget>
 
 #include <exception>
 #include <optional>
 
+#include "core/app/binder_service.h"
 #include "core/app/install_service.h"
+#include "core/storage/card_binder_repository.h"
+#include "core/storage/database.h"
+#include "gui/views/binders_window.h"
 #include "gui/views/first_run_dialog.h"
 
 int main(int argc, char *argv[]) {
@@ -40,26 +40,26 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    QWidget window;
-    window.setWindowTitle("Pokedex TCG");
-    window.resize(360, 160);
+    // Open the workspace database for the app's lifetime and wire the binder
+    // CRUD stack on top of it: repository (storage) -> service (verbs) -> window
+    // (GUI). Database is non-movable, so it lives here as a local that outlives
+    // app.exec(). migrate() is a no-op when already current (it also covers the
+    // first-run branch, which adopts the folder without re-opening the DB).
+    try {
+        pokedex::Database db(workspace->dbPath());
+        db.migrate();
+        pokedex::CardBinderRepository repository(db);
+        pokedex::BinderService service(repository);
 
-    auto *label = new QLabel(QStringLiteral("Hello, World! — Pokedex TCG"));
-    label->setAlignment(Qt::AlignCenter);
-    QFont font = label->font();
-    font.setPointSize(20);
-    label->setFont(font);
+        pokedex::BindersWindow window(
+            service, QString::fromStdString(workspace->root().string()));
+        window.show();
 
-    auto *workspaceLabel = new QLabel(
-        QStringLiteral("Workspace: %1")
-            .arg(QString::fromStdString(workspace->root().string())));
-    workspaceLabel->setAlignment(Qt::AlignCenter);
-
-    auto *layout = new QVBoxLayout(&window);
-    layout->addWidget(label);
-    layout->addWidget(workspaceLabel);
-
-    window.show();
-
-    return app.exec();
+        return app.exec();
+    } catch (const std::exception &e) {
+        QMessageBox::critical(
+            nullptr, QStringLiteral("Pokedex TCG"),
+            QStringLiteral("Could not open your collection:\n%1").arg(QString::fromUtf8(e.what())));
+        return 1;
+    }
 }

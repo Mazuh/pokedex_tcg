@@ -46,6 +46,17 @@ public:
     // Idempotent: a no-op when the database is already current.
     void migrate();
 
+    // Rows changed by the most recently completed INSERT/UPDATE/DELETE on this
+    // connection (sqlite3_changes). Lets a repository tell "updated a row" from
+    // "matched nothing".
+    int changes();
+
+    // STORAGE-INTERNAL: the raw connection, for repositories and Statement to
+    // prepare bound queries. The type stays forward-declared, so callers still
+    // cannot depend on SQLite types through this header; only storage-layer .cpp
+    // files that include <sqlite3.h> can do anything with the returned pointer.
+    sqlite3* handle() { return db_; }
+
 private:
     sqlite3* db_ = nullptr;
 };

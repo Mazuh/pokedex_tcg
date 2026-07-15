@@ -95,6 +95,8 @@ int Database::userVersion() {
     return version;
 }
 
+int Database::changes() { return sqlite3_changes(db_); }
+
 void Database::setUserVersion(int version) {
     // PRAGMA does not accept bound parameters; version is an int we control.
     exec("PRAGMA user_version = " + std::to_string(version) + ";");
