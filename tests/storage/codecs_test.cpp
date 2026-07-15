@@ -4,11 +4,15 @@
 
 #include <chrono>
 
+#include "core/domain/card_condition.h"
+#include "core/domain/card_ownership.h"
 #include "core/domain/region.h"
 #include "core/storage/database.h"
 
 namespace {
 
+using pokedex::CardCondition;
+using pokedex::CardOwnership;
 using pokedex::Region;
 using pokedex::StorageError;
 using pokedex::Timestamp;
@@ -33,6 +37,47 @@ TEST(CodecsTest, RegionTokensAreTheExpectedText) {
 TEST(CodecsTest, UnknownRegionTokenThrows) {
     EXPECT_THROW(pokedex::regionFromText("Atlantis"), StorageError);
     EXPECT_THROW(pokedex::regionFromText(""), StorageError);
+}
+
+// Every ownership state round-trips through its storage token. Listed explicitly
+// (not a loop) so a reordered or renamed token is caught.
+TEST(CodecsTest, OwnershipRoundTripsForEveryValue) {
+    for (const CardOwnership ownership :
+         {CardOwnership::Incoming, CardOwnership::Owned, CardOwnership::Removed}) {
+        EXPECT_EQ(pokedex::ownershipFromText(pokedex::ownershipToText(ownership)), ownership);
+    }
+}
+
+TEST(CodecsTest, OwnershipTokensAreTheExpectedText) {
+    EXPECT_EQ(pokedex::ownershipToText(CardOwnership::Incoming), "Incoming");
+    EXPECT_EQ(pokedex::ownershipToText(CardOwnership::Owned), "Owned");
+    EXPECT_EQ(pokedex::ownershipToText(CardOwnership::Removed), "Removed");
+}
+
+TEST(CodecsTest, UnknownOwnershipTokenThrows) {
+    EXPECT_THROW(pokedex::ownershipFromText("Lost"), StorageError);
+    EXPECT_THROW(pokedex::ownershipFromText(""), StorageError);
+}
+
+// Every condition grade round-trips through its storage token.
+TEST(CodecsTest, ConditionRoundTripsForEveryValue) {
+    for (const CardCondition condition :
+         {CardCondition::NearMint, CardCondition::LightlyPlayed,
+          CardCondition::ModeratelyPlayed, CardCondition::HeavilyPlayed,
+          CardCondition::Damaged}) {
+        EXPECT_EQ(pokedex::conditionFromText(pokedex::conditionToText(condition)), condition);
+    }
+}
+
+TEST(CodecsTest, ConditionTokensAreTheExpectedText) {
+    EXPECT_EQ(pokedex::conditionToText(CardCondition::NearMint), "NearMint");
+    EXPECT_EQ(pokedex::conditionToText(CardCondition::Damaged), "Damaged");
+    EXPECT_EQ(pokedex::conditionFromText("HeavilyPlayed"), CardCondition::HeavilyPlayed);
+}
+
+TEST(CodecsTest, UnknownConditionTokenThrows) {
+    EXPECT_THROW(pokedex::conditionFromText("Mint"), StorageError);
+    EXPECT_THROW(pokedex::conditionFromText(""), StorageError);
 }
 
 // The stored form matches the literals the schema tests already use.

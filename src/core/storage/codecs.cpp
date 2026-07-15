@@ -39,6 +39,52 @@ Region regionFromText(const std::string& text) {
     throw StorageError("unknown region token: " + text);
 }
 
+std::string ownershipToText(CardOwnership ownership) {
+    // Stable on-disk tokens for the copy lifecycle. Like regionToText, an added
+    // enumerator makes this switch fail -Wswitch under -Werror rather than
+    // silently defaulting.
+    switch (ownership) {
+        case CardOwnership::Incoming: return "Incoming";
+        case CardOwnership::Owned:    return "Owned";
+        case CardOwnership::Removed:  return "Removed";
+    }
+    throw StorageError("unknown CardOwnership enum value");
+}
+
+CardOwnership ownershipFromText(const std::string& text) {
+    for (const CardOwnership ownership :
+         {CardOwnership::Incoming, CardOwnership::Owned, CardOwnership::Removed}) {
+        if (text == ownershipToText(ownership)) {
+            return ownership;
+        }
+    }
+    throw StorageError("unknown ownership token: " + text);
+}
+
+std::string conditionToText(CardCondition condition) {
+    // Stable on-disk tokens for the TCG grading scale.
+    switch (condition) {
+        case CardCondition::NearMint:         return "NearMint";
+        case CardCondition::LightlyPlayed:    return "LightlyPlayed";
+        case CardCondition::ModeratelyPlayed: return "ModeratelyPlayed";
+        case CardCondition::HeavilyPlayed:    return "HeavilyPlayed";
+        case CardCondition::Damaged:          return "Damaged";
+    }
+    throw StorageError("unknown CardCondition enum value");
+}
+
+CardCondition conditionFromText(const std::string& text) {
+    for (const CardCondition condition :
+         {CardCondition::NearMint, CardCondition::LightlyPlayed,
+          CardCondition::ModeratelyPlayed, CardCondition::HeavilyPlayed,
+          CardCondition::Damaged}) {
+        if (text == conditionToText(condition)) {
+            return condition;
+        }
+    }
+    throw StorageError("unknown condition token: " + text);
+}
+
 std::string timestampToIso(Timestamp when) {
     const std::time_t secs = std::chrono::system_clock::to_time_t(
         std::chrono::time_point_cast<std::chrono::seconds>(when));

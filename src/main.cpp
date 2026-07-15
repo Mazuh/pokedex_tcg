@@ -6,10 +6,13 @@
 #include <exception>
 #include <optional>
 
+#include "core/app/binder_guide_service.h"
 #include "core/app/binder_service.h"
 #include "core/app/install_service.h"
 #include "core/storage/card_binder_repository.h"
+#include "core/storage/card_copy_repository.h"
 #include "core/storage/database.h"
+#include "core/storage/wishlist_repository.h"
 #include "gui/views/binders_window.h"
 #include "gui/views/first_run_dialog.h"
 
@@ -51,8 +54,15 @@ int main(int argc, char *argv[]) {
         pokedex::CardBinderRepository repository(db);
         pokedex::BinderService service(repository);
 
+        // The read side behind "open binder": copies + wishlist feed the guide
+        // that resolves each Pokémon's CollectionStatus. All locals here so they
+        // outlive app.exec(), matching the "service outlives the window" contract.
+        pokedex::CardCopyRepository copyRepository(db);
+        pokedex::WishlistRepository wishlistRepository(db);
+        pokedex::BinderGuideService guide(copyRepository, wishlistRepository);
+
         pokedex::BindersWindow window(
-            service, QString::fromStdString(workspace->root().string()));
+            service, guide, QString::fromStdString(workspace->root().string()));
         window.show();
 
         return app.exec();
