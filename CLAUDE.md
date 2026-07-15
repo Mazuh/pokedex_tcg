@@ -52,13 +52,18 @@ include root is `src/`, so includes read namespaced:
 `#include "core/domain/pokemon.h"`, `#include "gui/views/..."`.
 
 Folders are created as real code lands; the tree above is the target
-shape, not a scaffold to pre-create. `domain/` is populated; `storage/` and
-`app/` now hold their first slice (workspace resolution, the SQLite `Database`
-wrapper + schema/migrations, and the `install_service` that creates a
-workspace) — the per-root repositories and their enum/timestamp codecs are the
-next slice. `gui/views/` holds the first-run setup dialog. (The
-`greeting.{h,cpp}` bootstrap placeholders were removed once real domain types
-existed.)
+shape, not a scaffold to pre-create. `domain/` is populated. `storage/` holds
+workspace resolution, the SQLite `Database` wrapper + schema/migrations, the
+`codecs` (region/ownership/condition enums ↔ tokens, timestamps ↔ ISO-8601),
+and repositories for `CardBinder`, `CardCopy`, and `Wishlist` (the copy/wishlist
+repos are read-mostly for now — an `add` primitive plus the reads the binder
+guide needs; the full write surface lands with copy management). `app/` holds
+`install_service`, `BinderService` (binder CRUD verbs), and `BinderGuideService`
+(the `buildBinderEntries` the inferred zone refers to). `gui/views/` holds the
+first-run setup dialog, the binders window, the new-binder editor, and the
+binder guide view. `gui/models/` is still empty — no Qt item models yet; views
+adapt core → widgets inline. (The `greeting.{h,cpp}` bootstrap placeholders were
+removed once real domain types existed.)
 
 **Architecture rule:** keep non-GUI logic in the Qt-free `pokedex_core`
 library so it stays unit-testable headlessly. The GUI layer (`pokedex_tcg`)
@@ -142,6 +147,20 @@ ctest --test-dir build --output-on-failure
   an enum's value count.
 - After nontrivial changes, build and run the tests before considering the
   work done.
+
+**GUI navigation.** Prefer navigating *within* the main window — swap pages in a
+`QStackedWidget` (as the binders window does: list page ⇄ binder guide page,
+with a Back button) — over opening a second top-level window. A separate window
+or modal dialog is a deliberate, rare exception (the first-run setup and the
+new-binder form are two), not the default for showing more detail. Display
+strings stay out of Qt-free core: a GUI-side helper maps enums to labels
+(`region_labels.h`, `status_labels.h`), kept separate from the storage tokens.
+
+**Storage writes that span statements go in a transaction.** A repository `add`
+that writes more than one row (e.g. `Wishlist` — a parent row plus its source
+rows) must wrap them in `BEGIN` / `COMMIT` with a best-effort `ROLLBACK` on
+failure, mirroring `Database::migrate()`. Otherwise a mid-sequence failure
+leaves a committed partial row that a primary key then blocks re-adding.
 
 ## Workflow after commits and big changes
 
