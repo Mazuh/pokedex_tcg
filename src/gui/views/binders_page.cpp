@@ -1,15 +1,17 @@
-#include "gui/views/binders_window.h"
+#include "gui/views/binders_page.h"
 
 #include <QFont>
 #include <QHBoxLayout>
+#include <QHeaderView>
 #include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
-#include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QStackedWidget>
 #include <QString>
+#include <QTableWidget>
+#include <QTableWidgetItem>
 #include <QVBoxLayout>
 #include <QVariant>
 
@@ -21,52 +23,54 @@
 #include "gui/views/binder_editor_dialog.h"
 #include "gui/views/binder_view.h"
 #include "gui/views/region_labels.h"
+#include "gui/views/table_cell.h"
 
 namespace pokedex {
 
 namespace {
-// Roles under which each row stashes the raw binder fields, so actions target
-// the right binder and edit its true name — never the "name — region" display
-// text (pre-filling rename from that would fold the region suffix back into the
-// name and compound on every rename).
+// Roles under which the column-0 cell stashes the raw binder fields, so actions
+// target the right binder and edit its true name — never the display text (the
+// name cell shows the raw name, but rename reads the role so it stays robust if
+// the display ever gains a suffix).
 constexpr int kIdRole = Qt::UserRole;
 constexpr int kNameRole = Qt::UserRole + 1;
-
-QString rowText(const CardBinder& binder) {
-    const QString name = QString::fromStdString(binder.name);
-    if (binder.pokemonRegion) {
-        return QStringLiteral("%1 — %2").arg(name, regionLabel(*binder.pokemonRegion));
-    }
-    return name;
-}
 }  // namespace
 
-BindersWindow::BindersWindow(BinderService& service, BinderGuideService& guide,
-                             const QString& collectionPath, QWidget* parent)
+BindersPage::BindersPage(BinderService& service, BinderGuideService& guide,
+                         const QString& collectionPath, QWidget* parent)
     : QWidget(parent), service_(service), guide_(guide) {
-    setWindowTitle(tr("Pokedex TCG — Binders"));
-    resize(800, 600);
-
-    // Page 0 of the stack: the binder list with its actions. Built into its own
-    // container so opening a binder can swap it out for the binder page in place.
+    // Page 0 of the stack: the binder table with its actions. Built into its own
+    // container so opening a binder can swap it out for the binder guide in place.
     auto* listPage = new QWidget(this);
 
     auto* heading = new QLabel(tr("Your binders"), listPage);
 
-    list_ = new QListWidget(listPage);
+    // A read-only two-column table: binder name (stretches) and region. Whole-row
+    // single selection, no editing, no vertical header.
+    table_ = new QTableWidget(listPage);
+    table_->setColumnCount(2);
+    table_->setHorizontalHeaderLabels({tr("Binder"), tr("Region")});
+    table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    table_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table_->setSelectionMode(QAbstractItemView::SingleSelection);
+    table_->verticalHeader()->setVisible(false);
+    table_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+    table_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    // Cell padding so content clears the edges and the overlay scrollbar.
+    table_->setStyleSheet("QTableView::item { padding-left: 8px; padding-right: 16px; }");
 
     auto* newButton = new QPushButton(tr("New…"), listPage);
     openButton_ = new QPushButton(tr("Open…"), listPage);
     renameButton_ = new QPushButton(tr("Rename…"), listPage);
     removeButton_ = new QPushButton(tr("Remove…"), listPage);
 
-    connect(newButton, &QPushButton::clicked, this, &BindersWindow::createBinder);
-    connect(openButton_, &QPushButton::clicked, this, &BindersWindow::openSelected);
-    connect(renameButton_, &QPushButton::clicked, this, &BindersWindow::renameSelected);
-    connect(removeButton_, &QPushButton::clicked, this, &BindersWindow::removeSelected);
-    connect(list_, &QListWidget::itemSelectionChanged, this, &BindersWindow::updateButtonState);
+    connect(newButton, &QPushButton::clicked, this, &BindersPage::createBinder);
+    connect(openButton_, &QPushButton::clicked, this, &BindersPage::openSelected);
+    connect(renameButton_, &QPushButton::clicked, this, &BindersPage::renameSelected);
+    connect(removeButton_, &QPushButton::clicked, this, &BindersPage::removeSelected);
+    connect(table_, &QTableWidget::itemSelectionChanged, this, &BindersPage::updateButtonState);
     // Double-clicking a binder opens it, the usual list-activation gesture.
-    connect(list_, &QListWidget::itemActivated, this, &BindersWindow::openSelected);
+    connect(table_, &QTableWidget::cellActivated, this, &BindersPage::openSelected);
 
     auto* buttons = new QHBoxLayout;
     buttons->addWidget(newButton);
@@ -84,8 +88,9 @@ BindersWindow::BindersWindow(BinderService& service, BinderGuideService& guide,
     pathLabel->setEnabled(false);  // muted, it's a reference detail not an action
 
     auto* pageLayout = new QVBoxLayout(listPage);
+    pageLayout->setContentsMargins(16, 12, 16, 12);  // don't hug the section edges
     pageLayout->addWidget(heading);
-    pageLayout->addWidget(list_);
+    pageLayout->addWidget(table_);
     pageLayout->addLayout(buttons);
     pageLayout->addWidget(pathLabel);
 
@@ -99,15 +104,21 @@ BindersWindow::BindersWindow(BinderService& service, BinderGuideService& guide,
     refresh();
 }
 
-void BindersWindow::refresh() {
-    list_->clear();
+void BindersPage::refresh() {
+    table_->setRowCount(0);
     binders_.clear();
     try {
         binders_ = service_.list();
-        for (const CardBinder& binder : binders_) {
-            auto* item = new QListWidgetItem(rowText(binder), list_);
-            item->setData(kIdRole, QString::fromStdString(binder.id));
-            item->setData(kNameRole, QString::fromStdString(binder.name));
+        table_->setRowCount(static_cast<int>(binders_.size()));
+        for (int i = 0; i < static_cast<int>(binders_.size()); ++i) {
+            const CardBinder& binder = binders_[i];
+            auto* nameCell = cell(QString::fromStdString(binder.name));
+            nameCell->setData(kIdRole, QString::fromStdString(binder.id));
+            nameCell->setData(kNameRole, QString::fromStdString(binder.name));
+            table_->setItem(i, 0, nameCell);
+            const QString region =
+                binder.pokemonRegion ? regionLabel(*binder.pokemonRegion) : QString();
+            table_->setItem(i, 1, cell(region));
         }
     } catch (const std::exception& e) {
         QMessageBox::critical(this, tr("Pokedex TCG"),
@@ -117,7 +128,7 @@ void BindersWindow::refresh() {
     updateButtonState();
 }
 
-void BindersWindow::createBinder() {
+void BindersPage::createBinder() {
     BinderEditorDialog dialog(this);
     if (dialog.exec() != QDialog::Accepted) {
         return;
@@ -132,14 +143,14 @@ void BindersWindow::createBinder() {
     refresh();
 }
 
-void BindersWindow::renameSelected() {
+void BindersPage::renameSelected() {
     const std::string id = selectedId();
     if (id.empty()) {
         return;
     }
-    QListWidgetItem* item = list_->selectedItems().first();
+    QTableWidgetItem* item = table_->item(table_->currentRow(), 0);
     bool ok = false;
-    // Pre-fill with the raw name (kNameRole), not the "name — region" row text.
+    // Pre-fill with the raw name (kNameRole), not the display cell text.
     const QString current = item->data(kNameRole).toString();
     const QString entered =
         QInputDialog::getText(this, tr("Rename Binder"), tr("New name:"), QLineEdit::Normal,
@@ -157,7 +168,7 @@ void BindersWindow::renameSelected() {
     refresh();
 }
 
-void BindersWindow::removeSelected() {
+void BindersPage::removeSelected() {
     const std::string id = selectedId();
     if (id.empty()) {
         return;
@@ -180,7 +191,7 @@ void BindersWindow::removeSelected() {
     refresh();
 }
 
-void BindersWindow::openSelected() {
+void BindersPage::openSelected() {
     const std::string id = selectedId();
     if (id.empty()) {
         return;
@@ -192,36 +203,34 @@ void BindersWindow::openSelected() {
     if (it == binders_.end()) {
         return;  // selection no longer in the list (refreshed underneath us)
     }
-    // Navigate in place: push a binder page onto the stack and show it. Back
+    // Navigate in place: push a binder guide onto the stack and show it. Back
     // returns to the list and disposes of the page, so each open starts fresh
     // (recomputing the guide) rather than showing a stale one.
-    const QString binderName = QString::fromStdString(it->name);
     auto* view = new BinderView(guide_, *it);
     connect(view, &BinderView::backRequested, this, [this, view]() {
         stack_->setCurrentIndex(0);
-        setWindowTitle(tr("Pokedex TCG — Binders"));
         stack_->removeWidget(view);
         view->deleteLater();
     });
     stack_->addWidget(view);
     stack_->setCurrentWidget(view);
-    setWindowTitle(tr("Pokedex TCG — %1").arg(binderName));
 }
 
-void BindersWindow::updateButtonState() {
-    const bool hasSelection = list_->currentItem() != nullptr &&
-                              !list_->selectedItems().isEmpty();
+void BindersPage::updateButtonState() {
+    const bool hasSelection = table_->currentRow() >= 0 &&
+                              !table_->selectedItems().isEmpty();
     openButton_->setEnabled(hasSelection);
     renameButton_->setEnabled(hasSelection);
     removeButton_->setEnabled(hasSelection);
 }
 
-std::string BindersWindow::selectedId() const {
-    const QList<QListWidgetItem*> selected = list_->selectedItems();
-    if (selected.isEmpty()) {
+std::string BindersPage::selectedId() const {
+    const int row = table_->currentRow();
+    if (row < 0 || table_->selectedItems().isEmpty()) {
         return {};
     }
-    return selected.first()->data(kIdRole).toString().toStdString();
+    QTableWidgetItem* item = table_->item(row, 0);
+    return item ? item->data(kIdRole).toString().toStdString() : std::string{};
 }
 
 }  // namespace pokedex

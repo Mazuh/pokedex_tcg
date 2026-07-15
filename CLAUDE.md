@@ -57,13 +57,19 @@ workspace resolution, the SQLite `Database` wrapper + schema/migrations, the
 `codecs` (region/ownership/condition enums ↔ tokens, timestamps ↔ ISO-8601),
 and repositories for `CardBinder`, `CardCopy`, and `Wishlist` (the copy/wishlist
 repos are read-mostly for now — an `add` primitive plus the reads the binder
-guide needs; the full write surface lands with copy management). `app/` holds
-`install_service`, `BinderService` (binder CRUD verbs), and `BinderGuideService`
-(the `buildBinderEntries` the inferred zone refers to). `gui/views/` holds the
-first-run setup dialog, the binders window, the new-binder editor, and the
-binder guide view. `gui/models/` is still empty — no Qt item models yet; views
-adapt core → widgets inline. (The `greeting.{h,cpp}` bootstrap placeholders were
-removed once real domain types existed.)
+guide and Pokédex browser need, e.g. `CardCopyRepository::ownedCountsByDexNum`;
+the full write surface lands with copy management). `app/` holds
+`install_service`, `BinderService` (binder CRUD verbs), `BinderGuideService`
+(the `buildBinderEntries` the inferred zone refers to), and
+`PokemonBrowseService` (`listAll` → every catalog species paired with its
+owned-copy count, the unscoped Pokédex browser's data). `gui/views/` holds the
+`MainWindow` shell (a macOS-style sidebar selecting sections in an outer
+`QStackedWidget`), the first-run setup dialog, the binders section
+(`BindersPage`, a table with its own list ⇄ binder-guide stack), the new-binder
+editor, the binder guide view, and the Pokémon browser (`PokemonListView`).
+`gui/models/` is still empty — no Qt item models yet; views adapt core →
+widgets inline. (The `greeting.{h,cpp}` bootstrap placeholders were removed once
+real domain types existed.)
 
 **Architecture rule:** keep non-GUI logic in the Qt-free `pokedex_core`
 library so it stays unit-testable headlessly. The GUI layer (`pokedex_tcg`)
@@ -148,10 +154,12 @@ ctest --test-dir build --output-on-failure
 - After nontrivial changes, build and run the tests before considering the
   work done.
 
-**GUI navigation.** Prefer navigating *within* the main window — swap pages in a
-`QStackedWidget` (as the binders window does: list page ⇄ binder guide page,
-with a Back button) — over opening a second top-level window. A separate window
-or modal dialog is a deliberate, rare exception (the first-run setup and the
+**GUI navigation.** The app is a macOS-style shell: `MainWindow` has a left
+sidebar (a `QListWidget` source list, Finder/Settings-style) selecting sections
+in an outer `QStackedWidget`. Prefer navigating *within* the window — swap pages
+in a `QStackedWidget` (as `BindersPage` does: binder table ⇄ binder guide, with
+a Back button) — over opening a second top-level window. A separate window or
+modal dialog is a deliberate, rare exception (the first-run setup and the
 new-binder form are two), not the default for showing more detail. Display
 strings stay out of Qt-free core: a GUI-side helper maps enums to labels
 (`region_labels.h`, `status_labels.h`), kept separate from the storage tokens.

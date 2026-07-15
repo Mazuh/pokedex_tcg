@@ -84,4 +84,19 @@ std::vector<PokemonDexNum> CardCopyRepository::ownedElsewhere(const CardBinderId
     return dexNums;
 }
 
+std::unordered_map<PokemonDexNum, int> CardCopyRepository::ownedCountsByDexNum() {
+    // Bind the Owned token from the codec (single source of truth for the on-disk
+    // spelling), same as ownedElsewhere. GROUP BY collapses the per-species count
+    // in SQLite so the caller gets one row per owned species.
+    Statement stmt(db_,
+                   "SELECT pokemon_dex_num, COUNT(*) FROM card_copy"
+                   " WHERE ownership = ? GROUP BY pokemon_dex_num;");
+    stmt.bindText(1, ownershipToText(CardOwnership::Owned));
+    std::unordered_map<PokemonDexNum, int> counts;
+    while (stmt.step()) {
+        counts.emplace(stmt.columnInt(0), stmt.columnInt(1));
+    }
+    return counts;
+}
+
 }  // namespace pokedex

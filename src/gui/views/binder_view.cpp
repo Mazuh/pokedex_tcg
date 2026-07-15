@@ -16,6 +16,7 @@
 #include "core/app/binder_guide_service.h"
 #include "gui/views/region_labels.h"
 #include "gui/views/status_labels.h"
+#include "gui/views/table_cell.h"
 
 namespace pokedex {
 
@@ -27,14 +28,6 @@ QString headingText(const CardBinder& binder) {
         return QStringLiteral("%1 — %2").arg(name, regionLabel(*binder.pokemonRegion));
     }
     return name;
-}
-
-// A non-editable cell. Text is fixed for the life of the page (status never
-// changes here), so items are built once and only filtered by row visibility.
-QTableWidgetItem* cell(const QString& text) {
-    auto* item = new QTableWidgetItem(text);
-    item->setFlags(item->flags() & ~Qt::ItemIsEditable);
-    return item;
 }
 
 }  // namespace
@@ -68,10 +61,13 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder, QWid
     table_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     table_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
     table_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    // Cell padding so content clears the edges and the overlay scrollbar.
+    table_->setStyleSheet("QTableView::item { padding-left: 8px; padding-right: 16px; }");
 
     connect(search_, &QLineEdit::textChanged, this, &BinderView::applyFilter);
 
     auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(16, 12, 16, 12);  // match the other sections' padding
     layout->addLayout(topBar);
     layout->addWidget(search_);
     layout->addWidget(table_);

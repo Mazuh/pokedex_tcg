@@ -1,5 +1,6 @@
 #pragma once
 
+#include <unordered_map>
 #include <vector>
 
 #include "core/domain/card_copy.h"
@@ -35,6 +36,13 @@ public:
     // in the given binder (filed elsewhere or nowhere). Drives the Elsewhere case
     // — a species owned in another binder reads as available, not missing.
     std::vector<PokemonDexNum> ownedElsewhere(const CardBinderId& binderId);
+
+    // How many Owned copies exist per species across the whole collection (every
+    // binder plus unfiled), keyed by dex number. Only Owned counts — Incoming and
+    // Removed copies are excluded. A species with no Owned copy is simply absent
+    // from the map (callers treat a missing key as zero). Drives the unscoped
+    // Pokédex browser's owned-cards column.
+    std::unordered_map<PokemonDexNum, int> ownedCountsByDexNum();
 
 private:
     Database& db_;

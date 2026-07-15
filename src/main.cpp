@@ -9,12 +9,13 @@
 #include "core/app/binder_guide_service.h"
 #include "core/app/binder_service.h"
 #include "core/app/install_service.h"
+#include "core/app/pokemon_browse_service.h"
 #include "core/storage/card_binder_repository.h"
 #include "core/storage/card_copy_repository.h"
 #include "core/storage/database.h"
 #include "core/storage/wishlist_repository.h"
-#include "gui/views/binders_window.h"
 #include "gui/views/first_run_dialog.h"
+#include "gui/views/main_window.h"
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
@@ -61,8 +62,12 @@ int main(int argc, char *argv[]) {
         pokedex::WishlistRepository wishlistRepository(db);
         pokedex::BinderGuideService guide(copyRepository, wishlistRepository);
 
-        pokedex::BindersWindow window(
-            service, guide, QString::fromStdString(workspace->root().string()));
+        // The unscoped Pokédex browser reads the same copy repository to count
+        // owned cards per species.
+        pokedex::PokemonBrowseService browse(copyRepository);
+
+        pokedex::MainWindow window(
+            service, guide, browse, QString::fromStdString(workspace->root().string()));
         window.show();
 
         return app.exec();
