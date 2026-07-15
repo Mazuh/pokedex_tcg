@@ -13,6 +13,21 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Export compile_commands.json for clangd / editor tooling.
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# --- Warnings ----------------------------------------------------------------
+# Applied only to our own targets (not fetched deps like GoogleTest, whose
+# headers we mark SYSTEM below). -Wall -Wextra are always on so warnings show
+# up locally; -Werror is opt-in via POKEDEX_WERROR so CI can make them fatal
+# without breaking day-to-day local builds. CI (Linux/GCC + macOS/Clang)
+# builds every target under this, so a second compiler polices the code.
+option(POKEDEX_WERROR "Treat compiler warnings as errors" OFF)
+add_library(pokedex_warnings INTERFACE)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(pokedex_warnings INTERFACE -Wall -Wextra)
+    if(POKEDEX_WERROR)
+        target_compile_options(pokedex_warnings INTERFACE -Werror)
+    endif()
+endif()
+
 # --- Core library (Qt-free, unit-testable) -----------------------------------
 # All non-GUI logic lives here so it can be tested headlessly in CI. The domain
 # layer is currently header-only, so pokedex_core is an INTERFACE library; it
@@ -28,7 +43,7 @@ qt_standard_project_setup()
 qt_add_executable(pokedex_tcg
     src/main.cpp
 )
-target_link_libraries(pokedex_tcg PRIVATE pokedex_core Qt6::Widgets)
+target_link_libraries(pokedex_tcg PRIVATE pokedex_core pokedex_warnings Qt6::Widgets)
 
 # --- Tests (GoogleTest + CTest) ----------------------------------------------
 include(CTest)
@@ -43,6 +58,19 @@ if(BUILD_TESTING)
     set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(googletest)
 
+    # GoogleTest is built from source, so its headers are not treated as SYSTEM
+    # by default the way imported targets (Qt) are. Mark them SYSTEM so our
+    # -Werror build is not tripped by warnings inside gtest's own headers.
+    foreach(_gt gtest gtest_main gmock gmock_main)
+        if(TARGET ${_gt})
+            get_target_property(_inc ${_gt} INTERFACE_INCLUDE_DIRECTORIES)
+            if(_inc)
+                set_target_properties(${_gt} PROPERTIES
+                    INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${_inc}")
+            endif()
+        endif()
+    endforeach()
+
     add_executable(pokedex_tests
         tests/domain/card_reference_test.cpp
         tests/domain/card_copy_test.cpp
@@ -52,7 +80,7 @@ if(BUILD_TESTING)
         tests/domain/pokemon_test.cpp
         tests/domain/model_smoke_test.cpp
     )
-    target_link_libraries(pokedex_tests PRIVATE pokedex_core GTest::gtest_main)
+    target_link_libraries(pokedex_tests PRIVATE pokedex_core pokedex_warnings GTest::gtest_main)
 
     include(GoogleTest)
     gtest_discover_tests(pokedex_tests)

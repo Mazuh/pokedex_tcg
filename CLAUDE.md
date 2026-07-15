@@ -14,7 +14,10 @@ See `README.md` for the product vision and glossary.
 - **GUI:** Qt 6 Widgets
 - **Build:** CMake + Ninja
 - **Tests:** GoogleTest (fetched via CMake `FetchContent`) run through CTest
-- **CI:** GitHub Actions on `macos-latest` (`.github/workflows/ci.yml`)
+- **CI:** GitHub Actions matrix on `macos-latest` (Apple Clang) and
+  `ubuntu-latest` (GCC, `qt6-base-dev`) — a second-compiler / portability
+  gate, built with `-Wall -Wextra -Werror` via `-DPOKEDEX_WERROR=ON`
+  (`.github/workflows/ci.yml`)
 
 ## Layout
 

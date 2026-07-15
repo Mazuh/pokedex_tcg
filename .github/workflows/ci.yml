@@ -11,15 +11,36 @@ concurrency:
 
 jobs:
   build-and-test:
-    runs-on: macos-latest
+    name: build-and-test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
+      # macOS uses Apple Clang; Ubuntu uses GCC. Building on both exposes the
+      # code to two compilers so conformance issues one accepts, the other
+      # catches. The app ships on macOS only — the Ubuntu job is a portability
+      # and second-compiler gate, not a Linux support target.
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
         run: brew install cmake ninja qt
 
-      - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH="$(brew --prefix qt)"
+      - name: Install dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build qt6-base-dev
+
+      - name: Configure (macOS)
+        if: runner.os == 'macOS'
+        run: cmake -S . -B build -G Ninja -DPOKEDEX_WERROR=ON -DCMAKE_PREFIX_PATH="$(brew --prefix qt)"
+
+      - name: Configure (Ubuntu)
+        if: runner.os == 'Linux'
+        run: cmake -S . -B build -G Ninja -DPOKEDEX_WERROR=ON
 
       - name: Build
         run: cmake --build build
