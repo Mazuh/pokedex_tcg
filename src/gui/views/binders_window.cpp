@@ -42,7 +42,7 @@ BindersWindow::BindersWindow(BinderService& service, const QString& collectionPa
                              QWidget* parent)
     : QWidget(parent), service_(service) {
     setWindowTitle(tr("Pokedex TCG — Binders"));
-    resize(420, 320);
+    resize(800, 600);
 
     auto* heading = new QLabel(tr("Your binders"), this);
 
