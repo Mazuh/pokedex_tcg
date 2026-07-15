@@ -8,7 +8,7 @@
 #include "core/domain/card_binder_entry.h"
 
 class QLineEdit;
-class QListWidget;
+class QTableWidget;
 
 namespace pokedex {
 
@@ -36,11 +36,11 @@ Q_SIGNALS:
     void backRequested();
 
 private:
-    // Repopulate the list from the cached entries, keeping only those whose
-    // Pokémon name contains `filter` (case-insensitive); an empty filter shows all.
-    void renderList(const QString& filter);
+    // Show only the rows whose Pokémon name contains `filter` (case-insensitive);
+    // an empty filter shows all. Rows are built once and toggled, not rebuilt.
+    void applyFilter(const QString& filter);
 
-    QListWidget* list_;
+    QTableWidget* table_;
     QLineEdit* search_;
     std::vector<CardBinderEntry> entries_;
 };

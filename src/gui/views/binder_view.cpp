@@ -1,12 +1,14 @@
 #include "gui/views/binder_view.h"
 
 #include <QHBoxLayout>
+#include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
-#include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QString>
+#include <QTableWidget>
+#include <QTableWidgetItem>
 #include <QVBoxLayout>
 
 #include <exception>
@@ -27,10 +29,12 @@ QString headingText(const CardBinder& binder) {
     return name;
 }
 
-QString rowText(const CardBinderEntry& entry) {
-    return QStringLiteral("#%1  %2 — %3")
-        .arg(entry.pokemon.dexNumber)
-        .arg(QString::fromStdString(entry.pokemon.name), statusLabel(entry.status));
+// A non-editable cell. Text is fixed for the life of the page (status never
+// changes here), so items are built once and only filtered by row visibility.
+QTableWidgetItem* cell(const QString& text) {
+    auto* item = new QTableWidgetItem(text);
+    item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+    return item;
 }
 
 }  // namespace
@@ -52,18 +56,29 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder, QWid
     search_->setPlaceholderText(tr("Search Pokémon…"));
     search_->setClearButtonEnabled(true);
 
-    list_ = new QListWidget(this);
+    // A read-only three-column table: dex number, name, status. Whole-row
+    // selection, no editing; the Pokémon column takes the slack.
+    table_ = new QTableWidget(this);
+    table_->setColumnCount(3);
+    table_->setHorizontalHeaderLabels({tr("#"), tr("Pokémon"), tr("Status")});
+    table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    table_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table_->setSelectionMode(QAbstractItemView::SingleSelection);
+    table_->verticalHeader()->setVisible(false);
+    table_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    table_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    table_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
 
-    connect(search_, &QLineEdit::textChanged, this, &BinderView::renderList);
+    connect(search_, &QLineEdit::textChanged, this, &BinderView::applyFilter);
 
     auto* layout = new QVBoxLayout(this);
     layout->addLayout(topBar);
     layout->addWidget(search_);
-    layout->addWidget(list_);
+    layout->addWidget(table_);
 
     // Compute the guide once; the search box only re-filters this cached vector,
     // never re-queries. A failure here (e.g. the workspace went away) is reported
-    // and leaves an empty list rather than crashing.
+    // and leaves an empty table rather than crashing.
     try {
         entries_ = guide.buildEntries(binder);
     } catch (const std::exception& e) {
@@ -73,19 +88,25 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder, QWid
     }
 
     // Build every row once. Rows never change after this (status is fixed for the
-    // life of the page), so filtering just toggles visibility — no per-keystroke
-    // allocation. entries_ and the list items stay 1:1 and index-aligned.
-    for (const CardBinderEntry& entry : entries_) {
-        new QListWidgetItem(rowText(entry), list_);
+    // life of the page), so filtering just toggles row visibility — no
+    // per-keystroke allocation. entries_ and table rows stay 1:1 and aligned.
+    table_->setRowCount(static_cast<int>(entries_.size()));
+    for (int i = 0; i < static_cast<int>(entries_.size()); ++i) {
+        const CardBinderEntry& entry = entries_[i];
+        auto* number = cell(QString::number(entry.pokemon.dexNumber));
+        number->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        table_->setItem(i, 0, number);
+        table_->setItem(i, 1, cell(QString::fromStdString(entry.pokemon.name)));
+        table_->setItem(i, 2, cell(statusLabel(entry.status)));
     }
-    renderList(QString());
+    applyFilter(QString());
 }
 
-void BinderView::renderList(const QString& filter) {
+void BinderView::applyFilter(const QString& filter) {
     for (int i = 0; i < static_cast<int>(entries_.size()); ++i) {
         const QString name = QString::fromStdString(entries_[i].pokemon.name);
         const bool visible = filter.isEmpty() || name.contains(filter, Qt::CaseInsensitive);
-        list_->item(i)->setHidden(!visible);
+        table_->setRowHidden(i, !visible);
     }
 }
 
