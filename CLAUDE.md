@@ -131,6 +131,8 @@ ctest --test-dir build --output-on-failure
 
 - C++23, no compiler extensions (`CMAKE_CXX_EXTENSIONS OFF`).
 - Core logic goes in `namespace pokedex`.
+- Always ask before installing or adding a new dependency — a library, a CMake
+  `FetchContent` entry, or a system package. Do not add one unprompted.
 - Add new tests under `tests/` mirroring `src/core` (e.g. `tests/domain/`)
   and register the source in `CMakeLists.txt`; they are auto-discovered by
   CTest via `gtest_discover_tests`.
@@ -140,3 +142,31 @@ ctest --test-dir build --output-on-failure
   an enum's value count.
 - After nontrivial changes, build and run the tests before considering the
   work done.
+
+## Workflow after commits and big changes
+
+This is process guidance, followed best-effort — not a hard gate. Apply it
+after every commit, and also after any substantial change even without a
+commit ("big change" is a judgment call).
+
+**Definition of done.** Saying the work is "done" asserts that the CI checks
+and the code review below actually ran and are green. If any step was skipped,
+say so explicitly ("done, but did not run X because Y") — never let a bare
+"done" imply a step that did not happen.
+
+- **CI checks run before each commit or amend.** Locally reproduce the CI
+  gate — configure/build with `-DPOKEDEX_WERROR=ON` (`-Wall -Wextra -Werror`)
+  and run `ctest` — and only commit/amend when it is green. Never commit over
+  a red build or failing tests.
+- **Independent code review, then amend.** After committing, run the
+  `code-review` skill on that commit — it spawns child reviewers with fresh,
+  focused context (the same effect as reviewing from a separate session, minus
+  authoring bias), and returns a consolidated report. Apply the accepted
+  findings and fold them into the commit with `git commit --amend`. Committing
+  *first* and amending *after* is deliberate: if a fix goes wrong mid-flow,
+  `git reflog` can recover the pre-amend state. (Reminder: local commits only —
+  never push, per the never-push memory.)
+- **Revisit the docs after big chunks of change.** Consider whether `CLAUDE.md`
+  and `README.md` need updating. Update `CLAUDE.md` especially in light of
+  patterns observed during the work — recurring problems, footguns, or new
+  features/conventions worth capturing so the next session inherits them.
