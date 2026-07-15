@@ -72,6 +72,24 @@ endif()
 # library Qt- and SQLite-agnostic at its interface.
 find_package(SQLite3 REQUIRED)
 
+# FindSQLite3's success criterion is only the header (SQLite3_INCLUDE_DIR), and
+# across CMake versions it does not always define the SQLite3::SQLite3 imported
+# target even when the package is "found" — which then fails at generate time
+# with "target not found". Synthesize the target from the variables the module
+# does set, so linking is version-independent; fail loudly and legibly if the
+# actual library is missing (on Debian/Ubuntu: install libsqlite3-dev).
+if(NOT TARGET SQLite3::SQLite3)
+    if(NOT SQLite3_LIBRARY)
+        message(FATAL_ERROR
+            "SQLite3 headers found but no import library. "
+            "On Debian/Ubuntu, install libsqlite3-dev.")
+    endif()
+    add_library(SQLite3::SQLite3 UNKNOWN IMPORTED)
+    set_target_properties(SQLite3::SQLite3 PROPERTIES
+        IMPORTED_LOCATION "${SQLite3_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${SQLite3_INCLUDE_DIR}")
+endif()
+
 add_library(pokedex_core STATIC
     src/core/storage/workspace.cpp
     src/core/storage/database.cpp
