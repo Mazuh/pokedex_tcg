@@ -10,15 +10,15 @@ manage my physical card collection using local files.
 - As a user, I want to quickly browse any existing Pokémon
 by partial name, so I see its details (region and picture) and
 can mark it as collected or not.
-- As a user, I want to create a binder optionally initialized
+- ~~As a user, I want to create a binder optionally initialized
 with a selected region, so I can initialize a binder already having
 all the Pokémon even which I don't own card copies yet but guides
-me on the journey to capture them all.
-- As a user, I want to remove a binder, so I can stop tracking
-a physical binder (it doesn't affect the cards containing it).
-- As a user, I want to choose where my collection workspace is stored,
+me on the journey to capture them all.~~
+- ~~As a user, I want to remove a binder, so I can stop tracking
+a physical binder (it doesn't affect the cards containing it).~~
+- ~~As a user, I want to choose where my collection workspace is stored,
 so that I can use a local directory, iCloud Drive, Dropbox, a NAS, or
-another synchronized folder.
+another synchronized folder.~~
 - As a user, I want to browse any existing cards for each Pokémon,
 so I can assign them to a binder or simply say that I own it
 (this is an optional part of marking a Pokémon as collected).
@@ -40,18 +40,18 @@ so I can manage links or salespeople sources.
 - As a user, I want to see my entire wishlist unscoped but grouped
 by Pokémon, so this can easily guide me on building a shopping cart
 in external resselers.
-- As a new user, I don't want to register accounts or pay for
+- ~~As a new user, I don't want to register accounts or pay for
 cloud services, so I can manage my private collection in my
 own machine with optional cloud storage backup,
 without vendor lockin of paid services, nor proprietary formats,
-nor personal data concerns.
-- As a operational system user, I want my storage kept in an open,
+nor personal data concerns.~~
+- ~~As a operational system user, I want my storage kept in an open,
 non-proprietary SQLite database (inspectable with the `sqlite3` CLI or
 DB Browser for SQLite) alongside a multimedia cache folder, so my data is
-accessible and not locked by this app.
-- As a new user, on first launch I want to choose where my collection
+accessible and not locked by this app.~~
+- ~~As a new user, on first launch I want to choose where my collection
 workspace folder lives (a local directory, or one inside iCloud, Dropbox,
-or a NAS), so the app can create its SQLite database there and remember it.
+or a NAS), so the app can create its SQLite database there and remember it.~~
 
 ### Entities and Glossary
 
