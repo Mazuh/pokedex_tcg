@@ -36,7 +36,7 @@ with removed cards still being reasonably easily discovered.
 - As a user, I want to hard delete a card that I previously removed,
 so I can keep my data clean of things that were inserted by mistake.
 - As a user, I want to manage a card wishlist to a Pokémon registry,
-so I can manage links or salespeople sources with optional price.
+so I can manage links or salespeople sources.
 - As a user, I want to see my entire wishlist unscoped but grouped
 by Pokémon, so this can easily guide me on building a shopping cart
 in external resselers.
