@@ -22,7 +22,15 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(POKEDEX_WERROR "Treat compiler warnings as errors" OFF)
 add_library(pokedex_warnings INTERFACE)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(pokedex_warnings INTERFACE -Wall -Wextra)
+    # -Wno-missing-field-initializers: our domain types are plain-data
+    # aggregates built with designated initializers that deliberately omit
+    # fields (notably the app-set insertedAt/updatedAt audit stamps), letting
+    # them value-initialize. GCC's -Wextra flags every such omission as
+    # "missing initializer" even though it is explicit and intentional; Clang
+    # does not. Silencing this one sub-warning keeps designated-init idiom
+    # usable without weakening the rest of -Wall -Wextra -Werror.
+    target_compile_options(pokedex_warnings INTERFACE
+        -Wall -Wextra -Wno-missing-field-initializers)
     if(POKEDEX_WERROR)
         target_compile_options(pokedex_warnings INTERFACE -Werror)
     endif()
