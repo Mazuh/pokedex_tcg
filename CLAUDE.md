@@ -164,6 +164,14 @@ new-binder form are two), not the default for showing more detail. Display
 strings stay out of Qt-free core: a GUI-side helper maps enums to labels
 (`region_labels.h`, `status_labels.h`), kept separate from the storage tokens.
 
+**Long lists paginate by infinite scroll, not Prev/Next.** The default for a
+long, scannable list is incremental loading (`PokemonListView`): render a chunk,
+append the next as the user scrolls near the bottom (drive it off
+`verticalScrollBar()`'s `valueChanged` for scroll-to-bottom plus `rangeChanged`
+with a `maximum()==0` guard so a short first chunk still fills the viewport).
+Append rows — never rebuild what's on screen. Reach for explicit paging controls
+only when infinite scroll genuinely doesn't fit.
+
 **Storage writes that span statements go in a transaction.** A repository `add`
 that writes more than one row (e.g. `Wishlist` — a parent row plus its source
 rows) must wrap them in `BEGIN` / `COMMIT` with a best-effort `ROLLBACK` on
