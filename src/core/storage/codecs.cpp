@@ -44,7 +44,12 @@ std::string timestampToIso(Timestamp when) {
         std::chrono::time_point_cast<std::chrono::seconds>(when));
     std::tm tm{};
     gmtime_r(&secs, &tm);
-    char buf[sizeof("YYYY-MM-DDThh:mm:ssZ")];
+    // gmtime_r yields fields in their normal calendar ranges, but the compiler
+    // can't prove that: it sees each %0Nd fed a full-range int and computes a
+    // worst case (six ints of up to 11 digits, plus separators and the NUL)
+    // that overflows a 21-byte buffer (-Wformat-truncation). Size for that
+    // worst case so truncation is provably impossible.
+    char buf[73];
     std::snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02dZ",
                   tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
                   tm.tm_hour, tm.tm_min, tm.tm_sec);
