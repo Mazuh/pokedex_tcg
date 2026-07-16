@@ -112,6 +112,19 @@ TEST(CardCopyServiceTest, RemoveSoftDeletesToRemovedOwnership) {
     EXPECT_EQ(stored.updatedAt, at("2026-07-18T08:00:00Z"));
 }
 
+TEST(CardCopyServiceTest, RemoveAppendsAnOptionalNoteToExistingComments) {
+    Fixture f;
+    f.service.create(6, ref(), CardOwnership::Owned, CardCondition::NearMint, std::nullopt,
+                     "bought at a con");
+    f.service.remove("copy-1", "  sold to Alex for $40  ");  // trimmed
+    EXPECT_EQ(f.repo.find("copy-1")->comments, "bought at a con\nsold to Alex for $40");
+
+    // A copy with no prior comments and a blank note keeps empty comments.
+    f.service.create(4, ref(), CardOwnership::Owned, CardCondition::NearMint, std::nullopt, "");
+    f.service.remove("copy-2", "   ");
+    EXPECT_TRUE(f.repo.find("copy-2")->comments.empty());
+}
+
 TEST(CardCopyServiceTest, HardDeleteDropsTheRow) {
     Fixture f;
     f.service.create(6, ref(), CardOwnership::Owned, CardCondition::NearMint, std::nullopt, "");

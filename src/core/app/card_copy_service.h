@@ -54,8 +54,10 @@ public:
     void assignToBinder(const CardCopyId& id, std::optional<CardBinderId> binderId);
 
     // Soft-remove: mark the copy Removed — kept for auditable history rather than
-    // deleted — bumping updatedAt. Throws CardCopyError if no copy has that id.
-    void remove(const CardCopyId& id);
+    // deleted — bumping updatedAt. An optional `note` (trimmed) is appended to the
+    // copy's comments on its own line, so the reason it left the collection (sold,
+    // lost, traded…) stays on the record. Throws CardCopyError if no copy has that id.
+    void remove(const CardCopyId& id, const std::string& note = "");
 
     // Permanently delete a copy row (something added by mistake). Throws
     // CardCopyError if no copy has that id.

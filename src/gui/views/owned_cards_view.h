@@ -44,16 +44,19 @@ private:
     // Hide rows that don't match the search text (case-insensitive substring over
     // every visible column), and refresh the "Showing N of M" count.
     void applyFilter();
-    // Enable the Assign button only when a row is selected.
+    // Enable the row-action buttons only when a row is selected.
     void updateButtonState();
     // Open the binder picker for the selected copy and file it accordingly.
     void assignSelected();
+    // Soft-remove the selected copy, prompting for an optional note to append.
+    void removeSelected();
 
     CardCopyService& copies_;
     BinderService& binders_;
     QLineEdit* search_;
     QTableWidget* table_;
     QPushButton* assignButton_;
+    QPushButton* removeButton_;
     QLabel* countLabel_;
     // The copies backing the current rows, in display order (row i ⇄ loaded_[i]);
     // filtering only hides rows, so this stays aligned with the table.

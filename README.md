@@ -30,10 +30,10 @@ I can put maintain historical data similary to what video games do like
 when the creature was captured, where, price, from who, special variation,
 observed imperfections etc., which help me both to reevaluate value over
 time and to possibly investigate frauds in the future.~~
-- As a user, I want to remove a card I own with an optional note
+- ~~As a user, I want to remove a card I own with an optional note
 to append to the comments, so I can keep auditable track of
 what I owned but don't own anymore and still have clear stats even
-with removed cards still being reasonably easily discovered.
+with removed cards still being reasonably easily discovered.~~
 - As a user, I want to hard delete a card that I previously removed,
 so I can keep my data clean of things that were inserted by mistake.
 - ~~As a user, I want to manage a card wishlist to a Pokémon registry,

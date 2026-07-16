@@ -2,6 +2,7 @@
 
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
@@ -85,11 +86,16 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders, 
     assignButton_->setIcon(style()->standardIcon(QStyle::SP_DirOpenIcon));
     connect(assignButton_, &QPushButton::clicked, this, &OwnedCardsView::assignSelected);
 
+    removeButton_ = new QPushButton(tr("Remove…"), this);
+    removeButton_->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
+    connect(removeButton_, &QPushButton::clicked, this, &OwnedCardsView::removeSelected);
+
     countLabel_ = new QLabel(this);
     countLabel_->setEnabled(false);  // muted: a status detail, not an action
 
     auto* buttons = new QHBoxLayout;
     buttons->addWidget(assignButton_);
+    buttons->addWidget(removeButton_);
     buttons->addStretch();
 
     auto* layout = new QVBoxLayout(this);
@@ -171,8 +177,9 @@ void OwnedCardsView::applyFilter() {
 }
 
 void OwnedCardsView::updateButtonState() {
-    const int row = table_->currentRow();
-    assignButton_->setEnabled(row >= 0 && !table_->selectedItems().isEmpty());
+    const bool hasSelection = table_->currentRow() >= 0 && !table_->selectedItems().isEmpty();
+    assignButton_->setEnabled(hasSelection);
+    removeButton_->setEnabled(hasSelection);
 }
 
 void OwnedCardsView::assignSelected() {
@@ -190,6 +197,34 @@ void OwnedCardsView::assignSelected() {
     } catch (const std::exception& e) {
         QMessageBox::critical(this, tr("Pokedex TCG"),
                               tr("Could not file the card:\n%1").arg(QString::fromUtf8(e.what())));
+    }
+    reload();
+}
+
+void OwnedCardsView::removeSelected() {
+    const int row = table_->currentRow();
+    if (row < 0 || row >= static_cast<int>(loaded_.size())) {
+        return;
+    }
+    const CardCopy& copy = loaded_[row];
+    // One dialog serves as both the confirmation and the optional note: OK removes
+    // (the copy is kept as Removed for auditable history), Cancel aborts. A blank
+    // note just removes without appending.
+    bool ok = false;
+    const QString note = QInputDialog::getMultiLineText(
+        this, tr("Remove card"),
+        tr("Removing keeps the card in your history as Removed.\n"
+           "Optionally add a note (why it left — sold, traded, lost…):"),
+        QString(), &ok);
+    if (!ok) {
+        return;
+    }
+    try {
+        copies_.remove(copy.id, note.toStdString());
+    } catch (const std::exception& e) {
+        QMessageBox::critical(
+            this, tr("Pokedex TCG"),
+            tr("Could not remove the card:\n%1").arg(QString::fromUtf8(e.what())));
     }
     reload();
 }

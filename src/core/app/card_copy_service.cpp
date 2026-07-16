@@ -82,9 +82,14 @@ void CardCopyService::assignToBinder(const CardCopyId& id, std::optional<CardBin
     repo_.update(copy);
 }
 
-void CardCopyService::remove(const CardCopyId& id) {
+void CardCopyService::remove(const CardCopyId& id, const std::string& note) {
     CardCopy copy = require(id);
     copy.ownership = CardOwnership::Removed;
+    if (const std::string trimmedNote = trim(note); !trimmedNote.empty()) {
+        // Append on its own line so existing history is preserved.
+        copy.comments =
+            copy.comments.empty() ? trimmedNote : copy.comments + "\n" + trimmedNote;
+    }
     copy.updatedAt = clock_();
     repo_.update(copy);
 }
