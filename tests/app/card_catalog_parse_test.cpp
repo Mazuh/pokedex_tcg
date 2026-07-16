@@ -99,6 +99,19 @@ TEST(ResolveSetFilterToIdsTest, UnknownOrBlankFilterYieldsNothing) {
     EXPECT_TRUE(resolveSetFilterToIds("   ", sets).empty());
 }
 
+// A 1-2 char fragment must NOT trigger name-substring matching (it would match a
+// huge fraction of sets); exact-code matching still works at any length.
+TEST(ResolveSetFilterToIdsTest, ShortFragmentDoesNotNameMatchButExactCodeStillDoes) {
+    const std::vector<CardSetInfo> sets = sampleSets();
+    // "ce" is a substring of "Celebrations" but is only 2 chars → no name match, and
+    // no set has the exact code "ce" → nothing.
+    EXPECT_TRUE(resolveSetFilterToIds("ce", sets).empty());
+    // A real 2-char exact code would still resolve (none in the sample; assert the
+    // 3-char name path re-enables matching).
+    EXPECT_EQ(resolveSetFilterToIds("cel", sets),
+              (std::vector<std::string>{"cel25", "cel25c"}));
+}
+
 // A /v2/cards payload exercising the mapping edge cases:
 //  - a card whose set is in the table AND whose embedded ptcgoCode is null:
 //    the code must come from the table (OBF), not the embedded null;

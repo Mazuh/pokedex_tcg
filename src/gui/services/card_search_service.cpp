@@ -34,6 +34,10 @@ constexpr double kSustainedPerSecond = 5.0;
 // retried a few times with growing delays before it surfaces as failed().
 constexpr int kMaxSearchRetries = 3;
 constexpr int kBackoffBaseMs = 400;
+// A filter that resolves to more than this many sets isn't a useful narrow and
+// would OR that many set.id clauses into the query URL (risking the API's length
+// limit), so treat it as unnarrowed.
+constexpr std::size_t kMaxNarrowSets = 12;
 
 std::int64_t monotonicNowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -137,8 +141,12 @@ void CardSearchService::dispatchSearch() {
     if (!req.setCodeFilter.trimmed().isEmpty()) {
         // Resolve the typed set filter (code or name) to set ids. An in-progress
         // value that matches nothing yet resolves to no ids → search unnarrowed
-        // rather than showing an empty list mid-typing.
+        // rather than showing an empty list mid-typing. A filter matching too many
+        // sets is dropped (unnarrowed) to keep the query URL bounded.
         query.setIds = resolveSetFilterToIds(req.setCodeFilter.toStdString(), sets_);
+        if (query.setIds.size() > kMaxNarrowSets) {
+            query.setIds.clear();
+        }
     }
     startCardFetch(req.dexNumber, req.generation,
                    QString::fromStdString(api_.resolveSearch(query).url), kMaxSearchRetries);

@@ -63,7 +63,8 @@ private:
                           const std::vector<CardCandidate>& cards);
     void onPrintingsFailed(std::uint64_t requestId, int dexNumber);
     void onThumbnailReady(const QString& cardId, const QPixmap& pixmap);
-    void rebuildSetCompleter();
+    void rebuildCompleters();          // typeahead completers for the code + set fields
+    void chooseSet(const CardSetInfo& set);  // cross-fill both fields from one set + narrow
 
     void loadMore();       // append the next chunk of printings (never rebuilds shown rows)
     void fillViewport();   // append until the list overflows its viewport

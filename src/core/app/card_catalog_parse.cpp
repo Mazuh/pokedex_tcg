@@ -168,12 +168,18 @@ std::vector<std::string> resolveSetFilterToIds(const std::string& typed,
     if (want.empty()) {
         return ids;
     }
+    // Substring name matching only kicks in at 3+ chars: a 1-2 char fragment ("e",
+    // "ma") would match a large fraction of the ~150 sets, which is both useless as
+    // a narrow and risks an over-long OR query. Exact-code matching has no minimum
+    // (codes are short, e.g. "BS").
+    const bool allowNameMatch = want.size() >= 3;
     for (const CardSetInfo& s : sets) {
         // Match an exact printed code (e.g. "OBF"), OR a substring of the set name
         // (e.g. "mcdonald" → every McDonald's Collection year) — the latter is the
         // only way to narrow to a code-less set.
         const bool codeMatch = !s.ptcgoCode.empty() && toLowerAscii(s.ptcgoCode) == want;
-        const bool nameMatch = toLowerAscii(s.name).find(want) != std::string::npos;
+        const bool nameMatch =
+            allowNameMatch && toLowerAscii(s.name).find(want) != std::string::npos;
         if (codeMatch || nameMatch) {
             ids.push_back(s.id);
         }

@@ -81,14 +81,15 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
 
     expansionCode_ = new QLineEdit(formPane);
     expansionCode_->setPlaceholderText(tr("e.g. OBF"));
-    // Editing either the code or the set name narrows the list (by code OR set-name
-    // substring). Only USER edits narrow — programmatic autofill uses setText(),
-    // which fires textChanged but NOT textEdited, so there is no feedback loop.
-    connect(expansionCode_, &QLineEdit::textEdited, this,
-            [this](const QString& text) { searchWith(text); });
+    // Stored data only — narrowing the printings is driven by the Set field below, so
+    // this field never re-searches (a partial code is not a valid narrow and would
+    // hide the target card mid-typing). Its completer cross-fills the set name.
 
     setName_ = new QLineEdit(formPane);
-    setName_->setPlaceholderText(tr("e.g. Obsidian Flames or McDonald's"));
+    setName_->setPlaceholderText(tr("filter by set — e.g. Obsidian Flames, OBF, McDonald's"));
+    // The single narrowing input: matches an exact code OR a set-name substring.
+    // setText() (autofill / completer) fires textChanged, not textEdited, so there
+    // is no feedback loop.
     connect(setName_, &QLineEdit::textEdited, this,
             [this](const QString& text) { searchWith(text); });
 
@@ -186,8 +187,8 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
     connect(&search_, &CardSearchService::thumbnailReady, this,
             &AddCardCopyPage::onThumbnailReady);
     connect(&search_, &CardSearchService::setsReady, this,
-            &AddCardCopyPage::rebuildSetCompleter);
-    rebuildSetCompleter();  // sets may already be cached from a prior open
+            &AddCardCopyPage::rebuildCompleters);
+    rebuildCompleters();  // sets may already be cached from a prior open
 
     updateStatus();
     updateSubmitEnabled();
@@ -300,28 +301,64 @@ void AddCardCopyPage::searchWith(const QString& filter) {
     pendingRequestId_ = search_.searchPrintings(dexNumber_, filter);
 }
 
-void AddCardCopyPage::rebuildSetCompleter() {
-    // A set-name completer on the Set field, over EVERY set (code-less sets have a
-    // name but no code, so a code-based picker would miss them). Picking a name
-    // fills it and narrows the printings to that set.
-    QStringList names;
+void AddCardCopyPage::chooseSet(const CardSetInfo& set) {
+    // Fill BOTH stored fields from one chosen set (so a coded set keeps its code even
+    // when picked by name, and vice-versa), then narrow to it. setText() does not
+    // fire textEdited, so this does not recurse.
+    expansionCode_->setText(QString::fromStdString(set.ptcgoCode));
+    setName_->setText(QString::fromStdString(set.name));
+    searchWith(QString::fromStdString(set.name.empty() ? set.ptcgoCode : set.name));
+}
+
+void AddCardCopyPage::rebuildCompleters() {
+    // Two typeahead completers over the in-memory set table: codes on the Expansion
+    // field ("CODE — Name"), names on the Set field. Picking from EITHER cross-fills
+    // both fields (chooseSet) so nothing is silently dropped. Code-less sets appear
+    // only in the name completer (they have no code).
+    // Plain codes (not "CODE — Name") so the completer's own text-set leaves a clean
+    // "OBF" in the field rather than a decorated string; chooseSet then cross-fills.
+    QStringList codeEntries;
+    QStringList nameEntries;
     for (const CardSetInfo& s : search_.sets()) {
+        if (!s.ptcgoCode.empty()) {
+            codeEntries << QString::fromStdString(s.ptcgoCode);
+        }
         if (!s.name.empty()) {
-            names << QString::fromStdString(s.name);
+            nameEntries << QString::fromStdString(s.name);
         }
     }
-    names.removeDuplicates();
-    names.sort(Qt::CaseInsensitive);
+    codeEntries.removeDuplicates();
+    codeEntries.sort(Qt::CaseInsensitive);
+    nameEntries.removeDuplicates();
+    nameEntries.sort(Qt::CaseInsensitive);
 
-    auto* completer = new QCompleter(names, setName_);
-    completer->setCaseSensitivity(Qt::CaseInsensitive);
-    completer->setFilterMode(Qt::MatchContains);
-    connect(completer, qOverload<const QString&>(&QCompleter::activated), this,
+    auto* codeCompleter = new QCompleter(codeEntries, expansionCode_);
+    codeCompleter->setCaseSensitivity(Qt::CaseInsensitive);
+    codeCompleter->setFilterMode(Qt::MatchContains);
+    connect(codeCompleter, qOverload<const QString&>(&QCompleter::activated), this,
             [this](const QString& picked) {
-                setName_->setText(picked);
-                searchWith(picked);  // an explicit pick should narrow the list
+                for (const CardSetInfo& s : search_.sets()) {
+                    if (QString::fromStdString(s.ptcgoCode) == picked) {
+                        chooseSet(s);
+                        break;
+                    }
+                }
             });
-    setName_->setCompleter(completer);
+    expansionCode_->setCompleter(codeCompleter);
+
+    auto* nameCompleter = new QCompleter(nameEntries, setName_);
+    nameCompleter->setCaseSensitivity(Qt::CaseInsensitive);
+    nameCompleter->setFilterMode(Qt::MatchContains);
+    connect(nameCompleter, qOverload<const QString&>(&QCompleter::activated), this,
+            [this](const QString& picked) {
+                for (const CardSetInfo& s : search_.sets()) {
+                    if (QString::fromStdString(s.name) == picked) {
+                        chooseSet(s);
+                        break;
+                    }
+                }
+            });
+    setName_->setCompleter(nameCompleter);
 }
 
 void AddCardCopyPage::updateSubmitEnabled() {
