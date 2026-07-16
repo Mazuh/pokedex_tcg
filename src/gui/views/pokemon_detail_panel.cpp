@@ -2,7 +2,9 @@
 
 #include <QFont>
 #include <QLabel>
+#include <QPushButton>
 #include <QResizeEvent>
+#include <QStyle>
 #include <QVBoxLayout>
 
 #include "gui/services/media_service.h"
@@ -26,6 +28,16 @@ PokemonDetailPanel::PokemonDetailPanel(MediaService& media, WishlistService& wis
     image_->setMinimumSize(160, 160);
     image_->setEnabled(false);  // muted placeholder text until an image arrives
 
+    // Add-copy action sits between the art and the wishlist editor. It relays the
+    // request upward (the panel is embedded, so it can't host the page itself).
+    addCopyButton_ = new QPushButton(tr("Add copy…"), this);
+    addCopyButton_->setIcon(style()->standardIcon(QStyle::SP_FileDialogNewFolder));
+    connect(addCopyButton_, &QPushButton::clicked, this, [this]() {
+        if (currentDex_ >= 0) {
+            Q_EMIT addCopyRequested(currentDex_, name_->text());
+        }
+    });
+
     // The wishlist sources editor sits below the art. The artwork keeps the
     // stretch so it takes the slack; the editor stays at its natural height.
     wishlistEditor_ = new WishlistSourcesEditor(wishlist_, this);
@@ -34,6 +46,7 @@ PokemonDetailPanel::PokemonDetailPanel(MediaService& media, WishlistService& wis
     layout->setContentsMargins(16, 16, 16, 16);
     layout->addWidget(name_);
     layout->addWidget(image_, /*stretch=*/1);
+    layout->addWidget(addCopyButton_);
     layout->addWidget(wishlistEditor_);
 
     // `this` is the receiver, so Qt auto-disconnects when the panel is destroyed
@@ -55,6 +68,7 @@ void PokemonDetailPanel::showPokemon(int dexNumber, const QString& name) {
     placeholder_ = tr("Loading…");
     renderImage();
     media_.request({dexNumber, name.toStdString()}, MediaKind::OfficialArtwork);
+    addCopyButton_->setEnabled(true);
     wishlistEditor_->setPokemon(dexNumber);
 }
 
@@ -65,6 +79,7 @@ void PokemonDetailPanel::clear() {
     image_->setEnabled(false);  // muted placeholder, even after a prior load enabled it
     placeholder_ = tr("Select a Pokémon to see its artwork.");
     renderImage();
+    addCopyButton_->setEnabled(false);
     wishlistEditor_->clear();
 }
 

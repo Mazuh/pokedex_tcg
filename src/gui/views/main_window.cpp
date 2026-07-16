@@ -14,8 +14,8 @@ namespace pokedex {
 
 MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
                        PokemonBrowseService& browse, WishlistService& wishlist,
-                       MediaService& media, const QString& collectionPath,
-                       QWidget* parent)
+                       MediaService& media, CardSearchService& cardSearch,
+                       const QString& collectionPath, QWidget* parent)
     : QWidget(parent) {
     setWindowTitle(tr("Pokedex TCG"));
     resize(900, 600);
@@ -43,8 +43,9 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
     // Section order must match the sidebar row order above: a row selects the
     // stack page at the same index.
     sections_ = new QStackedWidget(this);
-    sections_->addWidget(new BindersPage(binderService, guide, wishlist, media, collectionPath));
-    sections_->addWidget(new PokemonListView(browse, wishlist, media));
+    sections_->addWidget(
+        new BindersPage(binderService, guide, wishlist, media, cardSearch, collectionPath));
+    sections_->addWidget(new PokemonListView(browse, wishlist, media, cardSearch));
     sections_->addWidget(new WishlistView(wishlist));
 
     connect(sidebar, &QListWidget::currentRowChanged, sections_,

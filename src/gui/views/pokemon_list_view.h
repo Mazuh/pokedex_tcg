@@ -8,11 +8,13 @@
 
 class QLabel;
 class QLineEdit;
+class QStackedWidget;
 class QTableWidget;
 
 namespace pokedex {
 
 class MediaService;
+class CardSearchService;
 class WishlistService;
 class PokemonDetailPanel;
 
@@ -32,7 +34,8 @@ class PokemonListView : public QWidget {
 
 public:
     PokemonListView(PokemonBrowseService& service, WishlistService& wishlist,
-                    MediaService& media, QWidget* parent = nullptr);
+                    MediaService& media, CardSearchService& cardSearch,
+                    QWidget* parent = nullptr);
 
 protected:
     // Watches the table viewport's resize so the list keeps filling a viewport
@@ -58,8 +61,13 @@ private:
     // number and name from the row's cells (columns 0 and 1), so it is immune to
     // the filtered_-index indirection.
     void showRow(int row);
+    // Push an AddCardCopyPage for `dexNumber` onto the inner stack; its Back pops
+    // and disposes it, returning to the browse splitter.
+    void openAddCopy(int dexNumber, const QString& name);
 
     PokemonBrowseService& service_;
+    CardSearchService& cardSearch_;
+    QStackedWidget* stack_;
     QLineEdit* search_;
     QTableWidget* table_;
     QLabel* countLabel_;

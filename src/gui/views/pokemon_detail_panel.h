@@ -7,6 +7,7 @@
 #include "core/app/pokemon_external_api.h"
 
 class QLabel;
+class QPushButton;
 
 namespace pokedex {
 
@@ -39,6 +40,12 @@ public:
     // Empty state: no selection.
     void clear();
 
+Q_SIGNALS:
+    // The user asked to add a card copy for the shown Pokémon. The panel is
+    // embedded (in a splitter), so it can't host a full page itself — the owning
+    // view turns this into a stack push to the AddCardCopyPage.
+    void addCopyRequested(int dexNumber, const QString& name);
+
 protected:
     void resizeEvent(QResizeEvent* event) override;
 
@@ -54,6 +61,7 @@ private:
     int currentDex_ = -1;  // the dex we currently want shown; guards stale results
     QLabel* name_;
     QLabel* image_;
+    QPushButton* addCopyButton_;
     WishlistSourcesEditor* wishlistEditor_;
     QPixmap originalPixmap_;  // full-resolution artwork; rescaled on resize
     QString placeholder_;     // text shown when there is no pixmap

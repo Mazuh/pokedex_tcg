@@ -6,6 +6,7 @@
 #include <QLineEdit>
 #include <QScrollBar>
 #include <QSplitter>
+#include <QStackedWidget>
 #include <QString>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -13,6 +14,7 @@
 
 #include <algorithm>
 
+#include "gui/views/add_card_copy_page.h"
 #include "gui/views/pokemon_detail_panel.h"
 #include "gui/views/region_labels.h"
 #include "gui/views/splitter_style.h"
@@ -34,8 +36,9 @@ constexpr int kPrefetchMargin = 64;
 }  // namespace
 
 PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService& wishlist,
-                                 MediaService& media, QWidget* parent)
-    : QWidget(parent), service_(service) {
+                                 MediaService& media, CardSearchService& cardSearch,
+                                 QWidget* parent)
+    : QWidget(parent), service_(service), cardSearch_(cardSearch) {
     search_ = new QLineEdit(this);
     search_->setPlaceholderText(tr("Search Pokémon…"));
     search_->setClearButtonEnabled(true);
@@ -77,6 +80,8 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService&
     // just fire showRow twice per click. Row → data is read from the cells,
     // sidestepping the filtered_ map.
     connect(table_, &QTableWidget::currentCellChanged, this, &PokemonListView::showRow);
+    // The detail panel's "Add copy" relays up to an in-place page push.
+    connect(detail_, &PokemonDetailPanel::addCopyRequested, this, &PokemonListView::openAddCopy);
     // Infinite scroll: append the next chunk as the user nears the bottom. The
     // complementary "viewport isn't full yet" case (first show, or the window
     // grew taller than the loaded rows, where no scrollbar exists) is handled by
@@ -107,9 +112,14 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService&
     splitter->setSizes({560, 240});
     thinDivider(splitter);
 
+    // Page 0 of an inner stack is the browse splitter; "Add copy" pushes an
+    // AddCardCopyPage as page 1 (the BindersPage list ⇄ detail idiom).
+    stack_ = new QStackedWidget(this);
+    stack_->addWidget(splitter);
+
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->addWidget(splitter);
+    layout->addWidget(stack_);
 
     // Compute the whole catalog once; filtering and lazy loading only work the
     // cached vector, never re-query. applyFilter() seeds filtered_ and loads
@@ -170,6 +180,17 @@ void PokemonListView::showRow(int row) {
     }
     shownDex_ = number->text().toInt();
     detail_->showPokemon(shownDex_, name->text());
+}
+
+void PokemonListView::openAddCopy(int dexNumber, const QString& name) {
+    auto* page = new AddCardCopyPage(cardSearch_, dexNumber, name);
+    connect(page, &AddCardCopyPage::backRequested, this, [this, page]() {
+        stack_->setCurrentIndex(0);
+        stack_->removeWidget(page);
+        page->deleteLater();
+    });
+    stack_->addWidget(page);
+    stack_->setCurrentWidget(page);
 }
 
 void PokemonListView::loadMore() {

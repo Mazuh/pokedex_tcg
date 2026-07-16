@@ -7,6 +7,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSplitter>
+#include <QStackedWidget>
 #include <QString>
 #include <QStyle>
 #include <QTableWidget>
@@ -16,6 +17,7 @@
 #include <exception>
 
 #include "core/app/binder_guide_service.h"
+#include "gui/views/add_card_copy_page.h"
 #include "gui/views/pokemon_detail_panel.h"
 #include "gui/views/region_labels.h"
 #include "gui/views/splitter_style.h"
@@ -37,8 +39,9 @@ QString headingText(const CardBinder& binder) {
 }  // namespace
 
 BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
-                       WishlistService& wishlist, MediaService& media, QWidget* parent)
-    : QWidget(parent) {
+                       WishlistService& wishlist, MediaService& media,
+                       CardSearchService& cardSearch, QWidget* parent)
+    : QWidget(parent), cardSearch_(cardSearch) {
     auto* backButton = new QPushButton(tr("Back"), this);
     backButton->setIcon(style()->standardIcon(QStyle::SP_ArrowBack));
     auto* heading = new QLabel(headingText(binder), this);
@@ -82,6 +85,8 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     // just fire showRow twice per click. (cellActivated would be double-click/Enter
     // — the wrong gesture.)
     connect(table_, &QTableWidget::currentCellChanged, this, &BinderView::showRow);
+    // The detail panel's "Add copy" relays up to an in-place page push.
+    connect(detail_, &PokemonDetailPanel::addCopyRequested, this, &BinderView::openAddCopy);
 
     // The list (top bar + search + table) on the left, the detail panel on the
     // right, in a draggable horizontal split. The list takes the slack.
@@ -100,9 +105,14 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     splitter->setSizes({560, 240});
     thinDivider(splitter);
 
+    // Page 0 of an inner stack is the guide splitter; "Add copy" pushes an
+    // AddCardCopyPage as page 1 and Back returns here.
+    stack_ = new QStackedWidget(this);
+    stack_->addWidget(splitter);
+
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->addWidget(splitter);
+    layout->addWidget(stack_);
 
     // Compute the guide once; the search box only re-filters this cached vector,
     // never re-queries. A failure here (e.g. the workspace went away) is reported
@@ -160,6 +170,17 @@ void BinderView::showRow(int row) {
     }
     shownDex_ = number->text().toInt();
     detail_->showPokemon(shownDex_, name->text());
+}
+
+void BinderView::openAddCopy(int dexNumber, const QString& name) {
+    auto* page = new AddCardCopyPage(cardSearch_, dexNumber, name);
+    connect(page, &AddCardCopyPage::backRequested, this, [this, page]() {
+        stack_->setCurrentIndex(0);
+        stack_->removeWidget(page);
+        page->deleteLater();
+    });
+    stack_->addWidget(page);
+    stack_->setCurrentWidget(page);
 }
 
 }  // namespace pokedex

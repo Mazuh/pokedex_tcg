@@ -17,6 +17,7 @@ class BinderService;
 class BinderGuideService;
 class WishlistService;
 class MediaService;
+class CardSearchService;
 
 // GUI — the Binders section of the main window: a table of the user's binders
 // (name + region) with New / Rename / Remove actions, and Open to view a
@@ -38,7 +39,8 @@ public:
     // where their collection lives (it may be on a NAS, iCloud, etc.). `media` is
     // forwarded to each opened binder guide so its rows show a detail panel.
     BindersPage(BinderService& service, BinderGuideService& guide, WishlistService& wishlist,
-                MediaService& media, const QString& collectionPath, QWidget* parent = nullptr);
+                MediaService& media, CardSearchService& cardSearch,
+                const QString& collectionPath, QWidget* parent = nullptr);
 
 private:
     void refresh();
@@ -55,6 +57,7 @@ private:
     BinderGuideService& guide_;
     WishlistService& wishlist_;
     MediaService& media_;
+    CardSearchService& cardSearch_;
     QStackedWidget* stack_;
     QTableWidget* table_;
     QPushButton* renameButton_;

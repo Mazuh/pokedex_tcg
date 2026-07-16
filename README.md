@@ -20,9 +20,9 @@ a physical binder (it doesn't affect the cards containing it).~~
 - ~~As a user, I want to choose where my collection workspace is stored,
 so that I can use a local directory, iCloud Drive, Dropbox, a NAS, or
 another synchronized folder.~~
-- As a user, I want to browse any existing cards for each Pokémon,
+- ~~As a user, I want to browse any existing cards for each Pokémon,
 so I can assign them to a binder or simply say that I own it
-(this is an optional part of marking a Pokémon as collected).
+(this is an optional part of marking a Pokémon as collected).~~
 - As a user, I want to browse within my owned cards, so I can keep
 track of my inventory.
 - As a user, I want to add a free text comment to a card I own, so

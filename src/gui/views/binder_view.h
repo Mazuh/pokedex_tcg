@@ -8,6 +8,7 @@
 #include "core/domain/card_binder_entry.h"
 
 class QLineEdit;
+class QStackedWidget;
 class QTableWidget;
 
 namespace pokedex {
@@ -15,6 +16,7 @@ namespace pokedex {
 class BinderGuideService;
 class WishlistService;
 class MediaService;
+class CardSearchService;
 class PokemonDetailPanel;
 
 // GUI — the "open binder" screen: the binder's guide as a list of its Pokémon,
@@ -31,7 +33,8 @@ class BinderView : public QWidget {
 
 public:
     BinderView(BinderGuideService& guide, const CardBinder& binder,
-               WishlistService& wishlist, MediaService& media, QWidget* parent = nullptr);
+               WishlistService& wishlist, MediaService& media, CardSearchService& cardSearch,
+               QWidget* parent = nullptr);
 
 Q_SIGNALS:
     // Emitted when the user asks to leave this page (the Back button). The owner
@@ -45,7 +48,12 @@ private:
     // Show the clicked/selected row's Pokémon in the detail panel. Reads the dex
     // number and name from the row's cells (columns 0 and 1).
     void showRow(int row);
+    // Push an AddCardCopyPage for `dexNumber` onto the inner stack; its Back pops
+    // and disposes it, returning to the binder guide.
+    void openAddCopy(int dexNumber, const QString& name);
 
+    CardSearchService& cardSearch_;
+    QStackedWidget* stack_;
     QTableWidget* table_;
     QLineEdit* search_;
     PokemonDetailPanel* detail_;

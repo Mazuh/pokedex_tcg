@@ -11,11 +11,13 @@
 #include "core/app/install_service.h"
 #include "core/app/poke_api.h"
 #include "core/app/pokemon_browse_service.h"
+#include "core/app/pokemon_tcg_io_api.h"
 #include "core/app/wishlist_service.h"
 #include "core/storage/card_binder_repository.h"
 #include "core/storage/card_copy_repository.h"
 #include "core/storage/database.h"
 #include "core/storage/wishlist_repository.h"
+#include "gui/services/card_search_service.h"
 #include "gui/services/media_service.h"
 #include "gui/views/first_run_dialog.h"
 #include "gui/views/main_window.h"
@@ -81,8 +83,15 @@ int main(int argc, char *argv[]) {
         pokedex::MediaService media(
             externalApi, QString::fromStdString(workspace->mediaDir().string()));
 
+        // The card-catalog adapter (swap this line to change card sources) and the
+        // search/transport service backing the "Add copy" flow. Locals here so they
+        // outlive app.exec(); one shared instance serves every section. It caches
+        // nothing to disk — search results are display-only.
+        pokedex::PokemonTcgIoApi cardApi;
+        pokedex::CardSearchService cardSearch(cardApi);
+
         pokedex::MainWindow window(
-            service, guide, browse, wishlist, media,
+            service, guide, browse, wishlist, media, cardSearch,
             QString::fromStdString(workspace->root().string()));
         window.show();
 

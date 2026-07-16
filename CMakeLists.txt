@@ -91,6 +91,25 @@ if(NOT TARGET SQLite3::SQLite3)
         INTERFACE_INCLUDE_DIRECTORIES "${SQLite3_INCLUDE_DIR}")
 endif()
 
+# --- JSON parsing (nlohmann/json) --------------------------------------------
+# The card-catalog seam parses pokemontcg.io JSON payloads in Qt-free core, so a
+# JSON library is needed here (SQLite gives us no JSON). Fetched from source like
+# GoogleTest and linked PRIVATE into pokedex_core — it never appears in a public
+# core header (the parsers take/return std::string + plain structs), so the core
+# interface stays dependency-agnostic. JSON_SystemInclude marks its headers SYSTEM
+# so our -Werror build is not tripped by the library's own headers; JSON_BuildTests
+# keeps its test suite out of our build.
+include(FetchContent)
+set(JSON_BuildTests OFF CACHE INTERNAL "")
+set(JSON_SystemInclude ON CACHE INTERNAL "")
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(nlohmann_json)
+
 add_library(pokedex_core STATIC
     src/core/domain/pokemon_catalog.cpp
     src/core/storage/workspace.cpp
@@ -106,12 +125,14 @@ add_library(pokedex_core STATIC
     src/core/app/pokemon_browse_service.cpp
     src/core/app/wishlist_service.cpp
     src/core/app/poke_api.cpp
+    src/core/app/pokemon_tcg_io_api.cpp
+    src/core/app/card_catalog_parse.cpp
     src/core/app/media_cache_layout.cpp
     src/core/app/rate_limiter.cpp
 )
 target_include_directories(pokedex_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(pokedex_core
-    PRIVATE pokedex_warnings pokedex_sanitizers SQLite3::SQLite3)
+    PRIVATE pokedex_warnings pokedex_sanitizers SQLite3::SQLite3 nlohmann_json::nlohmann_json)
 
 # --- GUI application (Qt 6 Widgets) ------------------------------------------
 # Network is used only by the GUI's media-fetching service (MediaService); core
@@ -129,9 +150,11 @@ qt_add_executable(pokedex_tcg
     src/gui/views/binder_view.cpp
     src/gui/views/pokemon_list_view.cpp
     src/gui/views/pokemon_detail_panel.cpp
+    src/gui/views/add_card_copy_page.cpp
     src/gui/views/wishlist_sources_editor.cpp
     src/gui/views/wishlist_view.cpp
     src/gui/services/media_service.cpp
+    src/gui/services/card_search_service.cpp
 )
 target_link_libraries(pokedex_tcg PRIVATE pokedex_core pokedex_warnings pokedex_sanitizers Qt6::Widgets Qt6::Network)
 
@@ -182,6 +205,8 @@ if(BUILD_TESTING)
         tests/app/pokemon_browse_service_test.cpp
         tests/app/wishlist_service_test.cpp
         tests/app/pokemon_external_api_test.cpp
+        tests/app/pokemon_tcg_io_api_test.cpp
+        tests/app/card_catalog_parse_test.cpp
         tests/app/rate_limiter_test.cpp
     )
     target_link_libraries(pokedex_tests PRIVATE pokedex_core pokedex_warnings pokedex_sanitizers GTest::gtest_main)
