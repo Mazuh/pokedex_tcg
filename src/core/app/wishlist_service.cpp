@@ -5,22 +5,11 @@
 
 #include "core/domain/pokemon_catalog.h"
 #include "core/storage/wishlist_repository.h"
+#include "core/strings.h"
 
 namespace pokedex {
 
 namespace {
-
-// Trim surrounding ASCII whitespace. Sources are user-entered, so a blank or
-// whitespace-only value is rejected rather than stored verbatim.
-std::string trim(const std::string& s) {
-    const char* ws = " \t\n\r\f\v";
-    const auto begin = s.find_first_not_of(ws);
-    if (begin == std::string::npos) {
-        return {};
-    }
-    const auto end = s.find_last_not_of(ws);
-    return s.substr(begin, end - begin + 1);
-}
 
 std::string requireSource(const std::string& raw) {
     std::string source = trim(raw);

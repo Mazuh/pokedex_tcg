@@ -184,7 +184,7 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
 
     updateStatus();
     updateSubmitEnabled();
-    search_.searchPrintings(dexNumber_, QString());
+    pendingRequestId_ = search_.searchPrintings(dexNumber_, QString());
 }
 
 bool AddCardCopyPage::eventFilter(QObject* watched, QEvent* event) {
@@ -194,9 +194,11 @@ bool AddCardCopyPage::eventFilter(QObject* watched, QEvent* event) {
     return QWidget::eventFilter(watched, event);
 }
 
-void AddCardCopyPage::onPrintingsReady(int dexNumber, const std::vector<CardCandidate>& cards) {
-    if (dexNumber != dexNumber_) {
-        return;  // a result for a different species (defensive; the service also guards)
+void AddCardCopyPage::onPrintingsReady(std::uint64_t requestId, int dexNumber,
+                                       const std::vector<CardCandidate>& cards) {
+    Q_UNUSED(dexNumber);
+    if (requestId != pendingRequestId_) {
+        return;  // not this page's latest search (another live page, or superseded)
     }
     loading_ = false;
     candidates_ = cards;
@@ -207,8 +209,9 @@ void AddCardCopyPage::onPrintingsReady(int dexNumber, const std::vector<CardCand
     updateStatus();
 }
 
-void AddCardCopyPage::onPrintingsFailed(int dexNumber) {
-    if (dexNumber != dexNumber_) {
+void AddCardCopyPage::onPrintingsFailed(std::uint64_t requestId, int dexNumber) {
+    Q_UNUSED(dexNumber);
+    if (requestId != pendingRequestId_) {
         return;
     }
     loading_ = false;
@@ -249,7 +252,11 @@ void AddCardCopyPage::fillViewport() {
     }
     filling_ = true;
     const int total = static_cast<int>(candidates_.size());
-    const int rowHeight = std::max(1, printings_->sizeHintForRow(0));
+    // On the first fill the list is empty, so sizeHintForRow(0) returns -1; fall back
+    // to the icon height (a row is at least the thumbnail tall) so we load one chunk,
+    // not the whole result set.
+    const int measured = printings_->sizeHintForRow(0);
+    const int rowHeight = measured > 0 ? measured : kThumbH + 8;
     const int needed = printings_->viewport()->height() / rowHeight + 2;
     while (loadedCount_ < total && loadedCount_ < needed) {
         const int before = loadedCount_;
@@ -282,7 +289,7 @@ void AddCardCopyPage::selectCandidate(int index) {
 void AddCardCopyPage::narrowByExpansionCode() {
     loading_ = true;
     updateStatus();
-    search_.searchPrintings(dexNumber_, expansionCode_->text());
+    pendingRequestId_ = search_.searchPrintings(dexNumber_, expansionCode_->text());
 }
 
 void AddCardCopyPage::rebuildExpansionCompleter() {

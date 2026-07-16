@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QString>
 #include <QWidget>
 
 #include <vector>
@@ -61,6 +62,9 @@ private:
     // The copies backing the current rows, in display order (row i ⇄ loaded_[i]);
     // filtering only hides rows, so this stays aligned with the table.
     std::vector<CardCopy> loaded_;
+    // Per-row lowercased search text, precomputed in reload() so filtering is a
+    // plain substring compare with no per-keystroke allocation (row i ⇄ haystacks_[i]).
+    std::vector<QString> haystacks_;
 };
 
 }  // namespace pokedex

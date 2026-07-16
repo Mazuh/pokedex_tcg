@@ -70,12 +70,14 @@ CardSearchService::CardSearchService(const CardCatalogApi& api, QObject* parent)
     connect(thumbPump_, &QTimer::timeout, this, &CardSearchService::pumpThumbnails);
 }
 
-void CardSearchService::searchPrintings(int dexNumber, const QString& setCodeFilter) {
-    // Bump the generation so any in-flight reply for an earlier request is now stale
-    // and will be dropped when it returns.
-    pendingSearch_ = PendingSearch{dexNumber, setCodeFilter, ++generation_};
+std::uint64_t CardSearchService::searchPrintings(int dexNumber, const QString& setCodeFilter) {
+    // Mint a unique id for this request; the reply carries it so the caller can tell
+    // its own result from another page's (this service is shared app-wide).
+    const std::uint64_t requestId = ++generation_;
+    pendingSearch_ = PendingSearch{dexNumber, setCodeFilter, requestId};
     ensureSetsLoading();  // load the set table once, in parallel with the debounce
     searchDebounce_->start(kDebounceMs);
+    return requestId;
 }
 
 void CardSearchService::ensureSetsLoading() {
@@ -152,44 +154,42 @@ void CardSearchService::startCardFetch(int dexNumber, std::uint64_t generation,
             [this, reply, dexNumber, generation, url, retriesLeft]() {
                 reply->deleteLater();
 
-                // Stale-guard: a newer search superseded this one (different species
-                // or filter), so its result is no longer wanted.
-                if (generation != generation_) {
-                    return;
-                }
-
+                // Every reply is emitted tagged with its request id (`generation`);
+                // routing to the right page is the caller's job — we do NOT drop by a
+                // global "latest" counter, since that would strand another live page's
+                // in-flight request whenever a second page searched.
                 if (reply->error() != QNetworkReply::NoError) {
                     if (isTransient(reply) && retriesLeft > 0) {
                         const int attempt = kMaxSearchRetries - retriesLeft;
                         const int delay = kBackoffBaseMs * (1 << attempt);  // 400, 800, 1600…
                         QTimer::singleShot(delay, this, [this, dexNumber, generation, url,
                                                          retriesLeft]() {
-                            if (generation == generation_) {
-                                startCardFetch(dexNumber, generation, url, retriesLeft - 1);
-                            }
+                            startCardFetch(dexNumber, generation, url, retriesLeft - 1);
                         });
                         return;
                     }
                     qWarning() << "CardSearchService: search failed for dex" << dexNumber << ":"
                                << reply->errorString();
-                    Q_EMIT printingsFailed(dexNumber);
+                    Q_EMIT printingsFailed(generation, dexNumber);
                     return;
                 }
 
                 try {
                     const std::vector<CardCandidate> cards =
                         parseCardSearchResponse(reply->readAll().toStdString(), sets_);
-                    Q_EMIT printingsReady(dexNumber, cards);
+                    Q_EMIT printingsReady(generation, dexNumber, cards);
                 } catch (const std::exception& e) {
                     qWarning() << "CardSearchService: could not parse search results for dex"
                                << dexNumber << ":" << e.what();
-                    Q_EMIT printingsFailed(dexNumber);
+                    Q_EMIT printingsFailed(generation, dexNumber);
                 }
             });
 }
 
 void CardSearchService::fetchThumbnail(const QString& cardId, const QString& imageUrl) {
-    if (imageUrl.isEmpty() || inFlightThumbs_.contains(cardId)) {
+    // A blank id can't key the in-flight set (an empty "" would block every other
+    // id-less thumbnail), and a blank url has nothing to fetch.
+    if (cardId.isEmpty() || imageUrl.isEmpty() || inFlightThumbs_.contains(cardId)) {
         return;
     }
     thumbQueue_.enqueue(ThumbRequest{cardId, imageUrl});

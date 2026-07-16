@@ -115,11 +115,8 @@ void CardCopyRepository::hardDelete(const CardCopyId& id) {
 }
 
 std::vector<CardCopy> CardCopyRepository::listByBinder(const CardBinderId& binderId) {
-    Statement stmt(db_,
-                   "SELECT id, pokemon_dex_num, ref_expansion, ref_language,"
-                   " ref_collector, ownership, condition, binder_id, comments,"
-                   " inserted_at, updated_at"
-                   " FROM card_copy WHERE binder_id = ? ORDER BY inserted_at, rowid;");
+    Statement stmt(db_, std::string("SELECT ") + kCopyColumns +
+                            " FROM card_copy WHERE binder_id = ? ORDER BY inserted_at, rowid;");
     stmt.bindText(1, binderId);
     std::vector<CardCopy> copies;
     while (stmt.step()) {

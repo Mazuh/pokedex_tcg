@@ -50,9 +50,12 @@ public:
     explicit CardSearchService(const CardCatalogApi& api, QObject* parent = nullptr);
 
     // Search `dexNumber`'s printings, optionally narrowed to the set whose printed
-    // code is `setCodeFilter` (blank = every printing). Debounced and stale-guarded;
-    // emits printingsReady() or printingsFailed() for this dex.
-    void searchPrintings(int dexNumber, const QString& setCodeFilter);
+    // code is `setCodeFilter` (blank = every printing). Debounced; returns a unique
+    // request id that the eventual printingsReady()/printingsFailed() carries.
+    // Because one CardSearchService is shared by every page, the CALLER must ignore
+    // replies whose id it did not receive from its own most recent call — otherwise
+    // a second live page would consume or strand this page's result.
+    std::uint64_t searchPrintings(int dexNumber, const QString& setCodeFilter);
 
     // Fetch one card image into memory (never to disk) and emit thumbnailReady().
     // A blank url or a failed/invalid fetch simply yields no signal (the row keeps
@@ -64,8 +67,9 @@ public:
     const std::vector<CardSetInfo>& sets() const { return sets_; }
 
 Q_SIGNALS:
-    void printingsReady(int dexNumber, const std::vector<CardCandidate>& cards);
-    void printingsFailed(int dexNumber);
+    void printingsReady(std::uint64_t requestId, int dexNumber,
+                        const std::vector<CardCandidate>& cards);
+    void printingsFailed(std::uint64_t requestId, int dexNumber);
     void setsReady();
     void thumbnailReady(const QString& cardId, const QPixmap& pixmap);
 

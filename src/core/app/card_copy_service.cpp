@@ -4,23 +4,9 @@
 
 #include "core/app/uuid.h"
 #include "core/storage/card_copy_repository.h"
+#include "core/strings.h"
 
 namespace pokedex {
-
-namespace {
-
-// Trim surrounding ASCII whitespace (reference fields are user-entered).
-std::string trim(const std::string& s) {
-    const char* ws = " \t\n\r\f\v";
-    const auto begin = s.find_first_not_of(ws);
-    if (begin == std::string::npos) {
-        return {};
-    }
-    const auto end = s.find_last_not_of(ws);
-    return s.substr(begin, end - begin + 1);
-}
-
-}  // namespace
 
 CardCopyService::Clock CardCopyService::systemClock() {
     return [] { return std::chrono::system_clock::now(); };

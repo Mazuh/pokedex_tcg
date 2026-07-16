@@ -4,6 +4,7 @@
 #include <QString>
 #include <QWidget>
 
+#include <cstdint>
 #include <vector>
 
 #include "core/app/card_catalog_dto.h"
@@ -58,8 +59,9 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
-    void onPrintingsReady(int dexNumber, const std::vector<CardCandidate>& cards);
-    void onPrintingsFailed(int dexNumber);
+    void onPrintingsReady(std::uint64_t requestId, int dexNumber,
+                          const std::vector<CardCandidate>& cards);
+    void onPrintingsFailed(std::uint64_t requestId, int dexNumber);
     void onThumbnailReady(const QString& cardId, const QPixmap& pixmap);
     void rebuildExpansionCompleter();
 
@@ -89,6 +91,9 @@ private:
     QLabel* status_;
     QListWidget* printings_;
     std::vector<CardCandidate> candidates_;  // the full result set; the list chunks it
+    // The id of this page's most recent search; replies for other ids (another live
+    // page, or our own superseded search) are ignored — the service is app-shared.
+    std::uint64_t pendingRequestId_ = 0;
     int loadedCount_ = 0;
     bool filling_ = false;   // guards fillViewport() re-entry (as in PokemonListView)
     bool loading_ = true;    // a search is in flight

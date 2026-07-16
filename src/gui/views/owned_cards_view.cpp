@@ -131,6 +131,7 @@ void OwnedCardsView::reload() {
     }
 
     table_->setRowCount(static_cast<int>(loaded_.size()));
+    haystacks_.assign(loaded_.size(), QString());
     for (int row = 0; row < static_cast<int>(loaded_.size()); ++row) {
         const CardCopy& c = loaded_[row];
         auto* number = cell(QString::number(c.pokemonDexNum));
@@ -147,27 +148,27 @@ void OwnedCardsView::reload() {
             binderName = it != binderNames.end() ? it->second : QString();
         }
         table_->setItem(row, 6, cell(binderName));
+
+        // Precompute this row's lowercased search text from its cells.
+        QString hay;
+        for (int col = 0; col < table_->columnCount(); ++col) {
+            hay += table_->item(row, col)->text() + QLatin1Char(' ');
+        }
+        haystacks_[row] = hay.toLower();
     }
     applyFilter();  // re-hide non-matches and set the count (search text persists)
     updateButtonState();
 }
 
 void OwnedCardsView::applyFilter() {
-    const QString filter = search_->text().trimmed();
+    // Compare the lowercased needle against each row's precomputed haystack (built
+    // in reload()) — a plain substring test per row, no per-keystroke allocation.
+    const QString needle = search_->text().trimmed().toLower();
     int visible = 0;
     for (int row = 0; row < table_->rowCount(); ++row) {
-        bool match = filter.isEmpty();
-        if (!match) {
-            // Match against every visible column's text (Pokémon, card ref,
-            // language, condition, ownership, dex #), joined.
-            QString hay;
-            for (int col = 0; col < table_->columnCount(); ++col) {
-                if (const QTableWidgetItem* item = table_->item(row, col)) {
-                    hay += item->text() + QLatin1Char(' ');
-                }
-            }
-            match = hay.contains(filter, Qt::CaseInsensitive);
-        }
+        const bool match = needle.isEmpty() ||
+                           (row < static_cast<int>(haystacks_.size()) &&
+                            haystacks_[row].contains(needle));
         table_->setRowHidden(row, !match);
         if (match) {
             ++visible;
