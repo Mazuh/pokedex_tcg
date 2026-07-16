@@ -14,6 +14,7 @@
 #include <QPushButton>
 #include <QShowEvent>
 #include <QString>
+#include <QStyle>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
@@ -90,13 +91,14 @@ std::optional<std::pair<int, QString>> promptAddSource(QWidget* parent) {
 
 WishlistView::WishlistView(WishlistService& wishlist, QWidget* parent)
     : QWidget(parent), wishlist_(wishlist) {
-    auto* heading = new QLabel(tr("Your wishlist"), this);
-
     // A read-only three-column table: dex number, name, source (one row per
     // source). Whole-row single selection; the source column takes the slack.
     table_ = new QTableWidget(this);
     table_->setColumnCount(3);
     table_->setHorizontalHeaderLabels({tr("#"), tr("Pokémon"), tr("Source")});
+    table_->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    // The "#" header sits over right-aligned dex numbers, so right-align it to match.
+    table_->horizontalHeaderItem(0)->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -117,6 +119,7 @@ WishlistView::WishlistView(WishlistService& wishlist, QWidget* parent)
     auto* addButton = new QPushButton(tr("Add…"), this);
     editButton_ = new QPushButton(tr("Edit…"), this);
     removeButton_ = new QPushButton(tr("Delete"), this);
+    removeButton_->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
 
     connect(addButton, &QPushButton::clicked, this, &WishlistView::addEntry);
     connect(editButton_, &QPushButton::clicked, this, &WishlistView::editSelected);
@@ -134,7 +137,6 @@ WishlistView::WishlistView(WishlistService& wishlist, QWidget* parent)
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(16, 12, 16, 12);  // match the other sections' padding
-    layout->addWidget(heading);
     layout->addWidget(table_);
     layout->addWidget(emptyLabel_);
     layout->addLayout(buttons);

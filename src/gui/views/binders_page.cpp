@@ -10,6 +10,7 @@
 #include <QPushButton>
 #include <QStackedWidget>
 #include <QString>
+#include <QStyle>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
@@ -44,13 +45,12 @@ BindersPage::BindersPage(BinderService& service, BinderGuideService& guide,
     // container so opening a binder can swap it out for the binder guide in place.
     auto* listPage = new QWidget(this);
 
-    auto* heading = new QLabel(tr("Your binders"), listPage);
-
     // A read-only two-column table: binder name (stretches) and region. Whole-row
     // single selection, no editing, no vertical header.
     table_ = new QTableWidget(listPage);
     table_->setColumnCount(2);
     table_->setHorizontalHeaderLabels({tr("Binder"), tr("Region")});
+    table_->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -64,6 +64,9 @@ BindersPage::BindersPage(BinderService& service, BinderGuideService& guide,
     openButton_ = new QPushButton(tr("Open…"), listPage);
     renameButton_ = new QPushButton(tr("Rename…"), listPage);
     removeButton_ = new QPushButton(tr("Remove…"), listPage);
+    newButton->setIcon(style()->standardIcon(QStyle::SP_FileDialogNewFolder));
+    openButton_->setIcon(style()->standardIcon(QStyle::SP_DirOpenIcon));
+    removeButton_->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
 
     connect(newButton, &QPushButton::clicked, this, &BindersPage::createBinder);
     connect(openButton_, &QPushButton::clicked, this, &BindersPage::openSelected);
@@ -90,7 +93,6 @@ BindersPage::BindersPage(BinderService& service, BinderGuideService& guide,
 
     auto* pageLayout = new QVBoxLayout(listPage);
     pageLayout->setContentsMargins(16, 12, 16, 12);  // don't hug the section edges
-    pageLayout->addWidget(heading);
     pageLayout->addWidget(table_);
     pageLayout->addLayout(buttons);
     pageLayout->addWidget(pathLabel);
@@ -117,6 +119,8 @@ void BindersPage::refresh() {
             nameCell->setData(kIdRole, QString::fromStdString(binder.id));
             nameCell->setData(kNameRole, QString::fromStdString(binder.name));
             table_->setItem(i, 0, nameCell);
+            // A region-less binder passes an empty string; cell() renders it as
+            // an em-dash.
             const QString region =
                 binder.pokemonRegion ? regionLabel(*binder.pokemonRegion) : QString();
             table_->setItem(i, 1, cell(region));

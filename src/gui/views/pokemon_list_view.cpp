@@ -15,6 +15,7 @@
 
 #include "gui/views/pokemon_detail_panel.h"
 #include "gui/views/region_labels.h"
+#include "gui/views/splitter_style.h"
 #include "gui/views/table_cell.h"
 
 namespace pokedex {
@@ -44,6 +45,10 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService&
     table_ = new QTableWidget(this);
     table_->setColumnCount(4);
     table_->setHorizontalHeaderLabels({tr("#"), tr("Pokémon"), tr("Region"), tr("Owned")});
+    table_->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    // "#" and "Owned" sit over right-aligned numbers, so right-align them to match.
+    table_->horizontalHeaderItem(0)->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    table_->horizontalHeaderItem(3)->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -99,6 +104,7 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService&
     splitter->setStretchFactor(0, 1);
     splitter->setStretchFactor(1, 0);
     splitter->setSizes({560, 240});
+    thinDivider(splitter);
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);

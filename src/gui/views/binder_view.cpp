@@ -8,6 +8,7 @@
 #include <QPushButton>
 #include <QSplitter>
 #include <QString>
+#include <QStyle>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
@@ -17,6 +18,7 @@
 #include "core/app/binder_guide_service.h"
 #include "gui/views/pokemon_detail_panel.h"
 #include "gui/views/region_labels.h"
+#include "gui/views/splitter_style.h"
 #include "gui/views/status_labels.h"
 #include "gui/views/table_cell.h"
 
@@ -37,7 +39,8 @@ QString headingText(const CardBinder& binder) {
 BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
                        WishlistService& wishlist, MediaService& media, QWidget* parent)
     : QWidget(parent) {
-    auto* backButton = new QPushButton(tr("← Back"), this);
+    auto* backButton = new QPushButton(tr("Back"), this);
+    backButton->setIcon(style()->standardIcon(QStyle::SP_ArrowBack));
     auto* heading = new QLabel(headingText(binder), this);
 
     connect(backButton, &QPushButton::clicked, this, &BinderView::backRequested);
@@ -57,6 +60,9 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     table_ = new QTableWidget(this);
     table_->setColumnCount(3);
     table_->setHorizontalHeaderLabels({tr("#"), tr("Pokémon"), tr("Status")});
+    table_->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    // The "#" header sits over right-aligned dex numbers, so right-align it to match.
+    table_->horizontalHeaderItem(0)->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -91,6 +97,7 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     splitter->setStretchFactor(0, 1);
     splitter->setStretchFactor(1, 0);
     splitter->setSizes({560, 240});
+    thinDivider(splitter);
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);

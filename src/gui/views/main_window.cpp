@@ -7,6 +7,7 @@
 
 #include "gui/views/binders_page.h"
 #include "gui/views/pokemon_list_view.h"
+#include "gui/views/splitter_style.h"
 #include "gui/views/wishlist_view.h"
 
 namespace pokedex {
@@ -27,7 +28,14 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
     // pills — the macOS source-list look.
     sidebar->setStyleSheet(
         "QListWidget { padding: 8px 6px; }"
-        "QListWidget::item { padding: 6px 8px; border-radius: 6px; }");
+        "QListWidget::item { padding: 6px 8px; border-radius: 6px; }"
+        "QListWidget::item:selected { background: palette(highlight);"
+        " color: palette(highlighted-text); }"
+        // When the window isn't focused, macOS greys the selection — but keep it
+        // clearly legible (a plain palette(midlight) is nearly invisible in dark
+        // mode), so the current section always reads.
+        "QListWidget::item:selected:!active { background: rgba(128, 128, 128, 0.32);"
+        " color: palette(text); }");
     new QListWidgetItem(tr("Binders"), sidebar);
     new QListWidgetItem(tr("Pokémon"), sidebar);
     new QListWidgetItem(tr("Wishlist"), sidebar);
@@ -50,6 +58,7 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
     splitter->setStretchFactor(0, 0);
     splitter->setStretchFactor(1, 1);
     splitter->setSizes({180, 720});
+    thinDivider(splitter);
 
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
