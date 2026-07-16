@@ -14,7 +14,7 @@ using pokedex::CardCatalogParseError;
 using pokedex::CardSetInfo;
 using pokedex::parseCardSearchResponse;
 using pokedex::parseSetsResponse;
-using pokedex::resolveSetCodeToIds;
+using pokedex::resolveSetFilterToIds;
 
 // A /v2/sets payload exercising: a normal set, a duplicated printed code shared
 // by two sets (CEL), a set whose ptcgoCode is null, and a malformed entry with
@@ -68,24 +68,35 @@ TEST(ParseSetsResponseTest, MissingDataArrayYieldsNoSets) {
     EXPECT_TRUE(parseSetsResponse(R"({"error": {"message": "bad"}})").empty());
 }
 
-TEST(ResolveSetCodeToIdsTest, ResolvesCaseInsensitivelyAndTrims) {
+TEST(ResolveSetFilterToIdsTest, MatchesAnExactCodeCaseInsensitivelyAndTrims) {
     const std::vector<CardSetInfo> sets = sampleSets();
-    EXPECT_EQ(resolveSetCodeToIds("OBF", sets), std::vector<std::string>{"sv3"});
-    EXPECT_EQ(resolveSetCodeToIds("obf", sets), std::vector<std::string>{"sv3"});
-    EXPECT_EQ(resolveSetCodeToIds("  MEW  ", sets), std::vector<std::string>{"sv3pt5"});
+    EXPECT_EQ(resolveSetFilterToIds("OBF", sets), std::vector<std::string>{"sv3"});
+    EXPECT_EQ(resolveSetFilterToIds("obf", sets), std::vector<std::string>{"sv3"});
+    EXPECT_EQ(resolveSetFilterToIds("  MEW  ", sets), std::vector<std::string>{"sv3pt5"});
 }
 
-TEST(ResolveSetCodeToIdsTest, ReturnsEveryIdForADuplicatedCode) {
+TEST(ResolveSetFilterToIdsTest, ReturnsEveryIdForADuplicatedCode) {
     const std::vector<CardSetInfo> sets = sampleSets();
-    EXPECT_EQ(resolveSetCodeToIds("CEL", sets),
+    EXPECT_EQ(resolveSetFilterToIds("CEL", sets),
               (std::vector<std::string>{"cel25", "cel25c"}));
 }
 
-TEST(ResolveSetCodeToIdsTest, UnknownOrBlankCodeYieldsNothing) {
+// The whole point of task 7: a code-less set (POP Series 1 here, like McDonald's)
+// is reachable only by a substring of its NAME, since it has no printed code.
+TEST(ResolveSetFilterToIdsTest, MatchesASubstringOfTheSetName) {
     const std::vector<CardSetInfo> sets = sampleSets();
-    EXPECT_TRUE(resolveSetCodeToIds("ZZZ", sets).empty());
-    EXPECT_TRUE(resolveSetCodeToIds("", sets).empty());
-    EXPECT_TRUE(resolveSetCodeToIds("   ", sets).empty());
+    EXPECT_EQ(resolveSetFilterToIds("pop", sets), std::vector<std::string>{"pop1"});
+    // "cel" matches both the CEL code and the "Celebrations" names — still the two
+    // CEL sets, each matched once.
+    EXPECT_EQ(resolveSetFilterToIds("celebrations", sets),
+              (std::vector<std::string>{"cel25", "cel25c"}));
+}
+
+TEST(ResolveSetFilterToIdsTest, UnknownOrBlankFilterYieldsNothing) {
+    const std::vector<CardSetInfo> sets = sampleSets();
+    EXPECT_TRUE(resolveSetFilterToIds("zzz", sets).empty());
+    EXPECT_TRUE(resolveSetFilterToIds("", sets).empty());
+    EXPECT_TRUE(resolveSetFilterToIds("   ", sets).empty());
 }
 
 // A /v2/cards payload exercising the mapping edge cases:
@@ -128,6 +139,7 @@ TEST(ParseCardSearchResponseTest, ResolvesCodeAndTotalFromTableNotEmbeddedSet) {
     EXPECT_EQ(charizard.cardRef.expansionCode, "OBF");  // from table, not embedded null
     EXPECT_EQ(charizard.cardRef.collectorNumber, "125/197");  // total from table
     EXPECT_EQ(charizard.setName, "Obsidian Flames");  // table name, not embedded
+    EXPECT_EQ(charizard.cardRef.setName, "Obsidian Flames");  // carried into the reference
     EXPECT_TRUE(charizard.cardRef.language.empty());  // the user picks language
     EXPECT_EQ(charizard.imageUrlSmall, "https://img/small.png");
     EXPECT_EQ(charizard.imageUrlLarge, "https://img/large.png");

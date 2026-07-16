@@ -60,12 +60,13 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders, 
     search_->setClearButtonEnabled(true);
     connect(search_, &QLineEdit::textChanged, this, [this](const QString&) { applyFilter(); });
 
-    // A read-only seven-column table: dex #, Pokémon, card ref, language,
+    // A read-only eight-column table: dex #, Pokémon, card ref, set, language,
     // condition, ownership, binder. Whole-row selection, no editing; the Pokémon
-    // column takes slack.
+    // column takes slack. The Set column carries the human set name, which for
+    // code-less sets (McDonald's, POP…) is the only disambiguator.
     table_ = new QTableWidget(this);
-    table_->setColumnCount(7);
-    table_->setHorizontalHeaderLabels({tr("#"), tr("Pokémon"), tr("Card"), tr("Lang"),
+    table_->setColumnCount(8);
+    table_->setHorizontalHeaderLabels({tr("#"), tr("Pokémon"), tr("Card"), tr("Set"), tr("Lang"),
                                        tr("Condition"), tr("Ownership"), tr("Binder")});
     table_->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     table_->horizontalHeaderItem(0)->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -75,7 +76,7 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders, 
     table_->verticalHeader()->setVisible(false);
     table_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     table_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
-    for (int col = 2; col <= 6; ++col) {
+    for (int col = 2; col <= 7; ++col) {
         table_->horizontalHeader()->setSectionResizeMode(col, QHeaderView::ResizeToContents);
     }
     table_->setStyleSheet("QTableView::item { padding-left: 8px; padding-right: 16px; }");
@@ -139,15 +140,16 @@ void OwnedCardsView::reload() {
         table_->setItem(row, 0, number);
         table_->setItem(row, 1, cell(speciesName(c.pokemonDexNum)));
         table_->setItem(row, 2, cell(cardText(c.cardRef)));
-        table_->setItem(row, 3, cell(QString::fromStdString(c.cardRef.language)));
-        table_->setItem(row, 4, cell(conditionLabel(c.condition)));
-        table_->setItem(row, 5, cell(ownershipLabel(c.ownership)));
+        table_->setItem(row, 3, cell(QString::fromStdString(c.cardRef.setName)));
+        table_->setItem(row, 4, cell(QString::fromStdString(c.cardRef.language)));
+        table_->setItem(row, 5, cell(conditionLabel(c.condition)));
+        table_->setItem(row, 6, cell(ownershipLabel(c.ownership)));
         QString binderName;
         if (c.binderId) {
             const auto it = binderNames.find(*c.binderId);
             binderName = it != binderNames.end() ? it->second : QString();
         }
-        table_->setItem(row, 6, cell(binderName));
+        table_->setItem(row, 7, cell(binderName));
 
         // Precompute this row's lowercased search text from its cells.
         QString hay;

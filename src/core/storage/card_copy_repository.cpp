@@ -9,13 +9,14 @@ namespace pokedex {
 namespace {
 
 // The column list shared by every SELECT, in the order readCopy() expects.
+// ref_set_name is last (added in schema v2), so the earlier indices are unchanged.
 constexpr const char* kCopyColumns =
     "id, pokemon_dex_num, ref_expansion, ref_language, ref_collector, ownership,"
-    " condition, binder_id, comments, inserted_at, updated_at";
+    " condition, binder_id, comments, inserted_at, updated_at, ref_set_name";
 
 // Read a full CardCopy from a row whose columns are, in order:
 // id, pokemon_dex_num, ref_expansion, ref_language, ref_collector, ownership,
-// condition, binder_id, comments, inserted_at, updated_at.
+// condition, binder_id, comments, inserted_at, updated_at, ref_set_name.
 CardCopy readCopy(Statement& stmt) {
     CardCopy copy;
     copy.id = stmt.columnText(0);
@@ -31,6 +32,7 @@ CardCopy readCopy(Statement& stmt) {
     copy.comments = stmt.columnText(8);
     copy.insertedAt = timestampFromIso(stmt.columnText(9));
     copy.updatedAt = timestampFromIso(stmt.columnText(10));
+    copy.cardRef.setName = stmt.columnText(11);
     return copy;
 }
 
@@ -40,8 +42,8 @@ void CardCopyRepository::add(const CardCopy& copy) {
     Statement stmt(db_,
                    "INSERT INTO card_copy(id, pokemon_dex_num, ref_expansion,"
                    " ref_language, ref_collector, ownership, condition, binder_id,"
-                   " comments, inserted_at, updated_at)"
-                   " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);");
+                   " comments, inserted_at, updated_at, ref_set_name)"
+                   " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);");
     stmt.bindText(1, copy.id);
     stmt.bindInt(2, copy.pokemonDexNum);
     stmt.bindText(3, copy.cardRef.expansionCode);
@@ -57,6 +59,7 @@ void CardCopyRepository::add(const CardCopy& copy) {
     stmt.bindText(9, copy.comments);
     stmt.bindText(10, timestampToIso(copy.insertedAt));
     stmt.bindText(11, timestampToIso(copy.updatedAt));
+    stmt.bindText(12, copy.cardRef.setName);
     stmt.step();
 }
 
@@ -84,7 +87,8 @@ void CardCopyRepository::update(const CardCopy& copy) {
     Statement stmt(db_,
                    "UPDATE card_copy SET pokemon_dex_num = ?, ref_expansion = ?,"
                    " ref_language = ?, ref_collector = ?, ownership = ?, condition = ?,"
-                   " binder_id = ?, comments = ?, updated_at = ? WHERE id = ?;");
+                   " binder_id = ?, comments = ?, updated_at = ?, ref_set_name = ?"
+                   " WHERE id = ?;");
     stmt.bindInt(1, copy.pokemonDexNum);
     stmt.bindText(2, copy.cardRef.expansionCode);
     stmt.bindText(3, copy.cardRef.language);
@@ -98,7 +102,8 @@ void CardCopyRepository::update(const CardCopy& copy) {
     }
     stmt.bindText(8, copy.comments);
     stmt.bindText(9, timestampToIso(copy.updatedAt));
-    stmt.bindText(10, copy.id);
+    stmt.bindText(10, copy.cardRef.setName);
+    stmt.bindText(11, copy.id);
     stmt.step();
     if (db_.changes() == 0) {
         throw StorageError("no card copy with id " + copy.id);

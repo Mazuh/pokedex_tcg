@@ -6,6 +6,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "core/strings.h"
+
 namespace pokedex {
 
 namespace {
@@ -150,30 +152,29 @@ std::vector<CardCandidate> parseCardSearchResponse(const std::string& jsonText,
         c.cardRef.language = "";  // English-only source; the user picks the language
         c.cardRef.collectorNumber =
             printedTotal > 0 ? number + "/" + std::to_string(printedTotal) : number;
+        // Carry the set name into the stored reference too: for code-less sets it is
+        // the only thing that distinguishes otherwise-identical collector numbers.
+        c.cardRef.setName = c.setName;
 
         candidates.push_back(std::move(c));
     }
     return candidates;
 }
 
-std::vector<std::string> resolveSetCodeToIds(const std::string& typedCode,
-                                             const std::vector<CardSetInfo>& sets) {
+std::vector<std::string> resolveSetFilterToIds(const std::string& typed,
+                                               const std::vector<CardSetInfo>& sets) {
     std::vector<std::string> ids;
-    // Trim surrounding whitespace, then compare case-insensitively.
-    std::size_t begin = 0;
-    std::size_t end = typedCode.size();
-    while (begin < end && std::isspace(static_cast<unsigned char>(typedCode[begin]))) {
-        ++begin;
-    }
-    while (end > begin && std::isspace(static_cast<unsigned char>(typedCode[end - 1]))) {
-        --end;
-    }
-    const std::string want = toLowerAscii(typedCode.substr(begin, end - begin));
+    const std::string want = toLowerAscii(trim(typed));
     if (want.empty()) {
         return ids;
     }
     for (const CardSetInfo& s : sets) {
-        if (!s.ptcgoCode.empty() && toLowerAscii(s.ptcgoCode) == want) {
+        // Match an exact printed code (e.g. "OBF"), OR a substring of the set name
+        // (e.g. "mcdonald" → every McDonald's Collection year) — the latter is the
+        // only way to narrow to a code-less set.
+        const bool codeMatch = !s.ptcgoCode.empty() && toLowerAscii(s.ptcgoCode) == want;
+        const bool nameMatch = toLowerAscii(s.name).find(want) != std::string::npos;
+        if (codeMatch || nameMatch) {
             ids.push_back(s.id);
         }
     }

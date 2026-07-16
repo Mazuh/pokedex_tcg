@@ -135,10 +135,10 @@ void CardSearchService::dispatchSearch() {
     CardSearchQuery query;
     query.dexNumber = req.dexNumber;
     if (!req.setCodeFilter.trimmed().isEmpty()) {
-        // Resolve the typed printed code to set ids. An in-progress code that
-        // matches nothing yet resolves to no ids → search unnarrowed rather than
-        // showing an empty list mid-typing.
-        query.setIds = resolveSetCodeToIds(req.setCodeFilter.toStdString(), sets_);
+        // Resolve the typed set filter (code or name) to set ids. An in-progress
+        // value that matches nothing yet resolves to no ids → search unnarrowed
+        // rather than showing an empty list mid-typing.
+        query.setIds = resolveSetFilterToIds(req.setCodeFilter.toStdString(), sets_);
     }
     startCardFetch(req.dexNumber, req.generation,
                    QString::fromStdString(api_.resolveSearch(query).url), kMaxSearchRetries);

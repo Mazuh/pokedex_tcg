@@ -81,10 +81,16 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
 
     expansionCode_ = new QLineEdit(formPane);
     expansionCode_->setPlaceholderText(tr("e.g. OBF"));
-    // Only user edits narrow the list — programmatic autofill uses setText(),
+    // Editing either the code or the set name narrows the list (by code OR set-name
+    // substring). Only USER edits narrow — programmatic autofill uses setText(),
     // which fires textChanged but NOT textEdited, so there is no feedback loop.
     connect(expansionCode_, &QLineEdit::textEdited, this,
-            [this](const QString&) { narrowByExpansionCode(); });
+            [this](const QString& text) { searchWith(text); });
+
+    setName_ = new QLineEdit(formPane);
+    setName_->setPlaceholderText(tr("e.g. Obsidian Flames or McDonald's"));
+    connect(setName_, &QLineEdit::textEdited, this,
+            [this](const QString& text) { searchWith(text); });
 
     language_ = new QComboBox(formPane);
     language_->addItems(languageCodes());
@@ -113,6 +119,7 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
         tr("Capture story, price, seller, imperfections, dates…"));
 
     form->addRow(tr("Expansion code"), expansionCode_);
+    form->addRow(tr("Set"), setName_);
     form->addRow(tr("Language"), language_);
     form->addRow(tr("Collector number"), collectorNumber_);
     form->addRow(tr("Condition"), condition_);
@@ -179,8 +186,8 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
     connect(&search_, &CardSearchService::thumbnailReady, this,
             &AddCardCopyPage::onThumbnailReady);
     connect(&search_, &CardSearchService::setsReady, this,
-            &AddCardCopyPage::rebuildExpansionCompleter);
-    rebuildExpansionCompleter();  // sets may already be cached from a prior open
+            &AddCardCopyPage::rebuildSetCompleter);
+    rebuildSetCompleter();  // sets may already be cached from a prior open
 
     updateStatus();
     updateSubmitEnabled();
@@ -283,38 +290,38 @@ void AddCardCopyPage::selectCandidate(int index) {
     // does not re-narrow the search. Language / condition / ownership are the
     // user's to choose — the card source cannot supply them.
     expansionCode_->setText(QString::fromStdString(c.cardRef.expansionCode));
+    setName_->setText(QString::fromStdString(c.cardRef.setName));
     collectorNumber_->setText(QString::fromStdString(c.cardRef.collectorNumber));
 }
 
-void AddCardCopyPage::narrowByExpansionCode() {
+void AddCardCopyPage::searchWith(const QString& filter) {
     loading_ = true;
     updateStatus();
-    pendingRequestId_ = search_.searchPrintings(dexNumber_, expansionCode_->text());
+    pendingRequestId_ = search_.searchPrintings(dexNumber_, filter);
 }
 
-void AddCardCopyPage::rebuildExpansionCompleter() {
-    // Build a "CODE — Name" completer over the sets that have a printed code. On
-    // pick we keep only the code (the field stores the printed expansion code).
-    QStringList entries;
+void AddCardCopyPage::rebuildSetCompleter() {
+    // A set-name completer on the Set field, over EVERY set (code-less sets have a
+    // name but no code, so a code-based picker would miss them). Picking a name
+    // fills it and narrows the printings to that set.
+    QStringList names;
     for (const CardSetInfo& s : search_.sets()) {
-        if (!s.ptcgoCode.empty()) {
-            entries << QStringLiteral("%1 — %2").arg(QString::fromStdString(s.ptcgoCode),
-                                                     QString::fromStdString(s.name));
+        if (!s.name.empty()) {
+            names << QString::fromStdString(s.name);
         }
     }
-    entries.removeDuplicates();
-    entries.sort(Qt::CaseInsensitive);
+    names.removeDuplicates();
+    names.sort(Qt::CaseInsensitive);
 
-    auto* completer = new QCompleter(entries, expansionCode_);
+    auto* completer = new QCompleter(names, setName_);
     completer->setCaseSensitivity(Qt::CaseInsensitive);
     completer->setFilterMode(Qt::MatchContains);
     connect(completer, qOverload<const QString&>(&QCompleter::activated), this,
             [this](const QString& picked) {
-                const QString code = picked.section(QStringLiteral(" — "), 0, 0);
-                expansionCode_->setText(code);
-                narrowByExpansionCode();  // an explicit pick should narrow the list
+                setName_->setText(picked);
+                searchWith(picked);  // an explicit pick should narrow the list
             });
-    expansionCode_->setCompleter(completer);
+    setName_->setCompleter(completer);
 }
 
 void AddCardCopyPage::updateSubmitEnabled() {
@@ -326,6 +333,7 @@ void AddCardCopyPage::submitCopy() {
     ref.expansionCode = expansionCode_->text().trimmed().toStdString();
     ref.language = language_->currentText().toStdString();  // "" when unspecified
     ref.collectorNumber = collectorNumber_->text().trimmed().toStdString();
+    ref.setName = setName_->text().trimmed().toStdString();
     const auto ownership = static_cast<CardOwnership>(ownership_->currentData().toInt());
     const auto condition = static_cast<CardCondition>(condition_->currentData().toInt());
     try {
@@ -342,6 +350,7 @@ void AddCardCopyPage::submitCopy() {
     // fields but keep the species, the printings list, and the sticky
     // condition/ownership choices.
     expansionCode_->clear();
+    setName_->clear();
     collectorNumber_->clear();
     comments_->clear();
     status_->setText(tr("Added ✓ — add another, or go Back."));

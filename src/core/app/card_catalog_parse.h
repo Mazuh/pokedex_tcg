@@ -34,11 +34,13 @@ std::vector<CardSetInfo> parseSetsResponse(const std::string& json);
 std::vector<CardCandidate> parseCardSearchResponse(const std::string& json,
                                                    const std::vector<CardSetInfo>& sets);
 
-// Resolve a user-typed printed expansion code (e.g. "OBF") to the set ids that
-// carry it, for reliable set.id-based search narrowing. Case-insensitive; returns
-// every match (8 codes map to two sets each); empty when the code is unknown or
-// blank.
-std::vector<std::string> resolveSetCodeToIds(const std::string& typedCode,
-                                             const std::vector<CardSetInfo>& sets);
+// Resolve a user-typed set filter to the set ids it matches, for reliable
+// set.id-based search narrowing. Matches an exact printed code (e.g. "OBF") OR a
+// case-insensitive substring of the set name (e.g. "mcdonald" → every McDonald's
+// Collection year — the only way to narrow to a code-less set). Returns every match
+// (a code can map to two sets; a name substring to many); empty when nothing
+// matches or the input is blank.
+std::vector<std::string> resolveSetFilterToIds(const std::string& typed,
+                                               const std::vector<CardSetInfo>& sets);
 
 }  // namespace pokedex

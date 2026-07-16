@@ -25,6 +25,7 @@ CardCopy CardCopyService::create(PokemonDexNum pokemonDexNum, CardReference card
     cardRef.expansionCode = trim(cardRef.expansionCode);
     cardRef.language = trim(cardRef.language);
     cardRef.collectorNumber = trim(cardRef.collectorNumber);
+    cardRef.setName = trim(cardRef.setName);
     if (cardRef.collectorNumber.empty()) {
         throw CardCopyError("A card needs a collector number.");
     }

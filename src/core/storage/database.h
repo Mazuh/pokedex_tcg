@@ -23,7 +23,9 @@ class Database {
 public:
     // Schema version this build produces. Bump it and extend migrate() when the
     // schema changes; migrations are additive.
-    static constexpr int kSchemaVersion = 1;
+    //   v1 — initial schema (binders, copies, wishlist).
+    //   v2 — card_copy.ref_set_name (the human set name, for code-less sets).
+    static constexpr int kSchemaVersion = 2;
 
     // Open (creating if absent) the database at `path`, or an in-memory database
     // when path == ":memory:". Throws StorageError on failure.

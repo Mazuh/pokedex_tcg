@@ -50,6 +50,12 @@ CREATE TABLE wishlist_source (
 );
 )sql";
 
+// v1 → v2: record the human set name alongside the printed code. Optional (blank
+// default), because a code-less set has no printed code and reuses collector
+// numbers across years, so the name is the only disambiguator.
+constexpr char kMigrationV2[] =
+    "ALTER TABLE card_copy ADD COLUMN ref_set_name TEXT NOT NULL DEFAULT '';";
+
 }  // namespace
 
 Database::Database(const std::filesystem::path& path) {
@@ -103,12 +109,20 @@ void Database::setUserVersion(int version) {
 }
 
 void Database::migrate() {
-    if (userVersion() >= kSchemaVersion) {
+    const int from = userVersion();
+    if (from >= kSchemaVersion) {
         return;
     }
+    // Apply each step whose target version is newer than the file's, in order, so a
+    // fresh database (v0) runs the whole chain and an existing one only the tail.
     exec("BEGIN;");
     try {
-        exec(kSchemaV1);
+        if (from < 1) {
+            exec(kSchemaV1);
+        }
+        if (from < 2) {
+            exec(kMigrationV2);
+        }
         setUserVersion(kSchemaVersion);
         exec("COMMIT;");
     } catch (...) {

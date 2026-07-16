@@ -63,12 +63,12 @@ private:
                           const std::vector<CardCandidate>& cards);
     void onPrintingsFailed(std::uint64_t requestId, int dexNumber);
     void onThumbnailReady(const QString& cardId, const QPixmap& pixmap);
-    void rebuildExpansionCompleter();
+    void rebuildSetCompleter();
 
     void loadMore();       // append the next chunk of printings (never rebuilds shown rows)
     void fillViewport();   // append until the list overflows its viewport
     void selectCandidate(int index);   // autofill the form from a chosen printing
-    void narrowByExpansionCode();      // re-search this species scoped to the typed set code
+    void searchWith(const QString& filter);  // re-search this species scoped to a set filter
     void updateStatus();
     void updateSubmitEnabled();        // enable submit once the form is valid
     void submitCopy();                 // create the copy from the form fields
@@ -80,6 +80,7 @@ private:
 
     // Form
     QLineEdit* expansionCode_;
+    QLineEdit* setName_;
     QComboBox* language_;
     QLineEdit* collectorNumber_;
     QComboBox* condition_;

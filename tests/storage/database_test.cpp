@@ -1,10 +1,12 @@
 #include <gtest/gtest.h>
 
 #include "core/storage/database.h"
+#include "core/storage/statement.h"
 
 namespace {
 
 using pokedex::Database;
+using pokedex::Statement;
 using pokedex::StorageError;
 
 TEST(DatabaseTest, FreshDatabaseHasNoSchemaVersion) {
@@ -19,6 +21,31 @@ TEST(DatabaseTest, MigrateStampsSchemaVersionAndIsIdempotent) {
     // A second migration is a no-op, not an error.
     EXPECT_NO_THROW(db.migrate());
     EXPECT_EQ(db.userVersion(), Database::kSchemaVersion);
+}
+
+// The v1 → v2 upgrade of an existing database adds card_copy.ref_set_name without
+// losing data, so a user's pre-v2 file keeps working.
+TEST(DatabaseTest, UpgradesAnExistingV1DatabaseByAddingSetName) {
+    Database db(":memory:");
+    // Stand up a v1 card_copy (no ref_set_name) with a row, and stamp it v1.
+    db.exec(
+        "CREATE TABLE card_copy(id TEXT PRIMARY KEY, pokemon_dex_num INTEGER NOT NULL,"
+        " ref_expansion TEXT NOT NULL, ref_language TEXT NOT NULL, ref_collector TEXT NOT NULL,"
+        " ownership TEXT NOT NULL, condition TEXT NOT NULL, binder_id TEXT,"
+        " comments TEXT NOT NULL DEFAULT '', inserted_at TEXT NOT NULL, updated_at TEXT NOT NULL);");
+    db.exec(
+        "INSERT INTO card_copy(id,pokemon_dex_num,ref_expansion,ref_language,ref_collector,"
+        "ownership,condition,binder_id,comments,inserted_at,updated_at)"
+        " VALUES('c1',6,'OBF','EN','125/197','Owned','NearMint',NULL,'',"
+        "'2026-07-16T00:00:00Z','2026-07-16T00:00:00Z');");
+    db.setUserVersion(1);
+
+    db.migrate();
+    EXPECT_EQ(db.userVersion(), 2);
+    // The pre-existing row survives and gains a blank set name.
+    Statement stmt(db, "SELECT ref_set_name FROM card_copy WHERE id = 'c1';");
+    ASSERT_TRUE(stmt.step());
+    EXPECT_EQ(stmt.columnText(0), "");
 }
 
 // Exercising the tables through DML proves they exist with the expected columns

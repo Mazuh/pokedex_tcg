@@ -32,7 +32,7 @@ CardCopy makeCopy(std::string id, PokemonDexNum dex, CardOwnership ownership,
     CardCopy copy;
     copy.id = std::move(id);
     copy.pokemonDexNum = dex;
-    copy.cardRef = CardReference{"MEW", "EN", "151/165"};
+    copy.cardRef = CardReference{"MEW", "EN", "151/165", "151"};
     copy.ownership = ownership;
     copy.condition = CardCondition::NearMint;
     copy.binderId = std::move(binderId);
@@ -57,7 +57,7 @@ TEST(CardCopyRepositoryTest, AddThenListByBinderRoundTripsAllFields) {
     const CardCopy& c = copies[0];
     EXPECT_EQ(c.id, "c1");
     EXPECT_EQ(c.pokemonDexNum, 25);
-    EXPECT_EQ(c.cardRef, (CardReference{"MEW", "EN", "151/165"}));
+    EXPECT_EQ(c.cardRef, (CardReference{"MEW", "EN", "151/165", "151"}));  // incl. set name
     EXPECT_EQ(c.ownership, CardOwnership::Owned);
     EXPECT_EQ(c.condition, CardCondition::NearMint);
     ASSERT_TRUE(c.binderId.has_value());
