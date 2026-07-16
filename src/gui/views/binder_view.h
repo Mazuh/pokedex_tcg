@@ -17,6 +17,7 @@ class BinderGuideService;
 class WishlistService;
 class MediaService;
 class CardSearchService;
+class CardCopyService;
 class PokemonDetailPanel;
 
 // GUI — the "open binder" screen: the binder's guide as a list of its Pokémon,
@@ -34,7 +35,7 @@ class BinderView : public QWidget {
 public:
     BinderView(BinderGuideService& guide, const CardBinder& binder,
                WishlistService& wishlist, MediaService& media, CardSearchService& cardSearch,
-               QWidget* parent = nullptr);
+               CardCopyService& cardCopies, QWidget* parent = nullptr);
 
 Q_SIGNALS:
     // Emitted when the user asks to leave this page (the Back button). The owner
@@ -53,6 +54,7 @@ private:
     void openAddCopy(int dexNumber, const QString& name);
 
     CardSearchService& cardSearch_;
+    CardCopyService& cardCopies_;
     QStackedWidget* stack_;
     QTableWidget* table_;
     QLineEdit* search_;

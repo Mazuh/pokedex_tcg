@@ -20,6 +20,7 @@ class QPushButton;
 namespace pokedex {
 
 class CardSearchService;
+class CardCopyService;
 
 // GUI — the "add a copy" screen for one Pokémon: a manual entry form beside a
 // scrollable, picture-backed list of that species' real printings fetched from
@@ -27,10 +28,12 @@ class CardSearchService;
 // reference; the list is a pure convenience — the form is fully usable by hand,
 // and the page works even when the card API is unreachable.
 //
-// In THIS slice the submit button is intentionally disabled: persisting a copy
-// (minting it, writing the card_copy row, caching its image) is a separate,
-// future task. The page therefore only reads from CardSearchService; it never
-// writes to storage.
+// Submitting creates a copy via CardCopyService (no image is cached — search
+// results stay display-only). On success the page stays open with the form
+// cleared, so several copies of the same species can be added in a row, and
+// copyAdded() lets the host refresh any owned-copy counts. A created copy is filed
+// nowhere for now — binder assignment and the remove-with-note flow are separate,
+// later concerns.
 //
 // It is an in-window page pushed onto a host's QStackedWidget (PokemonListView or
 // BinderView); a Back button emits backRequested() and the host pops + disposes
@@ -39,13 +42,15 @@ class AddCardCopyPage : public QWidget {
     Q_OBJECT
 
 public:
-    // `search` must outlive this page. `speciesName` is shown in the heading and
-    // labels; `dexNumber` drives the printings search.
-    AddCardCopyPage(CardSearchService& search, int dexNumber, const QString& speciesName,
-                    QWidget* parent = nullptr);
+    // `search` and `copies` must outlive this page. `speciesName` is shown in the
+    // heading; `dexNumber` drives the printings search and the created copy.
+    AddCardCopyPage(CardSearchService& search, CardCopyService& copies, int dexNumber,
+                    const QString& speciesName, QWidget* parent = nullptr);
 
 Q_SIGNALS:
     void backRequested();
+    // A copy was persisted; the host should refresh any owned-copy counts it shows.
+    void copyAdded();
 
 protected:
     // Keeps the printings list filling a viewport that grew taller than the loaded
@@ -63,8 +68,11 @@ private:
     void selectCandidate(int index);   // autofill the form from a chosen printing
     void narrowByExpansionCode();      // re-search this species scoped to the typed set code
     void updateStatus();
+    void updateSubmitEnabled();        // enable submit once the form is valid
+    void submitCopy();                 // create the copy from the form fields
 
     CardSearchService& search_;
+    CardCopyService& copies_;
     int dexNumber_;
     QString speciesName_;
 

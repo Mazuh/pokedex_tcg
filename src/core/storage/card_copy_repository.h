@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -15,10 +16,9 @@ class Database;
 // both), so it takes and returns fully-formed CardCopy values. All queries bind
 // their parameters, so free-text fields are never interpreted as SQL.
 //
-// This slice exposes only what the binder guide needs: a write primitive (so the
-// status pipeline is unit-testable) and the two reads that resolve a Pokémon's
-// CollectionStatus within a binder. The full read/update/remove surface lands
-// with the copy-management feature.
+// Now carries the full CRUD surface behind copy management: the add primitive the
+// binder guide relies on, the reads that resolve a Pokémon's CollectionStatus, and
+// the find / listAll / update / hardDelete needed to browse and edit owned copies.
 class CardCopyRepository {
 public:
     explicit CardCopyRepository(Database& db) : db_(db) {}
@@ -27,6 +27,21 @@ public:
     // unset; the CardReference is flattened into ref_* columns and the two enums
     // persist as stable tokens. Throws StorageError (e.g. on a duplicate id).
     void add(const CardCopy& copy);
+
+    // The copy with this id, or nullopt if none exists.
+    std::optional<CardCopy> find(const CardCopyId& id);
+
+    // Every copy in the collection, oldest first — the read behind the owned-cards
+    // browser (which filters by ownership itself).
+    std::vector<CardCopy> listAll();
+
+    // Overwrite a copy's mutable columns (everything but id and inserted_at) from
+    // the given value, matched by id. The caller supplies the bumped updated_at.
+    // Throws StorageError if no row has that id.
+    void update(const CardCopy& copy);
+
+    // Permanently delete a copy row. Throws StorageError if no row has that id.
+    void hardDelete(const CardCopyId& id);
 
     // Every copy filed in the given binder (WHERE binder_id = ?), in insertion
     // order. Drives the Incoming / Completed / Removed cases of the guide.

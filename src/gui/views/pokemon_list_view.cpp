@@ -37,8 +37,8 @@ constexpr int kPrefetchMargin = 64;
 
 PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService& wishlist,
                                  MediaService& media, CardSearchService& cardSearch,
-                                 QWidget* parent)
-    : QWidget(parent), service_(service), cardSearch_(cardSearch) {
+                                 CardCopyService& cardCopies, QWidget* parent)
+    : QWidget(parent), service_(service), cardSearch_(cardSearch), cardCopies_(cardCopies) {
     search_ = new QLineEdit(this);
     search_->setPlaceholderText(tr("Search Pokémon…"));
     search_->setClearButtonEnabled(true);
@@ -183,7 +183,9 @@ void PokemonListView::showRow(int row) {
 }
 
 void PokemonListView::openAddCopy(int dexNumber, const QString& name) {
-    auto* page = new AddCardCopyPage(cardSearch_, dexNumber, name);
+    auto* page = new AddCardCopyPage(cardSearch_, cardCopies_, dexNumber, name);
+    // A newly added copy changes the Owned column; refresh so it's current.
+    connect(page, &AddCardCopyPage::copyAdded, this, &PokemonListView::refresh);
     connect(page, &AddCardCopyPage::backRequested, this, [this, page]() {
         stack_->setCurrentIndex(0);
         stack_->removeWidget(page);
@@ -191,6 +193,13 @@ void PokemonListView::openAddCopy(int dexNumber, const QString& name) {
     });
     stack_->addWidget(page);
     stack_->setCurrentWidget(page);
+}
+
+void PokemonListView::refresh() {
+    // Re-query the catalog + owned counts; applyFilter() re-renders from the top,
+    // preserving the current search text (it reads search_->text()).
+    entries_ = service_.listAll();
+    applyFilter();
 }
 
 void PokemonListView::loadMore() {

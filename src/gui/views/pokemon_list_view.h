@@ -15,6 +15,7 @@ namespace pokedex {
 
 class MediaService;
 class CardSearchService;
+class CardCopyService;
 class WishlistService;
 class PokemonDetailPanel;
 
@@ -35,7 +36,7 @@ class PokemonListView : public QWidget {
 public:
     PokemonListView(PokemonBrowseService& service, WishlistService& wishlist,
                     MediaService& media, CardSearchService& cardSearch,
-                    QWidget* parent = nullptr);
+                    CardCopyService& cardCopies, QWidget* parent = nullptr);
 
 protected:
     // Watches the table viewport's resize so the list keeps filling a viewport
@@ -64,9 +65,13 @@ private:
     // Push an AddCardCopyPage for `dexNumber` onto the inner stack; its Back pops
     // and disposes it, returning to the browse splitter.
     void openAddCopy(int dexNumber, const QString& name);
+    // Re-query the catalog + owned counts and re-render, so the Owned column
+    // reflects a copy just added.
+    void refresh();
 
     PokemonBrowseService& service_;
     CardSearchService& cardSearch_;
+    CardCopyService& cardCopies_;
     QStackedWidget* stack_;
     QLineEdit* search_;
     QTableWidget* table_;

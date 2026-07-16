@@ -8,6 +8,7 @@
 
 #include "core/app/binder_guide_service.h"
 #include "core/app/binder_service.h"
+#include "core/app/card_copy_service.h"
 #include "core/app/install_service.h"
 #include "core/app/poke_api.h"
 #include "core/app/pokemon_browse_service.h"
@@ -71,6 +72,10 @@ int main(int argc, char *argv[]) {
         // owned cards per species.
         pokedex::PokemonBrowseService browse(copyRepository);
 
+        // The copy CRUD verbs behind the "Add copy" flow (and later, copy
+        // management), over the same repository.
+        pokedex::CardCopyService cardCopies(copyRepository);
+
         // The wishlist verbs, backing both the unscoped Wishlist section and the
         // per-Pokémon editor in every detail panel.
         pokedex::WishlistService wishlist(wishlistRepository);
@@ -91,7 +96,7 @@ int main(int argc, char *argv[]) {
         pokedex::CardSearchService cardSearch(cardApi);
 
         pokedex::MainWindow window(
-            service, guide, browse, wishlist, media, cardSearch,
+            service, guide, browse, wishlist, media, cardSearch, cardCopies,
             QString::fromStdString(workspace->root().string()));
         window.show();
 

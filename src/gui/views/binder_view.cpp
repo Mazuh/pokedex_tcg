@@ -40,8 +40,9 @@ QString headingText(const CardBinder& binder) {
 
 BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
                        WishlistService& wishlist, MediaService& media,
-                       CardSearchService& cardSearch, QWidget* parent)
-    : QWidget(parent), cardSearch_(cardSearch) {
+                       CardSearchService& cardSearch, CardCopyService& cardCopies,
+                       QWidget* parent)
+    : QWidget(parent), cardSearch_(cardSearch), cardCopies_(cardCopies) {
     auto* backButton = new QPushButton(tr("Back"), this);
     backButton->setIcon(style()->standardIcon(QStyle::SP_ArrowBack));
     auto* heading = new QLabel(headingText(binder), this);
@@ -173,7 +174,10 @@ void BinderView::showRow(int row) {
 }
 
 void BinderView::openAddCopy(int dexNumber, const QString& name) {
-    auto* page = new AddCardCopyPage(cardSearch_, dexNumber, name);
+    auto* page = new AddCardCopyPage(cardSearch_, cardCopies_, dexNumber, name);
+    // NOTE: the binder guide's statuses are computed once on open and are not
+    // refreshed after adding a copy here (a created copy is filed nowhere for now,
+    // so it only affects the "owned elsewhere" case). Reopening the binder recomputes.
     connect(page, &AddCardCopyPage::backRequested, this, [this, page]() {
         stack_->setCurrentIndex(0);
         stack_->removeWidget(page);

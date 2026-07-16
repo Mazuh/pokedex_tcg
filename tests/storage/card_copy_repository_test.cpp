@@ -66,6 +66,71 @@ TEST(CardCopyRepositoryTest, AddThenListByBinderRoundTripsAllFields) {
     EXPECT_EQ(c.insertedAt, at("2026-07-14T09:00:00Z"));
 }
 
+TEST(CardCopyRepositoryTest, FindReturnsTheCopyOrNulloptForAMissingId) {
+    Database db(":memory:");
+    db.migrate();
+    CardCopyRepository repo(db);
+    repo.add(makeCopy("c1", 25, CardOwnership::Owned, std::nullopt));
+
+    const auto found = repo.find("c1");
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(found->pokemonDexNum, 25);
+    EXPECT_FALSE(repo.find("nope").has_value());
+}
+
+TEST(CardCopyRepositoryTest, ListAllReturnsEveryCopyOldestFirst) {
+    Database db(":memory:");
+    db.migrate();
+    CardCopyRepository repo(db);
+    repo.add(makeCopy("c1", 1, CardOwnership::Owned, std::nullopt, "2026-07-14T09:00:00Z"));
+    repo.add(makeCopy("c2", 4, CardOwnership::Removed, std::nullopt, "2026-07-15T09:00:00Z"));
+
+    const auto all = repo.listAll();
+    ASSERT_EQ(all.size(), 2u);
+    EXPECT_EQ(all[0].id, "c1");
+    EXPECT_EQ(all[1].id, "c2");
+}
+
+TEST(CardCopyRepositoryTest, UpdateOverwritesMutableFields) {
+    Database db(":memory:");
+    db.migrate();
+    CardCopyRepository repo(db);
+    repo.add(makeCopy("c1", 25, CardOwnership::Owned, std::nullopt));
+
+    CardCopy edited = *repo.find("c1");
+    edited.ownership = CardOwnership::Removed;
+    edited.condition = CardCondition::HeavilyPlayed;
+    edited.comments = "sold it";
+    edited.updatedAt = at("2026-07-16T12:00:00Z");
+    repo.update(edited);
+
+    const CardCopy reloaded = *repo.find("c1");
+    EXPECT_EQ(reloaded.ownership, CardOwnership::Removed);
+    EXPECT_EQ(reloaded.condition, CardCondition::HeavilyPlayed);
+    EXPECT_EQ(reloaded.comments, "sold it");
+    EXPECT_EQ(reloaded.updatedAt, at("2026-07-16T12:00:00Z"));
+    EXPECT_EQ(reloaded.insertedAt, at("2026-07-14T09:00:00Z"));  // immutable
+}
+
+TEST(CardCopyRepositoryTest, UpdateAndHardDeleteThrowForAMissingId) {
+    Database db(":memory:");
+    db.migrate();
+    CardCopyRepository repo(db);
+    EXPECT_THROW(repo.update(makeCopy("ghost", 1, CardOwnership::Owned, std::nullopt)),
+                 pokedex::StorageError);
+    EXPECT_THROW(repo.hardDelete("ghost"), pokedex::StorageError);
+}
+
+TEST(CardCopyRepositoryTest, HardDeleteRemovesTheRow) {
+    Database db(":memory:");
+    db.migrate();
+    CardCopyRepository repo(db);
+    repo.add(makeCopy("c1", 25, CardOwnership::Owned, std::nullopt));
+    repo.hardDelete("c1");
+    EXPECT_FALSE(repo.find("c1").has_value());
+    EXPECT_TRUE(repo.listAll().empty());
+}
+
 TEST(CardCopyRepositoryTest, ListByBinderReturnsOnlyThatBindersCopies) {
     Database db(":memory:");
     db.migrate();

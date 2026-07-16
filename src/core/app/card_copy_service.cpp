@@ -1,0 +1,92 @@
+#include "core/app/card_copy_service.h"
+
+#include <utility>
+
+#include "core/app/uuid.h"
+#include "core/storage/card_copy_repository.h"
+
+namespace pokedex {
+
+namespace {
+
+// Trim surrounding ASCII whitespace (reference fields are user-entered).
+std::string trim(const std::string& s) {
+    const char* ws = " \t\n\r\f\v";
+    const auto begin = s.find_first_not_of(ws);
+    if (begin == std::string::npos) {
+        return {};
+    }
+    const auto end = s.find_last_not_of(ws);
+    return s.substr(begin, end - begin + 1);
+}
+
+}  // namespace
+
+CardCopyService::Clock CardCopyService::systemClock() {
+    return [] { return std::chrono::system_clock::now(); };
+}
+
+CardCopyService::IdGenerator CardCopyService::uuidGenerator() {
+    return [] { return newUuidV4(); };
+}
+
+CardCopyService::CardCopyService(CardCopyRepository& repo, Clock clock, IdGenerator idGenerator)
+    : repo_(repo), clock_(std::move(clock)), idGenerator_(std::move(idGenerator)) {}
+
+CardCopy CardCopyService::create(PokemonDexNum pokemonDexNum, CardReference cardRef,
+                                 CardOwnership ownership, CardCondition condition,
+                                 std::optional<CardBinderId> binderId, std::string comments) {
+    cardRef.expansionCode = trim(cardRef.expansionCode);
+    cardRef.language = trim(cardRef.language);
+    cardRef.collectorNumber = trim(cardRef.collectorNumber);
+    if (cardRef.collectorNumber.empty()) {
+        throw CardCopyError("A card needs a collector number.");
+    }
+
+    const Timestamp now = clock_();
+    CardCopy copy;
+    copy.id = idGenerator_();
+    copy.pokemonDexNum = pokemonDexNum;
+    copy.cardRef = std::move(cardRef);
+    copy.ownership = ownership;
+    copy.condition = condition;
+    copy.binderId = std::move(binderId);
+    copy.comments = std::move(comments);
+    copy.insertedAt = now;
+    copy.updatedAt = now;
+    repo_.add(copy);
+    return copy;
+}
+
+CardCopy CardCopyService::require(const CardCopyId& id) {
+    std::optional<CardCopy> copy = repo_.find(id);
+    if (!copy) {
+        throw CardCopyError("No such card copy.");
+    }
+    return *copy;
+}
+
+void CardCopyService::editDetails(const CardCopyId& id, CardCondition condition,
+                                  std::string comments) {
+    CardCopy copy = require(id);
+    copy.condition = condition;
+    copy.comments = std::move(comments);
+    copy.updatedAt = clock_();
+    repo_.update(copy);
+}
+
+void CardCopyService::remove(const CardCopyId& id) {
+    CardCopy copy = require(id);
+    copy.ownership = CardOwnership::Removed;
+    copy.updatedAt = clock_();
+    repo_.update(copy);
+}
+
+void CardCopyService::hardDelete(const CardCopyId& id) {
+    require(id);  // surface a missing id as CardCopyError, like the other verbs
+    repo_.hardDelete(id);
+}
+
+std::vector<CardCopy> CardCopyService::listAll() { return repo_.listAll(); }
+
+}  // namespace pokedex

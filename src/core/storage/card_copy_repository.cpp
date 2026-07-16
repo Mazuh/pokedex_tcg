@@ -1,11 +1,17 @@
 #include "core/storage/card_copy_repository.h"
 
 #include "core/storage/codecs.h"
+#include "core/storage/database.h"
 #include "core/storage/statement.h"
 
 namespace pokedex {
 
 namespace {
+
+// The column list shared by every SELECT, in the order readCopy() expects.
+constexpr const char* kCopyColumns =
+    "id, pokemon_dex_num, ref_expansion, ref_language, ref_collector, ownership,"
+    " condition, binder_id, comments, inserted_at, updated_at";
 
 // Read a full CardCopy from a row whose columns are, in order:
 // id, pokemon_dex_num, ref_expansion, ref_language, ref_collector, ownership,
@@ -52,6 +58,60 @@ void CardCopyRepository::add(const CardCopy& copy) {
     stmt.bindText(10, timestampToIso(copy.insertedAt));
     stmt.bindText(11, timestampToIso(copy.updatedAt));
     stmt.step();
+}
+
+std::optional<CardCopy> CardCopyRepository::find(const CardCopyId& id) {
+    Statement stmt(db_, std::string("SELECT ") + kCopyColumns +
+                            " FROM card_copy WHERE id = ?;");
+    stmt.bindText(1, id);
+    if (!stmt.step()) {
+        return std::nullopt;
+    }
+    return readCopy(stmt);
+}
+
+std::vector<CardCopy> CardCopyRepository::listAll() {
+    Statement stmt(db_, std::string("SELECT ") + kCopyColumns +
+                            " FROM card_copy ORDER BY inserted_at, rowid;");
+    std::vector<CardCopy> copies;
+    while (stmt.step()) {
+        copies.push_back(readCopy(stmt));
+    }
+    return copies;
+}
+
+void CardCopyRepository::update(const CardCopy& copy) {
+    Statement stmt(db_,
+                   "UPDATE card_copy SET pokemon_dex_num = ?, ref_expansion = ?,"
+                   " ref_language = ?, ref_collector = ?, ownership = ?, condition = ?,"
+                   " binder_id = ?, comments = ?, updated_at = ? WHERE id = ?;");
+    stmt.bindInt(1, copy.pokemonDexNum);
+    stmt.bindText(2, copy.cardRef.expansionCode);
+    stmt.bindText(3, copy.cardRef.language);
+    stmt.bindText(4, copy.cardRef.collectorNumber);
+    stmt.bindText(5, ownershipToText(copy.ownership));
+    stmt.bindText(6, conditionToText(copy.condition));
+    if (copy.binderId) {
+        stmt.bindText(7, *copy.binderId);
+    } else {
+        stmt.bindNull(7);
+    }
+    stmt.bindText(8, copy.comments);
+    stmt.bindText(9, timestampToIso(copy.updatedAt));
+    stmt.bindText(10, copy.id);
+    stmt.step();
+    if (db_.changes() == 0) {
+        throw StorageError("no card copy with id " + copy.id);
+    }
+}
+
+void CardCopyRepository::hardDelete(const CardCopyId& id) {
+    Statement stmt(db_, "DELETE FROM card_copy WHERE id = ?;");
+    stmt.bindText(1, id);
+    stmt.step();
+    if (db_.changes() == 0) {
+        throw StorageError("no card copy with id " + id);
+    }
 }
 
 std::vector<CardCopy> CardCopyRepository::listByBinder(const CardBinderId& binderId) {

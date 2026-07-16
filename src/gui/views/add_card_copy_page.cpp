@@ -10,6 +10,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMessageBox>
 #include <QPixmap>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -20,9 +21,13 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <exception>
+#include <optional>
 
+#include "core/app/card_copy_service.h"
 #include "core/domain/card_condition.h"
 #include "core/domain/card_ownership.h"
+#include "core/domain/card_reference.h"
 #include "gui/services/card_search_service.h"
 #include "gui/views/splitter_style.h"
 
@@ -48,9 +53,13 @@ const QStringList& languageCodes() {
 
 }  // namespace
 
-AddCardCopyPage::AddCardCopyPage(CardSearchService& search, int dexNumber,
-                                 const QString& speciesName, QWidget* parent)
-    : QWidget(parent), search_(search), dexNumber_(dexNumber), speciesName_(speciesName) {
+AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& copies,
+                                 int dexNumber, const QString& speciesName, QWidget* parent)
+    : QWidget(parent),
+      search_(search),
+      copies_(copies),
+      dexNumber_(dexNumber),
+      speciesName_(speciesName) {
     // --- Top bar: Back + heading -------------------------------------------
     auto* backButton = new QPushButton(tr("Back"), this);
     backButton->setIcon(style()->standardIcon(QStyle::SP_ArrowBack));
@@ -82,6 +91,9 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, int dexNumber,
 
     collectorNumber_ = new QLineEdit(formPane);
     collectorNumber_->setPlaceholderText(tr("e.g. 125/197"));
+    // The collector number is the required printed identity — it gates submit.
+    connect(collectorNumber_, &QLineEdit::textChanged, this,
+            [this](const QString&) { updateSubmitEnabled(); });
 
     condition_ = new QComboBox(formPane);
     condition_->addItem(tr("Near Mint"), static_cast<int>(CardCondition::NearMint));
@@ -107,11 +119,10 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, int dexNumber,
     form->addRow(tr("Ownership"), ownership_);
     form->addRow(tr("Comments"), comments_);
 
-    // Submit is deliberately disabled in this slice — saving copies is a future
-    // task. The control is present so the flow reads end-to-end.
+    // Submit creates the copy; it stays disabled until the required collector
+    // number is present.
     submit_ = new QPushButton(tr("Add copy"), formPane);
-    submit_->setEnabled(false);
-    submit_->setToolTip(tr("Saving copies is coming soon."));
+    connect(submit_, &QPushButton::clicked, this, &AddCardCopyPage::submitCopy);
     form->addRow(QString(), submit_);
 
     // --- Printings list (right) --------------------------------------------
@@ -172,6 +183,7 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, int dexNumber,
     rebuildExpansionCompleter();  // sets may already be cached from a prior open
 
     updateStatus();
+    updateSubmitEnabled();
     search_.searchPrintings(dexNumber_, QString());
 }
 
@@ -296,6 +308,36 @@ void AddCardCopyPage::rebuildExpansionCompleter() {
                 narrowByExpansionCode();  // an explicit pick should narrow the list
             });
     expansionCode_->setCompleter(completer);
+}
+
+void AddCardCopyPage::updateSubmitEnabled() {
+    submit_->setEnabled(!collectorNumber_->text().trimmed().isEmpty());
+}
+
+void AddCardCopyPage::submitCopy() {
+    CardReference ref;
+    ref.expansionCode = expansionCode_->text().trimmed().toStdString();
+    ref.language = language_->currentText().toStdString();  // "" when unspecified
+    ref.collectorNumber = collectorNumber_->text().trimmed().toStdString();
+    const auto ownership = static_cast<CardOwnership>(ownership_->currentData().toInt());
+    const auto condition = static_cast<CardCondition>(condition_->currentData().toInt());
+    try {
+        // No binder for now — assigning a copy to a binder is a later concern.
+        copies_.create(dexNumber_, ref, ownership, condition, std::nullopt,
+                       comments_->toPlainText().toStdString());
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, tr("Pokedex TCG"),
+                             tr("Could not add the copy:\n%1").arg(QString::fromUtf8(e.what())));
+        return;
+    }
+    Q_EMIT copyAdded();
+    // Stay on the page so several copies can be added in a row: clear the entry
+    // fields but keep the species, the printings list, and the sticky
+    // condition/ownership choices.
+    expansionCode_->clear();
+    collectorNumber_->clear();
+    comments_->clear();
+    status_->setText(tr("Added ✓ — add another, or go Back."));
 }
 
 void AddCardCopyPage::updateStatus() {

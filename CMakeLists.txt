@@ -120,9 +120,11 @@ add_library(pokedex_core STATIC
     src/core/storage/card_copy_repository.cpp
     src/core/storage/wishlist_repository.cpp
     src/core/app/install_service.cpp
+    src/core/app/uuid.cpp
     src/core/app/binder_service.cpp
     src/core/app/binder_guide_service.cpp
     src/core/app/pokemon_browse_service.cpp
+    src/core/app/card_copy_service.cpp
     src/core/app/wishlist_service.cpp
     src/core/app/poke_api.cpp
     src/core/app/pokemon_tcg_io_api.cpp
@@ -203,6 +205,7 @@ if(BUILD_TESTING)
         tests/app/binder_service_test.cpp
         tests/app/binder_guide_service_test.cpp
         tests/app/pokemon_browse_service_test.cpp
+        tests/app/card_copy_service_test.cpp
         tests/app/wishlist_service_test.cpp
         tests/app/pokemon_external_api_test.cpp
         tests/app/pokemon_tcg_io_api_test.cpp

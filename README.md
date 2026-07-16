@@ -25,11 +25,11 @@ so I can assign them to a binder or simply say that I own it
 (this is an optional part of marking a Pokémon as collected).~~
 - As a user, I want to browse within my owned cards, so I can keep
 track of my inventory.
-- As a user, I want to add a free text comment to a card I own, so
+- ~~As a user, I want to add a free text comment to a card I own, so
 I can put maintain historical data similary to what video games do like
 when the creature was captured, where, price, from who, special variation,
 observed imperfections etc., which help me both to reevaluate value over
-time and to possibly investigate frauds in the future.
+time and to possibly investigate frauds in the future.~~
 - As a user, I want to remove a card I own with an optional note
 to append to the comments, so I can keep auditable track of
 what I owned but don't own anymore and still have clear stats even
