@@ -32,6 +32,12 @@ protected:
     // when the user switches back to this section.
     void showEvent(QShowEvent* event) override;
 
+    // A link source is rendered as a cell widget (a clickable QLabel), which
+    // swallows the mouse press so the table's current row never moves to it. Watch
+    // those labels and select their row on click, so Edit/Delete act on the row the
+    // user clicked, not a previously-selected one.
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
 private:
     // Rebuild the table from WishlistService::listAll(), one row per source.
     void refresh();

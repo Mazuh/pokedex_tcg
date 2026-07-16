@@ -6,12 +6,14 @@
 namespace pokedex {
 
 // GUI — is this wishlist source a clickable link (a marketplace URL) rather than
-// a plain seller name? Sources are free text; by convention a link starts with
-// "http" (see the Wishlist domain docstring). Kept header-only alongside the
-// other GUI helpers so both the per-Pokémon editor and the unscoped wishlist
-// table render sources the same way.
+// a plain seller name? Sources are free text; by convention a link is an
+// "http://" or "https://" URL. Require the full scheme, not a bare "http" prefix,
+// so a seller name like "HTTP Trading Post" stays plain text rather than becoming
+// a broken link. Kept header-only alongside the other GUI helpers so both the
+// per-Pokémon editor and the unscoped wishlist table render sources the same way.
 inline bool isLinkSource(const QString& source) {
-    return source.startsWith(QStringLiteral("http"), Qt::CaseInsensitive);
+    return source.startsWith(QStringLiteral("http://"), Qt::CaseInsensitive) ||
+           source.startsWith(QStringLiteral("https://"), Qt::CaseInsensitive);
 }
 
 // GUI — a label rendering a wishlist source: a URL becomes a clickable link that

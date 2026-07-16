@@ -110,6 +110,34 @@ TEST(WishlistRepositoryTest, ListAllReturnsNonEmptyWishlistsInDexOrder) {
     EXPECT_EQ(all[1].pokemonDexNum, 25);
 }
 
+// The multi-statement save() runs in a transaction: a failure partway must roll
+// back, leaving the prior source set intact rather than a half-written one. This
+// pins the BEGIN/ROLLBACK contract CLAUDE.md mandates for multi-row writes.
+TEST(WishlistRepositoryTest, SaveRollsBackWhenAStatementFailsMidTransaction) {
+    Database db(":memory:");
+    db.migrate();
+    WishlistRepository repo(db);
+    repo.save(makeWish(25, {"keep-a", "keep-b"}));
+
+    // Inject a deterministic mid-save failure: a trigger that aborts when a
+    // specific source row is inserted. A replacement save() upserts the parent and
+    // DELETEs the old sources before reaching this insert, so without a ROLLBACK
+    // dex 25 would be left with an empty/partial source set and a bumped stamp.
+    db.exec(
+        "CREATE TRIGGER boom BEFORE INSERT ON wishlist_source"
+        " WHEN NEW.source = 'BOOM' BEGIN SELECT RAISE(ABORT, 'boom'); END;");
+
+    EXPECT_THROW(repo.save(makeWish(25, {"BOOM", "keep-c"}, "2026-07-20T00:00:00Z",
+                                    "2026-07-20T00:00:00Z")),
+                 pokedex::StorageError);
+
+    // The failed save rolled back: the original sources and stamps survive intact.
+    auto found = repo.find(25);
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(found->sources, (std::set<std::string>{"keep-a", "keep-b"}));
+    EXPECT_EQ(found->updatedAt, at("2026-07-14T09:00:00Z"));
+}
+
 TEST(WishlistRepositoryTest, RemoveDeletesParentAndCascadesSources) {
     Database db(":memory:");
     db.migrate();

@@ -71,6 +71,9 @@ private:
     std::vector<int> filtered_;
     // How many of filtered_ are currently rendered as table rows.
     int loadedCount_ = 0;
+    // Dex number currently shown in the detail panel (-1 = none), so a filter that
+    // hides it can clear the panel rather than leave stale artwork on screen.
+    int shownDex_ = -1;
     // Guards fillViewport() against re-entry: appending rows can make a
     // scrollbar appear, which resizes the viewport and re-fires the resize
     // event mid-fill — without this it would overshoot the rows actually needed.

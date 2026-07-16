@@ -56,7 +56,8 @@ public:
 
     // Replace one existing source string with another (an in-place edit). The new
     // value is trimmed and must be non-blank. Bumps updatedAt to now(). A no-op
-    // when the Pokémon has no wishlist.
+    // when the Pokémon has no wishlist, or when oldSource is not one of its
+    // sources (a stale edit — never fabricates a new source).
     void editSource(PokemonDexNum pokemonDexNum, const std::string& oldSource,
                     std::string newSource);
 

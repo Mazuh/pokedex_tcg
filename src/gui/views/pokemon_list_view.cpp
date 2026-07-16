@@ -146,8 +146,15 @@ void PokemonListView::applyFilter() {
     table_->scrollToTop();
     fillViewport();
     updateCountLabel();
-    if (filtered_.empty()) {
-        detail_->clear();  // nothing to show for an empty (no-match) result
+    // If the Pokémon shown in the detail panel is no longer among the results
+    // (an empty result, or a narrower filter that excludes it), clear the panel
+    // so it never displays a species that has no row on screen.
+    const bool shownStillVisible = std::any_of(
+        filtered_.begin(), filtered_.end(),
+        [this](int i) { return entries_[i].pokemon.dexNumber == shownDex_; });
+    if (!shownStillVisible) {
+        detail_->clear();
+        shownDex_ = -1;
     }
 }
 
@@ -160,7 +167,8 @@ void PokemonListView::showRow(int row) {
     if (!number || !name) {
         return;
     }
-    detail_->showPokemon(number->text().toInt(), name->text());
+    shownDex_ = number->text().toInt();
+    detail_->showPokemon(shownDex_, name->text());
 }
 
 void PokemonListView::loadMore() {

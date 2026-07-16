@@ -73,6 +73,18 @@ TEST_F(WishlistServiceTest, EditSourceSwapsValue) {
     EXPECT_FALSE(service.forPokemon(6).has_value());
 }
 
+// A stale edit whose oldSource is not among the current sources must not add a
+// phantom source; it is a no-op, not an erase-then-insert.
+TEST_F(WishlistServiceTest, EditSourceWithUnknownOldValueIsANoOp) {
+    service.addSource(25, "ebay");
+
+    service.editSource(25, "not-present", "https://cardmarket.com/x");
+
+    auto found = service.forPokemon(25);
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(found->sources, (std::set<std::string>{"ebay"}));  // unchanged
+}
+
 TEST_F(WishlistServiceTest, RemoveSourceDeletesEmptyParent) {
     service.addSource(25, "ebay");
     service.addSource(25, "shop");

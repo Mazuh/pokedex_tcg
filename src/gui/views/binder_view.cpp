@@ -130,17 +130,21 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
 }
 
 void BinderView::applyFilter(const QString& filter) {
-    int visibleCount = 0;
+    bool shownStillVisible = false;
     for (int i = 0; i < static_cast<int>(entries_.size()); ++i) {
         const QString name = QString::fromStdString(entries_[i].pokemon.name);
         const bool visible = filter.isEmpty() || name.contains(filter, Qt::CaseInsensitive);
         table_->setRowHidden(i, !visible);
-        if (visible) {
-            ++visibleCount;
+        if (visible && entries_[i].pokemon.dexNumber == shownDex_) {
+            shownStillVisible = true;
         }
     }
-    if (visibleCount == 0) {
-        detail_->clear();  // nothing to show for an empty result
+    // If the Pokémon shown in the detail panel is now hidden (an empty result, or
+    // a filter that excludes it), clear the panel so it never shows a species with
+    // no visible row.
+    if (!shownStillVisible) {
+        detail_->clear();
+        shownDex_ = -1;
     }
 }
 
@@ -153,7 +157,8 @@ void BinderView::showRow(int row) {
     if (!number || !name) {
         return;
     }
-    detail_->showPokemon(number->text().toInt(), name->text());
+    shownDex_ = number->text().toInt();
+    detail_->showPokemon(shownDex_, name->text());
 }
 
 }  // namespace pokedex

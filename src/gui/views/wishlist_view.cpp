@@ -3,6 +3,7 @@
 #include <QComboBox>
 #include <QCompleter>
 #include <QDialog>
+#include <QEvent>
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -149,6 +150,21 @@ void WishlistView::showEvent(QShowEvent* event) {
     refresh();
 }
 
+bool WishlistView::eventFilter(QObject* watched, QEvent* event) {
+    if (event->type() == QEvent::MouseButtonPress) {
+        // Find the row whose Source cell widget is the one clicked and make it the
+        // current row, so Edit/Delete target it. Return false so the label still
+        // handles the click (a link still opens).
+        for (int row = 0; row < table_->rowCount(); ++row) {
+            if (table_->cellWidget(row, 2) == watched) {
+                table_->setCurrentCell(row, 0);
+                break;
+            }
+        }
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
 void WishlistView::refresh() {
     table_->setRowCount(0);
     int row = 0;
@@ -168,7 +184,11 @@ void WishlistView::refresh() {
                 // A link source gets a clickable label widget; a plain seller name
                 // is a normal (selectable) cell.
                 if (isLinkSource(text)) {
-                    table_->setCellWidget(row, 2, sourceLabel(text));
+                    QLabel* link = sourceLabel(text);
+                    // Watch for clicks so selecting a link row updates the table's
+                    // current row (the label otherwise consumes the press).
+                    link->installEventFilter(this);
+                    table_->setCellWidget(row, 2, link);
                 } else {
                     table_->setItem(row, 2, cell(text));
                 }

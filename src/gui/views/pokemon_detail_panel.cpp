@@ -48,8 +48,10 @@ void PokemonDetailPanel::showPokemon(int dexNumber, const QString& name) {
     currentDex_ = dexNumber;
     name_->setText(name);
     // Loading state: drop any previous image and show the placeholder while the
-    // fetch is in flight.
+    // fetch is in flight. Re-mute the label (a prior load enabled it) so the
+    // placeholder reads as a muted hint, not full-strength content.
     originalPixmap_ = QPixmap();
+    image_->setEnabled(false);
     placeholder_ = tr("Loading…");
     renderImage();
     media_.request({dexNumber, name.toStdString()}, MediaKind::OfficialArtwork);
@@ -60,6 +62,7 @@ void PokemonDetailPanel::clear() {
     currentDex_ = -1;
     name_->clear();
     originalPixmap_ = QPixmap();
+    image_->setEnabled(false);  // muted placeholder, even after a prior load enabled it
     placeholder_ = tr("Select a Pokémon to see its artwork.");
     renderImage();
     wishlistEditor_->clear();

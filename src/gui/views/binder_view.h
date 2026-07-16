@@ -50,6 +50,9 @@ private:
     QLineEdit* search_;
     PokemonDetailPanel* detail_;
     std::vector<CardBinderEntry> entries_;
+    // Dex number currently shown in the detail panel (-1 = none), so a filter that
+    // hides its row can clear the panel rather than leave stale artwork on screen.
+    int shownDex_ = -1;
 };
 
 }  // namespace pokedex

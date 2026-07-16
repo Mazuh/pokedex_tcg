@@ -81,7 +81,13 @@ void WishlistService::editSource(PokemonDexNum pokemonDexNum,
     if (!existing) {
         return;
     }
-    existing->sources.erase(oldSource);
+    // In-place replace: only substitute when oldSource is actually present.
+    // Erasing an absent value then inserting would fabricate a phantom extra
+    // source (a stale edit acting on an out-of-date view), so bail if nothing
+    // was removed.
+    if (existing->sources.erase(oldSource) == 0) {
+        return;
+    }
     existing->sources.insert(clean);
     existing->updatedAt = clock_();
     repo_.save(*existing);
