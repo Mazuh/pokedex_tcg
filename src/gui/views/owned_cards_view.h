@@ -3,6 +3,7 @@
 #include <QWidget>
 
 class QLabel;
+class QLineEdit;
 class QShowEvent;
 class QTableWidget;
 
@@ -18,8 +19,9 @@ class CardCopyService;
 //
 // It reloads every time it becomes visible (showEvent), so a copy added elsewhere
 // (from a Pokémon's "Add copy" page) appears the moment the user switches here,
-// without any cross-section signalling. It is a section embedded in MainWindow's
-// stack, not a separate window.
+// without any cross-section signalling. A live search box filters the rows on any
+// visible field. It is a section embedded in MainWindow's stack, not a separate
+// window.
 class OwnedCardsView : public QWidget {
     Q_OBJECT
 
@@ -30,10 +32,15 @@ protected:
     void showEvent(QShowEvent* event) override;
 
 private:
-    // Re-query all copies and rebuild the table (sorted by dex number, then age).
+    // Re-query all copies and rebuild the table (sorted by dex number, then age),
+    // then reapply the current search filter.
     void reload();
+    // Hide rows that don't match the search text (case-insensitive substring over
+    // every visible column), and refresh the "Showing N of M" count.
+    void applyFilter();
 
     CardCopyService& copies_;
+    QLineEdit* search_;
     QTableWidget* table_;
     QLabel* countLabel_;
 };

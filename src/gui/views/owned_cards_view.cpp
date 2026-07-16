@@ -2,6 +2,7 @@
 
 #include <QHeaderView>
 #include <QLabel>
+#include <QLineEdit>
 #include <QShowEvent>
 #include <QString>
 #include <QTableWidget>
@@ -43,6 +44,11 @@ QString cardText(const CardReference& ref) {
 
 OwnedCardsView::OwnedCardsView(CardCopyService& copies, QWidget* parent)
     : QWidget(parent), copies_(copies) {
+    search_ = new QLineEdit(this);
+    search_->setPlaceholderText(tr("Search cards…"));  // name, set, number, condition…
+    search_->setClearButtonEnabled(true);
+    connect(search_, &QLineEdit::textChanged, this, [this](const QString&) { applyFilter(); });
+
     // A read-only six-column table: dex #, Pokémon, card ref, language, condition,
     // ownership. Whole-row selection, no editing; the Pokémon column takes slack.
     table_ = new QTableWidget(this);
@@ -68,6 +74,7 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, QWidget* parent)
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(16, 12, 16, 12);  // match the other sections' padding
+    layout->addWidget(search_);
     layout->addWidget(table_);
     layout->addWidget(countLabel_);
 }
@@ -99,7 +106,31 @@ void OwnedCardsView::reload() {
         table_->setItem(row, 4, cell(conditionLabel(c.condition)));
         table_->setItem(row, 5, cell(ownershipLabel(c.ownership)));
     }
-    countLabel_->setText(tr("%1 cards in your collection").arg(copies.size()));
+    applyFilter();  // re-hide non-matches and set the count (search text persists)
+}
+
+void OwnedCardsView::applyFilter() {
+    const QString filter = search_->text().trimmed();
+    int visible = 0;
+    for (int row = 0; row < table_->rowCount(); ++row) {
+        bool match = filter.isEmpty();
+        if (!match) {
+            // Match against every visible column's text (Pokémon, card ref,
+            // language, condition, ownership, dex #), joined.
+            QString hay;
+            for (int col = 0; col < table_->columnCount(); ++col) {
+                if (const QTableWidgetItem* item = table_->item(row, col)) {
+                    hay += item->text() + QLatin1Char(' ');
+                }
+            }
+            match = hay.contains(filter, Qt::CaseInsensitive);
+        }
+        table_->setRowHidden(row, !match);
+        if (match) {
+            ++visible;
+        }
+    }
+    countLabel_->setText(tr("Showing %1 of %2 cards").arg(visible).arg(table_->rowCount()));
 }
 
 }  // namespace pokedex
