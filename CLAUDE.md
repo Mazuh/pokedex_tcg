@@ -57,7 +57,12 @@ include root is `src/`, so includes read namespaced:
 `#include "core/domain/pokemon.h"`, `#include "gui/views/..."`.
 
 Folders are created as real code lands; the tree above is the target
-shape, not a scaffold to pre-create. `domain/` is populated. `storage/` holds
+shape, not a scaffold to pre-create. `domain/` is populated. Schema migrations are
+**incremental and additive**: `Database::migrate()` applies each step whose target
+version exceeds the file's `user_version` (v1 = initial schema; v2 added
+`card_copy.ref_set_name`), so a fresh DB runs the whole chain and an existing one
+only the tail — bump `kSchemaVersion` and add a step (never edit `kSchemaV1`) when
+the schema changes. `storage/` holds
 workspace resolution, the SQLite `Database` wrapper + schema/migrations, the
 `codecs` (region/ownership/condition enums ↔ tokens, timestamps ↔ ISO-8601),
 and repositories for `CardBinder`, `CardCopy`, and `Wishlist`. The `CardCopy`
