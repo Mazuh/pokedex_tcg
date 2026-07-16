@@ -6,6 +6,7 @@
 #include <QStackedWidget>
 
 #include "gui/views/binders_page.h"
+#include "gui/views/owned_cards_view.h"
 #include "gui/views/pokemon_list_view.h"
 #include "gui/views/splitter_style.h"
 #include "gui/views/wishlist_view.h"
@@ -39,6 +40,7 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
         " color: palette(text); }");
     new QListWidgetItem(tr("Binders"), sidebar);
     new QListWidgetItem(tr("Pokémon"), sidebar);
+    new QListWidgetItem(tr("My Cards"), sidebar);
     new QListWidgetItem(tr("Wishlist"), sidebar);
 
     // Section order must match the sidebar row order above: a row selects the
@@ -47,6 +49,7 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
     sections_->addWidget(new BindersPage(binderService, guide, wishlist, media, cardSearch,
                                          cardCopies, collectionPath));
     sections_->addWidget(new PokemonListView(browse, wishlist, media, cardSearch, cardCopies));
+    sections_->addWidget(new OwnedCardsView(cardCopies));
     sections_->addWidget(new WishlistView(wishlist));
 
     connect(sidebar, &QListWidget::currentRowChanged, sections_,

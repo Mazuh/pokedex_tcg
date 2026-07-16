@@ -23,8 +23,8 @@ another synchronized folder.~~
 - ~~As a user, I want to browse any existing cards for each Pokémon,
 so I can assign them to a binder or simply say that I own it
 (this is an optional part of marking a Pokémon as collected).~~
-- As a user, I want to browse within my owned cards, so I can keep
-track of my inventory.
+- ~~As a user, I want to browse within my owned cards, so I can keep
+track of my inventory.~~
 - ~~As a user, I want to add a free text comment to a card I own, so
 I can put maintain historical data similary to what video games do like
 when the creature was captured, where, price, from who, special variation,
