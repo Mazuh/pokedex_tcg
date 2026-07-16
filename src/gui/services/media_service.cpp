@@ -9,19 +9,52 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QSaveFile>
+#include <QTimer>
 #include <QUrl>
 
+#include <chrono>
+#include <cstdint>
 #include <utility>
 
 #include "core/app/media_cache_layout.h"
 
 namespace pokedex {
 
+namespace {
+
+// Debounce window: a cache-missing request waits this long for the selection to
+// settle before it hits the wire. Long enough that a key-repeat scroll never
+// fires an intermediate species, short enough to feel immediate on a deliberate
+// landing.
+constexpr int kDebounceMs = 175;
+// When the rate limiter denies a due fetch, retry after this delay — the pending
+// target is kept, so the fetch simply paces itself to the refill rate.
+constexpr int kThrottleRetryMs = 150;
+// Network-fetch budget: a burst of kBurst fetches from idle (comfortably covers
+// a handful of deliberate selections), then a sustained ceiling of kSustainedPerSecond.
+constexpr double kBurst = 8.0;
+constexpr double kSustainedPerSecond = 5.0;
+
+// A monotonic millisecond timestamp for the rate limiter — never the wall clock,
+// so a system-time adjustment can't perturb throttling.
+std::int64_t monotonicNowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+}  // namespace
+
 MediaService::MediaService(const PokemonExternalApi& api, QString mediaDir, QObject* parent)
     : QObject(parent),
       api_(api),
       mediaDir_(std::move(mediaDir)),
-      nam_(new QNetworkAccessManager(this)) {}
+      nam_(new QNetworkAccessManager(this)),
+      debounceTimer_(new QTimer(this)),
+      limiter_(kBurst, kSustainedPerSecond) {
+    debounceTimer_->setSingleShot(true);
+    connect(debounceTimer_, &QTimer::timeout, this, &MediaService::dispatchPending);
+}
 
 void MediaService::request(const MediaSubject& subject, MediaKind kind) {
     const int dex = subject.dexNumber;
@@ -35,11 +68,15 @@ void MediaService::request(const MediaSubject& subject, MediaKind kind) {
     const QString relPath = QString::fromStdString(mediaCacheRelPath(resolved.resourceName, kind));
     const QString cachePath = QDir(mediaDir_).filePath(relPath);
 
-    // Cache hit: load from disk, no network. A file that fails to decode
-    // (truncated by an old crash) is treated as a miss and re-fetched.
+    // Cache hit: load from disk, no network, no throttling. A file that fails to
+    // decode (truncated by an old crash) is treated as a miss and re-fetched.
     if (QFileInfo::exists(cachePath)) {
         QPixmap pixmap;
         if (pixmap.load(cachePath)) {
+            // This is the target the user landed on, so any older pending network
+            // fetch for a scrolled-past species is now stale — cancel it.
+            pending_.reset();
+            debounceTimer_->stop();
             // Deliver asynchronously so callers always receive ready() *after*
             // returning from request() — a uniform contract with the network path.
             QMetaObject::invokeMethod(
@@ -50,7 +87,26 @@ void MediaService::request(const MediaSubject& subject, MediaKind kind) {
         qWarning() << "MediaService: cached file failed to decode, refetching:" << cachePath;
     }
 
-    startFetch(dex, kind, QString::fromStdString(resolved.url), relPath, cachePath);
+    // Cache miss: debounce the network fetch, coalescing to this latest target so
+    // a scroll storm collapses to the single species finally settled on.
+    pending_ = PendingFetch{dex, kind, QString::fromStdString(resolved.url), relPath, cachePath};
+    debounceTimer_->start(kDebounceMs);
+}
+
+void MediaService::dispatchPending() {
+    if (!pending_) {
+        return;
+    }
+    // Backstop for anything the debounce didn't already collapse: if the budget is
+    // spent, keep the pending target and retry once a token refills — the fetch is
+    // paced, never dropped or surfaced as an error.
+    if (!limiter_.tryAcquire(monotonicNowMs())) {
+        debounceTimer_->start(kThrottleRetryMs);
+        return;
+    }
+    const PendingFetch req = *pending_;
+    pending_.reset();
+    startFetch(req.dexNumber, req.kind, req.url, req.relPath, req.cachePath);
 }
 
 void MediaService::startFetch(int dexNumber, MediaKind kind, const QString& url,

@@ -107,6 +107,7 @@ add_library(pokedex_core STATIC
     src/core/app/wishlist_service.cpp
     src/core/app/poke_api.cpp
     src/core/app/media_cache_layout.cpp
+    src/core/app/rate_limiter.cpp
 )
 target_include_directories(pokedex_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(pokedex_core
@@ -181,6 +182,7 @@ if(BUILD_TESTING)
         tests/app/pokemon_browse_service_test.cpp
         tests/app/wishlist_service_test.cpp
         tests/app/pokemon_external_api_test.cpp
+        tests/app/rate_limiter_test.cpp
     )
     target_link_libraries(pokedex_tests PRIVATE pokedex_core pokedex_warnings pokedex_sanitizers GTest::gtest_main)
 
