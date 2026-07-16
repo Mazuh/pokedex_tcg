@@ -2,7 +2,6 @@
 
 #include <QFont>
 #include <QHBoxLayout>
-#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
@@ -15,6 +14,7 @@
 
 #include "core/app/wishlist_service.h"
 #include "gui/views/source_label.h"
+#include "gui/views/wishlist_edit.h"
 
 namespace pokedex {
 
@@ -115,20 +115,10 @@ void WishlistSourcesEditor::reload() {
         // Edit: prompt for a new value pre-filled with the current one; a blank or
         // unchanged entry is a no-op. Remove: drop the source outright.
         connect(editButton, &QToolButton::clicked, this, [this, dex, source] {
-            bool ok = false;
-            const QString entered = QInputDialog::getText(
-                this, tr("Edit Source"), tr("Seller or link:"), QLineEdit::Normal,
-                QString::fromStdString(source), &ok);
-            if (!ok) {
-                return;
+            if (promptEditWishlistSource(this, wishlist_, dex,
+                                         QString::fromStdString(source))) {
+                reload();
             }
-            try {
-                wishlist_.editSource(dex, source, entered.toStdString());
-            } catch (const std::exception& e) {
-                QMessageBox::warning(this, tr("Pokedex TCG"),
-                                     QString::fromUtf8(e.what()));
-            }
-            reload();
         });
         connect(removeButton, &QToolButton::clicked, this, [this, dex, source] {
             try {

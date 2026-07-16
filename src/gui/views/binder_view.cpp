@@ -76,10 +76,11 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     detail_ = new PokemonDetailPanel(media, wishlist, this);
 
     connect(search_, &QLineEdit::textChanged, this, &BinderView::applyFilter);
-    // Single-click (and keyboard arrow navigation) shows the row's Pokémon in the
-    // detail panel. cellClicked is single-click; currentCellChanged covers the
-    // keyboard. (cellActivated would be double-click/Enter — the wrong gesture.)
-    connect(table_, &QTableWidget::cellClicked, this, &BinderView::showRow);
+    // Show the current row's Pokémon in the detail panel. currentCellChanged
+    // covers both a mouse click (which moves the current cell) and keyboard arrow
+    // navigation, so one connection suffices — connecting cellClicked too would
+    // just fire showRow twice per click. (cellActivated would be double-click/Enter
+    // — the wrong gesture.)
     connect(table_, &QTableWidget::currentCellChanged, this, &BinderView::showRow);
 
     // The list (top bar + search + table) on the left, the detail panel on the

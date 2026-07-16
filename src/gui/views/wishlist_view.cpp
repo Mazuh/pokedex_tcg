@@ -8,7 +8,6 @@
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
-#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
@@ -31,6 +30,7 @@
 #include "core/domain/pokemon_catalog.h"
 #include "gui/views/source_label.h"
 #include "gui/views/table_cell.h"
+#include "gui/views/wishlist_edit.h"
 
 namespace pokedex {
 
@@ -142,7 +142,10 @@ WishlistView::WishlistView(WishlistService& wishlist, QWidget* parent)
     layout->addWidget(emptyLabel_);
     layout->addLayout(buttons);
 
-    refresh();
+    // No initial refresh(): this page is never visible before its first showEvent
+    // (it's a non-default stack page), and showEvent() refreshes — so building the
+    // table here would just be discarded work.
+    updateButtonState();
 }
 
 void WishlistView::showEvent(QShowEvent* event) {
@@ -232,19 +235,9 @@ void WishlistView::editSelected() {
     const int dex = item->data(kDexRole).toInt();
     const QString oldSource = item->data(kSourceRole).toString();
 
-    bool ok = false;
-    const QString entered = QInputDialog::getText(this, tr("Edit Source"),
-                                                  tr("Seller or link:"), QLineEdit::Normal,
-                                                  oldSource, &ok);
-    if (!ok) {
-        return;
+    if (promptEditWishlistSource(this, wishlist_, dex, oldSource)) {
+        refresh();
     }
-    try {
-        wishlist_.editSource(dex, oldSource.toStdString(), entered.toStdString());
-    } catch (const std::exception& e) {
-        QMessageBox::warning(this, tr("Pokedex TCG"), QString::fromUtf8(e.what()));
-    }
-    refresh();
 }
 
 void WishlistView::removeSelected() {

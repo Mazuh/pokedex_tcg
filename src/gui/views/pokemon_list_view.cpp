@@ -71,10 +71,11 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService&
     detail_ = new PokemonDetailPanel(media, wishlist, this);
 
     connect(search_, &QLineEdit::textChanged, this, &PokemonListView::applyFilter);
-    // Single-click (and keyboard arrow navigation) shows the row's Pokémon in the
-    // detail panel. cellClicked is single-click; currentCellChanged covers the
-    // keyboard. Row → data is read from the cells, sidestepping the filtered_ map.
-    connect(table_, &QTableWidget::cellClicked, this, &PokemonListView::showRow);
+    // Show the current row's Pokémon in the detail panel. currentCellChanged
+    // covers both a mouse click (which moves the current cell) and keyboard arrow
+    // navigation, so one connection suffices — connecting cellClicked too would
+    // just fire showRow twice per click. Row → data is read from the cells,
+    // sidestepping the filtered_ map.
     connect(table_, &QTableWidget::currentCellChanged, this, &PokemonListView::showRow);
     // Infinite scroll: append the next chunk as the user nears the bottom. The
     // complementary "viewport isn't full yet" case (first show, or the window
