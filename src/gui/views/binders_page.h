@@ -15,6 +15,7 @@ namespace pokedex {
 
 class BinderService;
 class BinderGuideService;
+class MediaService;
 
 // GUI — the Binders section of the main window: a table of the user's binders
 // (name + region) with New / Rename / Remove actions, and Open to view a
@@ -33,8 +34,9 @@ class BindersPage : public QWidget {
 
 public:
     // `collectionPath` is the workspace folder, shown so the user can always see
-    // where their collection lives (it may be on a NAS, iCloud, etc.).
-    BindersPage(BinderService& service, BinderGuideService& guide,
+    // where their collection lives (it may be on a NAS, iCloud, etc.). `media` is
+    // forwarded to each opened binder guide so its rows show a detail panel.
+    BindersPage(BinderService& service, BinderGuideService& guide, MediaService& media,
                 const QString& collectionPath, QWidget* parent = nullptr);
 
 private:
@@ -50,6 +52,7 @@ private:
 
     BinderService& service_;
     BinderGuideService& guide_;
+    MediaService& media_;
     QStackedWidget* stack_;
     QTableWidget* table_;
     QPushButton* renameButton_;

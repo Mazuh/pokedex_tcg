@@ -104,13 +104,17 @@ add_library(pokedex_core STATIC
     src/core/app/binder_service.cpp
     src/core/app/binder_guide_service.cpp
     src/core/app/pokemon_browse_service.cpp
+    src/core/app/poke_api.cpp
+    src/core/app/media_cache_layout.cpp
 )
 target_include_directories(pokedex_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(pokedex_core
     PRIVATE pokedex_warnings pokedex_sanitizers SQLite3::SQLite3)
 
 # --- GUI application (Qt 6 Widgets) ------------------------------------------
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
+# Network is used only by the GUI's media-fetching service (MediaService); core
+# stays Qt-free, so it is linked here and never into pokedex_core.
+find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 
 qt_standard_project_setup()
 
@@ -122,8 +126,10 @@ qt_add_executable(pokedex_tcg
     src/gui/views/binders_page.cpp
     src/gui/views/binder_view.cpp
     src/gui/views/pokemon_list_view.cpp
+    src/gui/views/pokemon_detail_panel.cpp
+    src/gui/services/media_service.cpp
 )
-target_link_libraries(pokedex_tcg PRIVATE pokedex_core pokedex_warnings pokedex_sanitizers Qt6::Widgets)
+target_link_libraries(pokedex_tcg PRIVATE pokedex_core pokedex_warnings pokedex_sanitizers Qt6::Widgets Qt6::Network)
 
 # --- Tests (GoogleTest + CTest) ----------------------------------------------
 include(CTest)
@@ -170,6 +176,7 @@ if(BUILD_TESTING)
         tests/app/binder_service_test.cpp
         tests/app/binder_guide_service_test.cpp
         tests/app/pokemon_browse_service_test.cpp
+        tests/app/pokemon_external_api_test.cpp
     )
     target_link_libraries(pokedex_tests PRIVATE pokedex_core pokedex_warnings pokedex_sanitizers GTest::gtest_main)
 

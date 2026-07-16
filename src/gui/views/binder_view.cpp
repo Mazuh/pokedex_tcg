@@ -6,6 +6,7 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSplitter>
 #include <QString>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -14,6 +15,7 @@
 #include <exception>
 
 #include "core/app/binder_guide_service.h"
+#include "gui/views/pokemon_detail_panel.h"
 #include "gui/views/region_labels.h"
 #include "gui/views/status_labels.h"
 #include "gui/views/table_cell.h"
@@ -32,7 +34,8 @@ QString headingText(const CardBinder& binder) {
 
 }  // namespace
 
-BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder, QWidget* parent)
+BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder, MediaService& media,
+                       QWidget* parent)
     : QWidget(parent) {
     auto* backButton = new QPushButton(tr("← Back"), this);
     auto* heading = new QLabel(headingText(binder), this);
@@ -64,13 +67,34 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder, QWid
     // Cell padding so content clears the edges and the overlay scrollbar.
     table_->setStyleSheet("QTableView::item { padding-left: 8px; padding-right: 16px; }");
 
+    detail_ = new PokemonDetailPanel(media, this);
+
     connect(search_, &QLineEdit::textChanged, this, &BinderView::applyFilter);
+    // Single-click (and keyboard arrow navigation) shows the row's Pokémon in the
+    // detail panel. cellClicked is single-click; currentCellChanged covers the
+    // keyboard. (cellActivated would be double-click/Enter — the wrong gesture.)
+    connect(table_, &QTableWidget::cellClicked, this, &BinderView::showRow);
+    connect(table_, &QTableWidget::currentCellChanged, this, &BinderView::showRow);
+
+    // The list (top bar + search + table) on the left, the detail panel on the
+    // right, in a draggable horizontal split. The list takes the slack.
+    auto* listPane = new QWidget(this);
+    auto* listLayout = new QVBoxLayout(listPane);
+    listLayout->setContentsMargins(16, 12, 16, 12);  // match the other sections' padding
+    listLayout->addLayout(topBar);
+    listLayout->addWidget(search_);
+    listLayout->addWidget(table_);
+
+    auto* splitter = new QSplitter(Qt::Horizontal, this);
+    splitter->addWidget(listPane);
+    splitter->addWidget(detail_);
+    splitter->setStretchFactor(0, 1);
+    splitter->setStretchFactor(1, 0);
+    splitter->setSizes({560, 240});
 
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(16, 12, 16, 12);  // match the other sections' padding
-    layout->addLayout(topBar);
-    layout->addWidget(search_);
-    layout->addWidget(table_);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->addWidget(splitter);
 
     // Compute the guide once; the search box only re-filters this cached vector,
     // never re-queries. A failure here (e.g. the workspace went away) is reported
@@ -99,11 +123,30 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder, QWid
 }
 
 void BinderView::applyFilter(const QString& filter) {
+    int visibleCount = 0;
     for (int i = 0; i < static_cast<int>(entries_.size()); ++i) {
         const QString name = QString::fromStdString(entries_[i].pokemon.name);
         const bool visible = filter.isEmpty() || name.contains(filter, Qt::CaseInsensitive);
         table_->setRowHidden(i, !visible);
+        if (visible) {
+            ++visibleCount;
+        }
     }
+    if (visibleCount == 0) {
+        detail_->clear();  // nothing to show for an empty result
+    }
+}
+
+void BinderView::showRow(int row) {
+    if (row < 0) {
+        return;
+    }
+    QTableWidgetItem* number = table_->item(row, 0);
+    QTableWidgetItem* name = table_->item(row, 1);
+    if (!number || !name) {
+        return;
+    }
+    detail_->showPokemon(number->text().toInt(), name->text());
 }
 
 }  // namespace pokedex

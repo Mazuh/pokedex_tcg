@@ -5,12 +5,15 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QScrollBar>
+#include <QSplitter>
 #include <QString>
 #include <QTableWidget>
+#include <QTableWidgetItem>
 #include <QVBoxLayout>
 
 #include <algorithm>
 
+#include "gui/views/pokemon_detail_panel.h"
 #include "gui/views/region_labels.h"
 #include "gui/views/table_cell.h"
 
@@ -29,7 +32,8 @@ constexpr int kPrefetchMargin = 64;
 
 }  // namespace
 
-PokemonListView::PokemonListView(PokemonBrowseService& service, QWidget* parent)
+PokemonListView::PokemonListView(PokemonBrowseService& service, MediaService& media,
+                                 QWidget* parent)
     : QWidget(parent), service_(service) {
     search_ = new QLineEdit(this);
     search_->setPlaceholderText(tr("Search Pokémon…"));
@@ -59,7 +63,14 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, QWidget* parent)
     countLabel_ = new QLabel(this);
     countLabel_->setEnabled(false);  // muted: a status detail, not an action
 
+    detail_ = new PokemonDetailPanel(media, this);
+
     connect(search_, &QLineEdit::textChanged, this, &PokemonListView::applyFilter);
+    // Single-click (and keyboard arrow navigation) shows the row's Pokémon in the
+    // detail panel. cellClicked is single-click; currentCellChanged covers the
+    // keyboard. Row → data is read from the cells, sidestepping the filtered_ map.
+    connect(table_, &QTableWidget::cellClicked, this, &PokemonListView::showRow);
+    connect(table_, &QTableWidget::currentCellChanged, this, &PokemonListView::showRow);
     // Infinite scroll: append the next chunk as the user nears the bottom. The
     // complementary "viewport isn't full yet" case (first show, or the window
     // grew taller than the loaded rows, where no scrollbar exists) is handled by
@@ -73,11 +84,25 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, QWidget* parent)
     });
     table_->viewport()->installEventFilter(this);
 
+    // The list (search + table + count) on the left, the detail panel on the
+    // right, in a draggable horizontal split. The list takes the slack.
+    auto* listPane = new QWidget(this);
+    auto* listLayout = new QVBoxLayout(listPane);
+    listLayout->setContentsMargins(16, 12, 16, 12);  // don't hug the section edges
+    listLayout->addWidget(search_);
+    listLayout->addWidget(table_);
+    listLayout->addWidget(countLabel_);
+
+    auto* splitter = new QSplitter(Qt::Horizontal, this);
+    splitter->addWidget(listPane);
+    splitter->addWidget(detail_);
+    splitter->setStretchFactor(0, 1);
+    splitter->setStretchFactor(1, 0);
+    splitter->setSizes({560, 240});
+
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(16, 12, 16, 12);  // don't hug the section edges
-    layout->addWidget(search_);
-    layout->addWidget(table_);
-    layout->addWidget(countLabel_);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->addWidget(splitter);
 
     // Compute the whole catalog once; filtering and lazy loading only work the
     // cached vector, never re-query. applyFilter() seeds filtered_ and loads
@@ -115,6 +140,21 @@ void PokemonListView::applyFilter() {
     table_->scrollToTop();
     fillViewport();
     updateCountLabel();
+    if (filtered_.empty()) {
+        detail_->clear();  // nothing to show for an empty (no-match) result
+    }
+}
+
+void PokemonListView::showRow(int row) {
+    if (row < 0) {
+        return;
+    }
+    QTableWidgetItem* number = table_->item(row, 0);
+    QTableWidgetItem* name = table_->item(row, 1);
+    if (!number || !name) {
+        return;
+    }
+    detail_->showPokemon(number->text().toInt(), name->text());
 }
 
 void PokemonListView::loadMore() {

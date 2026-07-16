@@ -9,6 +9,7 @@ namespace pokedex {
 class BinderService;
 class BinderGuideService;
 class PokemonBrowseService;
+class MediaService;
 
 // GUI — the application's top-level window: a macOS-style shell with a left
 // sidebar (a source list, like Finder's or System Settings') selecting between
@@ -21,10 +22,12 @@ class MainWindow : public QWidget {
 
 public:
     // `collectionPath` is the workspace folder, forwarded to the Binders page so
-    // the user can always see where their collection lives.
+    // the user can always see where their collection lives. `media` is the shared
+    // artwork fetch/cache service, threaded to the sections that show a Pokémon
+    // detail panel.
     MainWindow(BinderService& binderService, BinderGuideService& guide,
-               PokemonBrowseService& browse, const QString& collectionPath,
-               QWidget* parent = nullptr);
+               PokemonBrowseService& browse, MediaService& media,
+               const QString& collectionPath, QWidget* parent = nullptr);
 
 private:
     QStackedWidget* sections_;

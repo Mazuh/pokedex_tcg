@@ -12,6 +12,9 @@ class QTableWidget;
 
 namespace pokedex {
 
+class MediaService;
+class PokemonDetailPanel;
+
 // GUI — the Pokémon section of the main window: an unscoped, read-only browse of
 // the whole National Pokédex (# / name / region / owned-copy count) with a live
 // partial-name search. A thin shell over PokemonBrowseService (the Qt-free
@@ -27,7 +30,8 @@ class PokemonListView : public QWidget {
     Q_OBJECT
 
 public:
-    explicit PokemonListView(PokemonBrowseService& service, QWidget* parent = nullptr);
+    PokemonListView(PokemonBrowseService& service, MediaService& media,
+                    QWidget* parent = nullptr);
 
 protected:
     // Watches the table viewport's resize so the list keeps filling a viewport
@@ -49,11 +53,16 @@ private:
     void fillViewport();
     // Refresh the "Showing N of M" status label from loadedCount_ / filtered_.
     void updateCountLabel();
+    // Show the clicked/selected row's Pokémon in the detail panel. Reads the dex
+    // number and name from the row's cells (columns 0 and 1), so it is immune to
+    // the filtered_-index indirection.
+    void showRow(int row);
 
     PokemonBrowseService& service_;
     QLineEdit* search_;
     QTableWidget* table_;
     QLabel* countLabel_;
+    PokemonDetailPanel* detail_;
 
     // The whole catalog, computed once; never re-queried.
     std::vector<PokemonBrowseEntry> entries_;

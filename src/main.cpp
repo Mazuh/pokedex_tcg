@@ -9,11 +9,13 @@
 #include "core/app/binder_guide_service.h"
 #include "core/app/binder_service.h"
 #include "core/app/install_service.h"
+#include "core/app/poke_api.h"
 #include "core/app/pokemon_browse_service.h"
 #include "core/storage/card_binder_repository.h"
 #include "core/storage/card_copy_repository.h"
 #include "core/storage/database.h"
 #include "core/storage/wishlist_repository.h"
+#include "gui/services/media_service.h"
 #include "gui/views/first_run_dialog.h"
 #include "gui/views/main_window.h"
 
@@ -66,8 +68,17 @@ int main(int argc, char *argv[]) {
         // owned cards per species.
         pokedex::PokemonBrowseService browse(copyRepository);
 
+        // The external-API adapter (swap this line to change image sources) and the
+        // media fetch/cache service, rooted at the workspace media dir. Locals here
+        // so they outlive app.exec(), matching the "service outlives the window"
+        // contract; one shared instance serves every section.
+        pokedex::PokeApi externalApi;
+        pokedex::MediaService media(
+            externalApi, QString::fromStdString(workspace->mediaDir().string()));
+
         pokedex::MainWindow window(
-            service, guide, browse, QString::fromStdString(workspace->root().string()));
+            service, guide, browse, media,
+            QString::fromStdString(workspace->root().string()));
         window.show();
 
         return app.exec();

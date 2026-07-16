@@ -13,6 +13,8 @@ class QTableWidget;
 namespace pokedex {
 
 class BinderGuideService;
+class MediaService;
+class PokemonDetailPanel;
 
 // GUI — the "open binder" screen: the binder's guide as a list of its Pokémon,
 // each paired with its CollectionStatus, above a live partial-name search box.
@@ -27,7 +29,7 @@ class BinderView : public QWidget {
     Q_OBJECT
 
 public:
-    BinderView(BinderGuideService& guide, const CardBinder& binder,
+    BinderView(BinderGuideService& guide, const CardBinder& binder, MediaService& media,
                QWidget* parent = nullptr);
 
 Q_SIGNALS:
@@ -39,9 +41,13 @@ private:
     // Show only the rows whose Pokémon name contains `filter` (case-insensitive);
     // an empty filter shows all. Rows are built once and toggled, not rebuilt.
     void applyFilter(const QString& filter);
+    // Show the clicked/selected row's Pokémon in the detail panel. Reads the dex
+    // number and name from the row's cells (columns 0 and 1).
+    void showRow(int row);
 
     QTableWidget* table_;
     QLineEdit* search_;
+    PokemonDetailPanel* detail_;
     std::vector<CardBinderEntry> entries_;
 };
 
