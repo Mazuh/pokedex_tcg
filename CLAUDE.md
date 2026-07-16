@@ -14,8 +14,13 @@ See `README.md` for the product vision and glossary.
 - **GUI:** Qt 6 Widgets
 - **Storage:** SQLite — the **sole** persistence format (system libsqlite3 via
   `find_package(SQLite3)`, linked PRIVATE into `pokedex_core`; the C API is used
-  directly, never Qt SQL, so core stays Qt-free). No CSV/JSON: they are not a
-  storage format and not an export target — out of scope.
+  directly, never Qt SQL, so core stays Qt-free). No CSV/JSON *as a storage
+  format* or export target — out of scope.
+- **JSON (parsing only):** nlohmann/json (fetched via CMake `FetchContent`,
+  `JSON_SystemInclude ON`, linked PRIVATE into `pokedex_core`) — used **only** to
+  parse the external card-catalog (pokemontcg.io) API responses in
+  `core/app/card_catalog_parse`. It never appears in a public core header (the
+  parsers take `std::string`, return plain structs) and is never a storage format.
 - **Build:** CMake + Ninja
 - **Tests:** GoogleTest (fetched via CMake `FetchContent`) run through CTest
 - **CI:** GitHub Actions matrix on `macos-latest` (Apple Clang) and
@@ -56,27 +61,39 @@ shape, not a scaffold to pre-create. `domain/` is populated. `storage/` holds
 workspace resolution, the SQLite `Database` wrapper + schema/migrations, the
 `codecs` (region/ownership/condition enums ↔ tokens, timestamps ↔ ISO-8601),
 and repositories for `CardBinder`, `CardCopy`, and `Wishlist`. The `CardCopy`
-repo is read-mostly for now — an `add` primitive plus the reads the binder guide
-and Pokédex browser need, e.g. `CardCopyRepository::ownedCountsByDexNum`; the
-full write surface lands with copy management. The `Wishlist` repo has the full
-CRUD surface: `save` (upsert parent + replace its source set), `find`, `listAll`,
-`remove`, and `wishedDexNums` (the "Wished" status read). `app/` holds
-`install_service`, `BinderService` (binder CRUD verbs), `BinderGuideService`
+repo now carries the full CRUD surface — `add`, `find`, `listAll`, `update`
+(overwrites the mutable columns by id), `hardDelete`, plus the binder-guide reads
+(`listByBinder`, `ownedElsewhere`, `ownedCountsByDexNum`). The `Wishlist` repo has
+the full CRUD surface: `save` (upsert parent + replace its source set), `find`,
+`listAll`, `remove`, and `wishedDexNums` (the "Wished" status read). `app/` holds
+`install_service`, `uuid` (`newUuidV4`, the shared id minter used by every
+service), `BinderService` (binder CRUD verbs), `BinderGuideService`
 (the `buildBinderEntries` the inferred zone refers to), `PokemonBrowseService`
 (`listAll` → every catalog species paired with its owned-copy count, the unscoped
-Pokédex browser's data), and `WishlistService` (the manage-sources verbs —
-`forPokemon`, `listAll`, `addSource`/`editSource`/`removeSource` — with an
-injectable clock like `BinderService`). `gui/views/` holds the
+Pokédex browser's data), `CardCopyService` (the copy verbs —
+`create`/`editDetails`/`assignToBinder`/`remove`[soft, with an optional
+note-append]/`hardDelete`/`listAll` — with an injectable clock and id generator
+like `BinderService`), `WishlistService` (the manage-sources verbs), and the
+**card-catalog seam** — `CardCatalogApi` (Qt-free interface, parallel to
+`PokemonExternalApi` but for *cards*), its concrete `PokemonTcgIoApi` (pokemontcg.io
+URL/Lucene query building), the DTOs (`card_catalog_dto.h`: `CardSetInfo`,
+`CardCandidate`), and `card_catalog_parse` (nlohmann/json parsers/mappers — see the
+JSON note in the tech stack). `gui/views/` holds the
 `MainWindow` shell (a macOS-style sidebar selecting sections in an outer
-`QStackedWidget`), the first-run setup dialog, the binders section
-(`BindersPage`, a table with its own list ⇄ binder-guide stack), the new-binder
-editor, the binder guide view, the Pokémon browser (`PokemonListView`), the
-unscoped wishlist section (`WishlistView`, a flat table with one row per source),
-and the per-Pokémon wishlist editor (`WishlistSourcesEditor`) embedded below the
-artwork in `PokemonDetailPanel`.
+`QStackedWidget`: Binders, Pokémon, My Cards, Wishlist), the first-run setup dialog,
+the binders section (`BindersPage`, a table with its own list ⇄ binder-guide stack),
+the new-binder editor, the reusable `BinderPickerDialog`, the binder guide view, the
+Pokémon browser (`PokemonListView`, which hosts an inner stack for the add-copy
+page), the `AddCardCopyPage` (the "Add copy" form + infinite-scroll printings list),
+the `OwnedCardsView` ("My Cards" inventory: browse/search/assign-to-binder/remove),
+the unscoped wishlist section (`WishlistView`), and the per-Pokémon wishlist editor
+(`WishlistSourcesEditor`) embedded below the artwork in `PokemonDetailPanel`.
+Enum→label display helpers are header-only in `gui/views/` (`region_labels.h`,
+`status_labels.h`, `condition_labels.h`, `ownership_labels.h`). `gui/services/`
+holds `MediaService` (Pokémon artwork fetch+cache) and `CardSearchService` (card
+search transport — **no disk cache**: search results are display/memory-only).
 `gui/models/` is still empty — no Qt item models yet; views adapt core →
-widgets inline. (The `greeting.{h,cpp}` bootstrap placeholders were removed once
-real domain types existed.)
+widgets inline.
 
 **Architecture rule:** keep non-GUI logic in the Qt-free `pokedex_core`
 library so it stays unit-testable headlessly. The GUI layer (`pokedex_tcg`)

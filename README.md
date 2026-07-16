@@ -9,8 +9,12 @@ manage my physical card collection using local files.
 
 - ~~As a user, I want to quickly browse any existing Pokémon
 by partial name, so I see its region and how many copies I own.~~
-- As a user, I want to see a Pokémon's picture and mark it as
-collected or not, so browsing doubles as tracking what I still need.
+- ~~As a user, I want to see a Pokémon's picture~~ so browsing doubles
+as tracking what I still need. *(The manual "mark as collected" toggle is
+dropped: whether a Pokémon is collected is inferred from the real card copies
+you own — the stored entities are the single source of truth — not a separate
+flag. The artwork already shows in the Pokémon detail panel, and owned-copy
+counts / "My Cards" track what you still need.)*
 - ~~As a user, I want to create a binder optionally initialized
 with a selected region, so I can initialize a binder already having
 all the Pokémon even which I don't own card copies yet but guides
