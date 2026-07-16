@@ -49,7 +49,7 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
     sections_->addWidget(new BindersPage(binderService, guide, wishlist, media, cardSearch,
                                          cardCopies, collectionPath));
     sections_->addWidget(new PokemonListView(browse, wishlist, media, cardSearch, cardCopies));
-    sections_->addWidget(new OwnedCardsView(cardCopies));
+    sections_->addWidget(new OwnedCardsView(cardCopies, binderService));
     sections_->addWidget(new WishlistView(wishlist));
 
     connect(sidebar, &QListWidget::currentRowChanged, sections_,

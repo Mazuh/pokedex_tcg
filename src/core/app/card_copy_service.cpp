@@ -75,6 +75,13 @@ void CardCopyService::editDetails(const CardCopyId& id, CardCondition condition,
     repo_.update(copy);
 }
 
+void CardCopyService::assignToBinder(const CardCopyId& id, std::optional<CardBinderId> binderId) {
+    CardCopy copy = require(id);
+    copy.binderId = std::move(binderId);
+    copy.updatedAt = clock_();
+    repo_.update(copy);
+}
+
 void CardCopyService::remove(const CardCopyId& id) {
     CardCopy copy = require(id);
     copy.ownership = CardOwnership::Removed;

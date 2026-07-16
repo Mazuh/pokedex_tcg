@@ -81,6 +81,26 @@ TEST(CardCopyServiceTest, EditDetailsChangesConditionCommentsAndBumpsUpdatedAt) 
     EXPECT_EQ(stored.insertedAt, at("2026-07-16T10:00:00Z"));
 }
 
+TEST(CardCopyServiceTest, AssignToBinderFilesAndClearsWithoutTouchingOwnership) {
+    Fixture f;
+    // A binder to file into (the storage FK requires a real binder row).
+    f.db.exec(
+        "INSERT INTO card_binder(id,name,region,inserted_at,updated_at)"
+        " VALUES('b1','Kanto',NULL,'2026-07-16T10:00:00Z','2026-07-16T10:00:00Z');");
+    f.service.create(6, ref(), CardOwnership::Owned, CardCondition::NearMint, std::nullopt, "");
+
+    f.now = at("2026-07-17T08:00:00Z");
+    f.service.assignToBinder("copy-1", "b1");
+    CardCopy filed = *f.repo.find("copy-1");
+    ASSERT_TRUE(filed.binderId.has_value());
+    EXPECT_EQ(*filed.binderId, "b1");
+    EXPECT_EQ(filed.ownership, CardOwnership::Owned);  // unchanged
+    EXPECT_EQ(filed.updatedAt, at("2026-07-17T08:00:00Z"));
+
+    f.service.assignToBinder("copy-1", std::nullopt);
+    EXPECT_FALSE(f.repo.find("copy-1")->binderId.has_value());
+}
+
 TEST(CardCopyServiceTest, RemoveSoftDeletesToRemovedOwnership) {
     Fixture f;
     f.service.create(6, ref(), CardOwnership::Owned, CardCondition::NearMint, std::nullopt, "");
@@ -102,6 +122,7 @@ TEST(CardCopyServiceTest, HardDeleteDropsTheRow) {
 TEST(CardCopyServiceTest, EditRemoveAndHardDeleteThrowForMissingId) {
     Fixture f;
     EXPECT_THROW(f.service.editDetails("ghost", CardCondition::NearMint, ""), CardCopyError);
+    EXPECT_THROW(f.service.assignToBinder("ghost", std::nullopt), CardCopyError);
     EXPECT_THROW(f.service.remove("ghost"), CardCopyError);
     EXPECT_THROW(f.service.hardDelete("ghost"), CardCopyError);
 }

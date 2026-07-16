@@ -48,6 +48,11 @@ public:
     // CardCopyError if no copy has that id.
     void editDetails(const CardCopyId& id, CardCondition condition, std::string comments);
 
+    // File the copy in a binder, or clear its binder when nullopt — bumping
+    // updatedAt. Filing never touches the copy's ownership. Throws CardCopyError if
+    // no copy has that id (a bad binder id is rejected by the storage FK).
+    void assignToBinder(const CardCopyId& id, std::optional<CardBinderId> binderId);
+
     // Soft-remove: mark the copy Removed — kept for auditable history rather than
     // deleted — bumping updatedAt. Throws CardCopyError if no copy has that id.
     void remove(const CardCopyId& id);

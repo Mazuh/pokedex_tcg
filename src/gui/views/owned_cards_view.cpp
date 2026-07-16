@@ -1,19 +1,29 @@
 #include "gui/views/owned_cards_view.h"
 
+#include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
+#include <QPushButton>
 #include <QShowEvent>
 #include <QString>
+#include <QStyle>
 #include <QTableWidget>
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <exception>
+#include <optional>
+#include <unordered_map>
 #include <vector>
 
+#include "core/app/binder_service.h"
 #include "core/app/card_copy_service.h"
+#include "core/domain/card_binder.h"
 #include "core/domain/card_copy.h"
 #include "core/domain/pokemon_catalog.h"
+#include "gui/views/binder_picker_dialog.h"
 #include "gui/views/condition_labels.h"
 #include "gui/views/ownership_labels.h"
 #include "gui/views/table_cell.h"
@@ -42,19 +52,20 @@ QString cardText(const CardReference& ref) {
 
 }  // namespace
 
-OwnedCardsView::OwnedCardsView(CardCopyService& copies, QWidget* parent)
-    : QWidget(parent), copies_(copies) {
+OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders, QWidget* parent)
+    : QWidget(parent), copies_(copies), binders_(binders) {
     search_ = new QLineEdit(this);
     search_->setPlaceholderText(tr("Search cards…"));  // name, set, number, condition…
     search_->setClearButtonEnabled(true);
     connect(search_, &QLineEdit::textChanged, this, [this](const QString&) { applyFilter(); });
 
-    // A read-only six-column table: dex #, Pokémon, card ref, language, condition,
-    // ownership. Whole-row selection, no editing; the Pokémon column takes slack.
+    // A read-only seven-column table: dex #, Pokémon, card ref, language,
+    // condition, ownership, binder. Whole-row selection, no editing; the Pokémon
+    // column takes slack.
     table_ = new QTableWidget(this);
-    table_->setColumnCount(6);
-    table_->setHorizontalHeaderLabels(
-        {tr("#"), tr("Pokémon"), tr("Card"), tr("Lang"), tr("Condition"), tr("Ownership")});
+    table_->setColumnCount(7);
+    table_->setHorizontalHeaderLabels({tr("#"), tr("Pokémon"), tr("Card"), tr("Lang"),
+                                       tr("Condition"), tr("Ownership"), tr("Binder")});
     table_->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     table_->horizontalHeaderItem(0)->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -63,20 +74,32 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, QWidget* parent)
     table_->verticalHeader()->setVisible(false);
     table_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     table_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
-    table_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    table_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
-    table_->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
-    table_->horizontalHeader()->setSectionResizeMode(5, QHeaderView::ResizeToContents);
+    for (int col = 2; col <= 6; ++col) {
+        table_->horizontalHeader()->setSectionResizeMode(col, QHeaderView::ResizeToContents);
+    }
     table_->setStyleSheet("QTableView::item { padding-left: 8px; padding-right: 16px; }");
+    connect(table_, &QTableWidget::itemSelectionChanged, this,
+            &OwnedCardsView::updateButtonState);
+
+    assignButton_ = new QPushButton(tr("Assign to binder…"), this);
+    assignButton_->setIcon(style()->standardIcon(QStyle::SP_DirOpenIcon));
+    connect(assignButton_, &QPushButton::clicked, this, &OwnedCardsView::assignSelected);
 
     countLabel_ = new QLabel(this);
     countLabel_->setEnabled(false);  // muted: a status detail, not an action
+
+    auto* buttons = new QHBoxLayout;
+    buttons->addWidget(assignButton_);
+    buttons->addStretch();
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(16, 12, 16, 12);  // match the other sections' padding
     layout->addWidget(search_);
     layout->addWidget(table_);
+    layout->addLayout(buttons);
     layout->addWidget(countLabel_);
+
+    updateButtonState();
 }
 
 void OwnedCardsView::showEvent(QShowEvent* event) {
@@ -85,18 +108,25 @@ void OwnedCardsView::showEvent(QShowEvent* event) {
 }
 
 void OwnedCardsView::reload() {
-    std::vector<CardCopy> copies = copies_.listAll();
+    loaded_ = copies_.listAll();
     // Group a species' copies together, oldest first within a species.
-    std::sort(copies.begin(), copies.end(), [](const CardCopy& a, const CardCopy& b) {
+    std::sort(loaded_.begin(), loaded_.end(), [](const CardCopy& a, const CardCopy& b) {
         if (a.pokemonDexNum != b.pokemonDexNum) {
             return a.pokemonDexNum < b.pokemonDexNum;
         }
         return a.insertedAt < b.insertedAt;
     });
 
-    table_->setRowCount(static_cast<int>(copies.size()));
-    for (int row = 0; row < static_cast<int>(copies.size()); ++row) {
-        const CardCopy& c = copies[row];
+    // Resolve a binder id to its display name (re-fetched each reload, so a binder
+    // renamed/removed in the Binders section shows correctly here).
+    std::unordered_map<std::string, QString> binderNames;
+    for (const CardBinder& binder : binders_.list()) {
+        binderNames.emplace(binder.id, QString::fromStdString(binder.name));
+    }
+
+    table_->setRowCount(static_cast<int>(loaded_.size()));
+    for (int row = 0; row < static_cast<int>(loaded_.size()); ++row) {
+        const CardCopy& c = loaded_[row];
         auto* number = cell(QString::number(c.pokemonDexNum));
         number->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
         table_->setItem(row, 0, number);
@@ -105,8 +135,15 @@ void OwnedCardsView::reload() {
         table_->setItem(row, 3, cell(QString::fromStdString(c.cardRef.language)));
         table_->setItem(row, 4, cell(conditionLabel(c.condition)));
         table_->setItem(row, 5, cell(ownershipLabel(c.ownership)));
+        QString binderName;
+        if (c.binderId) {
+            const auto it = binderNames.find(*c.binderId);
+            binderName = it != binderNames.end() ? it->second : QString();
+        }
+        table_->setItem(row, 6, cell(binderName));
     }
     applyFilter();  // re-hide non-matches and set the count (search text persists)
+    updateButtonState();
 }
 
 void OwnedCardsView::applyFilter() {
@@ -131,6 +168,30 @@ void OwnedCardsView::applyFilter() {
         }
     }
     countLabel_->setText(tr("Showing %1 of %2 cards").arg(visible).arg(table_->rowCount()));
+}
+
+void OwnedCardsView::updateButtonState() {
+    const int row = table_->currentRow();
+    assignButton_->setEnabled(row >= 0 && !table_->selectedItems().isEmpty());
+}
+
+void OwnedCardsView::assignSelected() {
+    const int row = table_->currentRow();
+    if (row < 0 || row >= static_cast<int>(loaded_.size())) {
+        return;
+    }
+    const CardCopy& copy = loaded_[row];
+    BinderPickerDialog dialog(binders_.list(), copy.binderId, this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    try {
+        copies_.assignToBinder(copy.id, dialog.selectedBinderId());
+    } catch (const std::exception& e) {
+        QMessageBox::critical(this, tr("Pokedex TCG"),
+                              tr("Could not file the card:\n%1").arg(QString::fromUtf8(e.what())));
+    }
+    reload();
 }
 
 }  // namespace pokedex

@@ -147,6 +147,7 @@ qt_add_executable(pokedex_tcg
     src/main.cpp
     src/gui/views/first_run_dialog.cpp
     src/gui/views/binder_editor_dialog.cpp
+    src/gui/views/binder_picker_dialog.cpp
     src/gui/views/main_window.cpp
     src/gui/views/binders_page.cpp
     src/gui/views/binder_view.cpp
