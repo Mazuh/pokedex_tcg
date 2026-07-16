@@ -13,6 +13,7 @@ class QTableWidget;
 namespace pokedex {
 
 class BinderGuideService;
+class WishlistService;
 class MediaService;
 class PokemonDetailPanel;
 
@@ -29,8 +30,8 @@ class BinderView : public QWidget {
     Q_OBJECT
 
 public:
-    BinderView(BinderGuideService& guide, const CardBinder& binder, MediaService& media,
-               QWidget* parent = nullptr);
+    BinderView(BinderGuideService& guide, const CardBinder& binder,
+               WishlistService& wishlist, MediaService& media, QWidget* parent = nullptr);
 
 Q_SIGNALS:
     // Emitted when the user asks to leave this page (the Back button). The owner

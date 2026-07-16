@@ -36,11 +36,11 @@ what I owned but don't own anymore and still have clear stats even
 with removed cards still being reasonably easily discovered.
 - As a user, I want to hard delete a card that I previously removed,
 so I can keep my data clean of things that were inserted by mistake.
-- As a user, I want to manage a card wishlist to a Pokémon registry,
-so I can manage links or salespeople sources.
-- As a user, I want to see my entire wishlist unscoped but grouped
+- ~~As a user, I want to manage a card wishlist to a Pokémon registry,
+so I can manage links or salespeople sources.~~
+- ~~As a user, I want to see my entire wishlist unscoped but grouped
 by Pokémon, so this can easily guide me on building a shopping cart
-in external resselers.
+in external resselers.~~
 - ~~As a new user, I don't want to register accounts or pay for
 cloud services, so I can manage my private collection in my
 own machine with optional cloud storage backup,

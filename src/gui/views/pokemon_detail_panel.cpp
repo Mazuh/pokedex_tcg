@@ -6,11 +6,13 @@
 #include <QVBoxLayout>
 
 #include "gui/services/media_service.h"
+#include "gui/views/wishlist_sources_editor.h"
 
 namespace pokedex {
 
-PokemonDetailPanel::PokemonDetailPanel(MediaService& media, QWidget* parent)
-    : QWidget(parent), media_(media) {
+PokemonDetailPanel::PokemonDetailPanel(MediaService& media, WishlistService& wishlist,
+                                       QWidget* parent)
+    : QWidget(parent), media_(media), wishlist_(wishlist) {
     name_ = new QLabel(this);
     name_->setAlignment(Qt::AlignHCenter | Qt::AlignVCenter);
     name_->setWordWrap(true);
@@ -24,10 +26,15 @@ PokemonDetailPanel::PokemonDetailPanel(MediaService& media, QWidget* parent)
     image_->setMinimumSize(160, 160);
     image_->setEnabled(false);  // muted placeholder text until an image arrives
 
+    // The wishlist sources editor sits below the art. The artwork keeps the
+    // stretch so it takes the slack; the editor stays at its natural height.
+    wishlistEditor_ = new WishlistSourcesEditor(wishlist_, this);
+
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(16, 16, 16, 16);
     layout->addWidget(name_);
     layout->addWidget(image_, /*stretch=*/1);
+    layout->addWidget(wishlistEditor_);
 
     // `this` is the receiver, so Qt auto-disconnects when the panel is destroyed
     // — an in-flight fetch that completes after a binder view closes is harmless.
@@ -46,6 +53,7 @@ void PokemonDetailPanel::showPokemon(int dexNumber, const QString& name) {
     placeholder_ = tr("Loading…");
     renderImage();
     media_.request({dexNumber, name.toStdString()}, MediaKind::OfficialArtwork);
+    wishlistEditor_->setPokemon(dexNumber);
 }
 
 void PokemonDetailPanel::clear() {
@@ -54,6 +62,7 @@ void PokemonDetailPanel::clear() {
     originalPixmap_ = QPixmap();
     placeholder_ = tr("Select a Pokémon to see its artwork.");
     renderImage();
+    wishlistEditor_->clear();
 }
 
 void PokemonDetailPanel::onReady(int dexNumber, MediaKind kind, const QPixmap& pixmap) {

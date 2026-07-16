@@ -32,8 +32,8 @@ constexpr int kPrefetchMargin = 64;
 
 }  // namespace
 
-PokemonListView::PokemonListView(PokemonBrowseService& service, MediaService& media,
-                                 QWidget* parent)
+PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService& wishlist,
+                                 MediaService& media, QWidget* parent)
     : QWidget(parent), service_(service) {
     search_ = new QLineEdit(this);
     search_->setPlaceholderText(tr("Search Pokémon…"));
@@ -63,7 +63,7 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, MediaService& me
     countLabel_ = new QLabel(this);
     countLabel_->setEnabled(false);  // muted: a status detail, not an action
 
-    detail_ = new PokemonDetailPanel(media, this);
+    detail_ = new PokemonDetailPanel(media, wishlist, this);
 
     connect(search_, &QLineEdit::textChanged, this, &PokemonListView::applyFilter);
     // Single-click (and keyboard arrow navigation) shows the row's Pokémon in the

@@ -15,6 +15,7 @@ namespace pokedex {
 
 class BinderService;
 class BinderGuideService;
+class WishlistService;
 class MediaService;
 
 // GUI — the Binders section of the main window: a table of the user's binders
@@ -36,8 +37,8 @@ public:
     // `collectionPath` is the workspace folder, shown so the user can always see
     // where their collection lives (it may be on a NAS, iCloud, etc.). `media` is
     // forwarded to each opened binder guide so its rows show a detail panel.
-    BindersPage(BinderService& service, BinderGuideService& guide, MediaService& media,
-                const QString& collectionPath, QWidget* parent = nullptr);
+    BindersPage(BinderService& service, BinderGuideService& guide, WishlistService& wishlist,
+                MediaService& media, const QString& collectionPath, QWidget* parent = nullptr);
 
 private:
     void refresh();
@@ -52,6 +53,7 @@ private:
 
     BinderService& service_;
     BinderGuideService& guide_;
+    WishlistService& wishlist_;
     MediaService& media_;
     QStackedWidget* stack_;
     QTableWidget* table_;

@@ -104,6 +104,7 @@ add_library(pokedex_core STATIC
     src/core/app/binder_service.cpp
     src/core/app/binder_guide_service.cpp
     src/core/app/pokemon_browse_service.cpp
+    src/core/app/wishlist_service.cpp
     src/core/app/poke_api.cpp
     src/core/app/media_cache_layout.cpp
 )
@@ -127,6 +128,8 @@ qt_add_executable(pokedex_tcg
     src/gui/views/binder_view.cpp
     src/gui/views/pokemon_list_view.cpp
     src/gui/views/pokemon_detail_panel.cpp
+    src/gui/views/wishlist_sources_editor.cpp
+    src/gui/views/wishlist_view.cpp
     src/gui/services/media_service.cpp
 )
 target_link_libraries(pokedex_tcg PRIVATE pokedex_core pokedex_warnings pokedex_sanitizers Qt6::Widgets Qt6::Network)
@@ -176,6 +179,7 @@ if(BUILD_TESTING)
         tests/app/binder_service_test.cpp
         tests/app/binder_guide_service_test.cpp
         tests/app/pokemon_browse_service_test.cpp
+        tests/app/wishlist_service_test.cpp
         tests/app/pokemon_external_api_test.cpp
     )
     target_link_libraries(pokedex_tests PRIVATE pokedex_core pokedex_warnings pokedex_sanitizers GTest::gtest_main)

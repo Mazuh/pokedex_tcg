@@ -11,6 +11,7 @@
 #include "core/app/install_service.h"
 #include "core/app/poke_api.h"
 #include "core/app/pokemon_browse_service.h"
+#include "core/app/wishlist_service.h"
 #include "core/storage/card_binder_repository.h"
 #include "core/storage/card_copy_repository.h"
 #include "core/storage/database.h"
@@ -68,6 +69,10 @@ int main(int argc, char *argv[]) {
         // owned cards per species.
         pokedex::PokemonBrowseService browse(copyRepository);
 
+        // The wishlist verbs, backing both the unscoped Wishlist section and the
+        // per-Pokémon editor in every detail panel.
+        pokedex::WishlistService wishlist(wishlistRepository);
+
         // The external-API adapter (swap this line to change image sources) and the
         // media fetch/cache service, rooted at the workspace media dir. Locals here
         // so they outlive app.exec(), matching the "service outlives the window"
@@ -77,7 +82,7 @@ int main(int argc, char *argv[]) {
             externalApi, QString::fromStdString(workspace->mediaDir().string()));
 
         pokedex::MainWindow window(
-            service, guide, browse, media,
+            service, guide, browse, wishlist, media,
             QString::fromStdString(workspace->root().string()));
         window.show();
 

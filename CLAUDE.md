@@ -55,18 +55,25 @@ Folders are created as real code lands; the tree above is the target
 shape, not a scaffold to pre-create. `domain/` is populated. `storage/` holds
 workspace resolution, the SQLite `Database` wrapper + schema/migrations, the
 `codecs` (region/ownership/condition enums ↔ tokens, timestamps ↔ ISO-8601),
-and repositories for `CardBinder`, `CardCopy`, and `Wishlist` (the copy/wishlist
-repos are read-mostly for now — an `add` primitive plus the reads the binder
-guide and Pokédex browser need, e.g. `CardCopyRepository::ownedCountsByDexNum`;
-the full write surface lands with copy management). `app/` holds
+and repositories for `CardBinder`, `CardCopy`, and `Wishlist`. The `CardCopy`
+repo is read-mostly for now — an `add` primitive plus the reads the binder guide
+and Pokédex browser need, e.g. `CardCopyRepository::ownedCountsByDexNum`; the
+full write surface lands with copy management. The `Wishlist` repo has the full
+CRUD surface: `save` (upsert parent + replace its source set), `find`, `listAll`,
+`remove`, and `wishedDexNums` (the "Wished" status read). `app/` holds
 `install_service`, `BinderService` (binder CRUD verbs), `BinderGuideService`
-(the `buildBinderEntries` the inferred zone refers to), and
-`PokemonBrowseService` (`listAll` → every catalog species paired with its
-owned-copy count, the unscoped Pokédex browser's data). `gui/views/` holds the
+(the `buildBinderEntries` the inferred zone refers to), `PokemonBrowseService`
+(`listAll` → every catalog species paired with its owned-copy count, the unscoped
+Pokédex browser's data), and `WishlistService` (the manage-sources verbs —
+`forPokemon`, `listAll`, `addSource`/`editSource`/`removeSource` — with an
+injectable clock like `BinderService`). `gui/views/` holds the
 `MainWindow` shell (a macOS-style sidebar selecting sections in an outer
 `QStackedWidget`), the first-run setup dialog, the binders section
 (`BindersPage`, a table with its own list ⇄ binder-guide stack), the new-binder
-editor, the binder guide view, and the Pokémon browser (`PokemonListView`).
+editor, the binder guide view, the Pokémon browser (`PokemonListView`), the
+unscoped wishlist section (`WishlistView`, a flat table with one row per source),
+and the per-Pokémon wishlist editor (`WishlistSourcesEditor`) embedded below the
+artwork in `PokemonDetailPanel`.
 `gui/models/` is still empty — no Qt item models yet; views adapt core →
 widgets inline. (The `greeting.{h,cpp}` bootstrap placeholders were removed once
 real domain types existed.)

@@ -86,7 +86,7 @@ struct GuideTest : ::testing::Test {
         w.sources = {"ebay"};
         w.insertedAt = at("2026-07-14T09:00:00Z");
         w.updatedAt = at("2026-07-14T09:00:00Z");
-        wishlist.add(w);
+        wishlist.save(w);
     }
 
     // The status of a given dex number in the entries, or nullopt if absent.

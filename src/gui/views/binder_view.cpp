@@ -34,8 +34,8 @@ QString headingText(const CardBinder& binder) {
 
 }  // namespace
 
-BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder, MediaService& media,
-                       QWidget* parent)
+BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
+                       WishlistService& wishlist, MediaService& media, QWidget* parent)
     : QWidget(parent) {
     auto* backButton = new QPushButton(tr("← Back"), this);
     auto* heading = new QLabel(headingText(binder), this);
@@ -67,7 +67,7 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder, Medi
     // Cell padding so content clears the edges and the overlay scrollbar.
     table_->setStyleSheet("QTableView::item { padding-left: 8px; padding-right: 16px; }");
 
-    detail_ = new PokemonDetailPanel(media, this);
+    detail_ = new PokemonDetailPanel(media, wishlist, this);
 
     connect(search_, &QLineEdit::textChanged, this, &BinderView::applyFilter);
     // Single-click (and keyboard arrow navigation) shows the row's Pokémon in the

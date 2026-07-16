@@ -13,6 +13,7 @@ class QTableWidget;
 namespace pokedex {
 
 class MediaService;
+class WishlistService;
 class PokemonDetailPanel;
 
 // GUI — the Pokémon section of the main window: an unscoped, read-only browse of
@@ -30,8 +31,8 @@ class PokemonListView : public QWidget {
     Q_OBJECT
 
 public:
-    PokemonListView(PokemonBrowseService& service, MediaService& media,
-                    QWidget* parent = nullptr);
+    PokemonListView(PokemonBrowseService& service, WishlistService& wishlist,
+                    MediaService& media, QWidget* parent = nullptr);
 
 protected:
     // Watches the table viewport's resize so the list keeps filling a viewport
