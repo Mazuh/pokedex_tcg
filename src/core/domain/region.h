@@ -4,9 +4,10 @@
 
 namespace pokedex {
 
-// CATALOG — a territory a Pokémon originates from. Authoritative-but-fixed
-// reference data with no persistence: it ships as a compile-time enum, never a
-// stored record.
+// CATALOG — a territory a Pokémon originates from in the fictional universe,
+// each inspired by a real-world locale (Kanto by Japan, Paldea by Portugal and
+// Spain). Authoritative-but-fixed reference data with no persistence: it ships
+// as a compile-time enum, never a stored record.
 enum class Region {
     Kanto,
     Johto,

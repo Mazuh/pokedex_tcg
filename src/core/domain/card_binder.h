@@ -8,9 +8,10 @@
 
 namespace pokedex {
 
-// COLLECTION (source of truth) — a physical album. It owns nothing directly; it
-// is a lens. Copies point back at it via binderId, and its per-Pokémon "guide"
-// is computed lazily, never stored.
+// COLLECTION (source of truth) — a physical album that stores and displays
+// cards in plastic pockets and pages (usually ungraded, unless a slab binder).
+// It owns nothing directly; it is a lens. Copies point back at it via binderId,
+// and its per-Pokémon "guide" is computed lazily, never stored.
 //
 // pokemonRegion, when set, remembers the region the binder was initialized from
 // so the guide can list every species to capture — including ones the user owns

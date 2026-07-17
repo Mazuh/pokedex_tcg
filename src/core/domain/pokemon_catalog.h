@@ -7,11 +7,14 @@
 namespace pokedex {
 
 // CATALOG — the full National Pokédex table (#1–1025, Bulbasaur … Pecharunt),
-// one entry per dex number, base species only. This is the authoritative-but-
-// fixed reference data described in pokemon.h: it ships as a compile-time
-// constant with no persistence and no repository. The collection side refers to
-// a species by PokemonDexNum; this table is what those numbers resolve against
-// (autocomplete today, image/card API lookups later).
+// one entry per dex number, base species only. A Pokédex is the in-universe
+// encyclopedia of species (often the Trainer's goal to complete); a *National*
+// Pokédex spans every species across the whole franchise rather than just one
+// Region's. This is the authoritative-but-fixed reference data described in
+// pokemon.h: it ships as a compile-time constant with no persistence and no
+// repository. The collection side refers to a species by PokemonDexNum; this
+// table is what those numbers resolve against (autocomplete today, image/card
+// API lookups later).
 //
 // Entries are sorted by dexNumber, contiguous over 1..1025 with no gaps, and
 // have unique dexNumbers and unique names. Region is derived from the species'

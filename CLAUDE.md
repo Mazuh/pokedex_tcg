@@ -6,7 +6,8 @@ Guidance for Claude Code when working in this repository.
 
 Pokédex TCG — a macOS desktop app (currently at the Hello World bootstrap
 stage) for managing a physical Pokémon card collection using local files.
-See `README.md` for the product vision and glossary.
+See `README.md` for the product vision; the domain glossary now lives in the
+`src/core/domain/` docstrings (each term is defined next to the type it names).
 
 ## Tech stack
 

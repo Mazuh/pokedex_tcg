@@ -11,7 +11,9 @@ namespace pokedex {
 // CardCopy stores a CardBinderId, not a CardBinder&. This keeps each entity
 // independently constructible and testable today, and serializable later.
 
-// National Pokédex number. Unique per Pokémon in the catalog; the natural key
+// National Pokédex number — the id that sequentially identifies each species
+// across the whole franchise. Evolutions get distinct numbers, though some
+// alternate forms share one. Unique per Pokémon in the catalog; the natural key
 // the collection side uses to refer to a species.
 using PokemonDexNum = int;
 
