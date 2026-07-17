@@ -60,25 +60,30 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders, 
     search_->setClearButtonEnabled(true);
     connect(search_, &QLineEdit::textChanged, this, [this](const QString&) { applyFilter(); });
 
-    // A read-only eight-column table: dex #, Pokémon, card ref, set, language,
+    // A read-only seven-column table: Pokémon, card ref, set, language,
     // condition, ownership, binder. Whole-row selection, no editing; the Pokémon
-    // column takes slack. The Set column carries the human set name, which for
-    // code-less sets (McDonald's, POP…) is the only disambiguator.
+    // column takes slack (and carries a min width — it's the primary column).
+    // The Set column carries the human set name, which for code-less sets
+    // (McDonald's, POP…) is the only disambiguator.
     table_ = new QTableWidget(this);
-    table_->setColumnCount(8);
-    table_->setHorizontalHeaderLabels({tr("#"), tr("Pokémon"), tr("Card"), tr("Set"), tr("Lang"),
-                                       tr("Condition"), tr("Ownership"), tr("Binder")});
+    table_->setColumnCount(7);
+    table_->setHorizontalHeaderLabels({tr("Pokémon"), tr("Card"), tr("Set"), tr("Lang"),
+                                       tr("Cond."), tr("Ownership"), tr("Binder")});
     table_->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    table_->horizontalHeaderItem(0)->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
     table_->verticalHeader()->setVisible(false);
-    table_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    table_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
-    for (int col = 2; col <= 7; ++col) {
-        table_->horizontalHeader()->setSectionResizeMode(col, QHeaderView::ResizeToContents);
+    auto* header = table_->horizontalHeader();
+    // Pokémon is the primary column: give it a generous fixed width so it never
+    // gets squeezed, and let the trailing Binder column absorb any slack. The
+    // middle columns size to their (short) content.
+    header->setSectionResizeMode(0, QHeaderView::Interactive);
+    for (int col = 1; col <= 5; ++col) {
+        header->setSectionResizeMode(col, QHeaderView::ResizeToContents);
     }
+    header->setSectionResizeMode(6, QHeaderView::Stretch);
+    table_->setColumnWidth(0, 200);
     table_->setStyleSheet("QTableView::item { padding-left: 8px; padding-right: 16px; }");
     connect(table_, &QTableWidget::itemSelectionChanged, this,
             &OwnedCardsView::updateButtonState);
@@ -145,27 +150,30 @@ void OwnedCardsView::reload() {
     haystacks_.assign(loaded_.size(), QString());
     for (int row = 0; row < static_cast<int>(loaded_.size()); ++row) {
         const CardCopy& c = loaded_[row];
-        auto* number = cell(QString::number(c.pokemonDexNum));
-        number->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        table_->setItem(row, 0, number);
-        table_->setItem(row, 1, cell(speciesName(c.pokemonDexNum)));
-        table_->setItem(row, 2, cell(cardText(c.cardRef)));
-        table_->setItem(row, 3, cell(QString::fromStdString(c.cardRef.setName)));
-        table_->setItem(row, 4, cell(QString::fromStdString(c.cardRef.language)));
+        table_->setItem(row, 0, cell(speciesName(c.pokemonDexNum)));
+        table_->setItem(row, 1, cell(cardText(c.cardRef)));
+        table_->setItem(row, 2, cell(QString::fromStdString(c.cardRef.setName)));
+        table_->setItem(row, 3, cell(QString::fromStdString(c.cardRef.language)));
         // Condition is optional (ungraded copies) — blank renders as an em-dash.
-        table_->setItem(row, 5, cell(c.condition ? conditionLabel(*c.condition) : QString()));
-        table_->setItem(row, 6, cell(ownershipLabel(c.ownership)));
+        table_->setItem(row, 4, cell(c.condition ? conditionAbbrev(*c.condition) : QString()));
+        table_->setItem(row, 5, cell(ownershipLabel(c.ownership)));
         QString binderName;
         if (c.binderId) {
             const auto it = binderNames.find(*c.binderId);
             binderName = it != binderNames.end() ? it->second : QString();
         }
-        table_->setItem(row, 7, cell(binderName));
+        table_->setItem(row, 6, cell(binderName));
 
-        // Precompute this row's lowercased search text from its cells.
-        QString hay;
+        // Precompute this row's lowercased search text from its cells, plus the
+        // dex number and the full condition label — neither shows verbatim in the
+        // table (the "#" column was dropped; condition is abbreviated to NM/LP/…),
+        // yet users still expect to filter by dex number or full condition name.
+        QString hay = QString::number(c.pokemonDexNum) + QLatin1Char(' ');
         for (int col = 0; col < table_->columnCount(); ++col) {
             hay += table_->item(row, col)->text() + QLatin1Char(' ');
+        }
+        if (c.condition) {
+            hay += conditionLabel(*c.condition) + QLatin1Char(' ');
         }
         haystacks_[row] = hay.toLower();
     }

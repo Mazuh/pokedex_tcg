@@ -22,4 +22,19 @@ inline QString conditionLabel(CardCondition condition) {
     return QString();
 }
 
+// GUI — the bare TCG abbreviation for a CardCondition (NM, LP, MP, HP, Dmg),
+// for tight table columns where the full label doesn't fit. Exhaustive switch
+// so a new CardCondition fails -Wswitch under -Werror rather than rendering
+// blank.
+inline QString conditionAbbrev(CardCondition condition) {
+    switch (condition) {
+        case CardCondition::NearMint:         return QStringLiteral("NM");
+        case CardCondition::LightlyPlayed:    return QStringLiteral("LP");
+        case CardCondition::ModeratelyPlayed: return QStringLiteral("MP");
+        case CardCondition::HeavilyPlayed:    return QStringLiteral("HP");
+        case CardCondition::Damaged:          return QStringLiteral("Dmg");
+    }
+    return QString();
+}
+
 }  // namespace pokedex
