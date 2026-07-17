@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 
 #include "core/domain/card_condition.h"
@@ -25,10 +26,11 @@ Region regionFromText(const std::string& text);
 std::string ownershipToText(CardOwnership ownership);
 CardOwnership ownershipFromText(const std::string& text);
 
-// CardCondition <-> its stable storage token ("NearMint" … "Damaged").
-// conditionFromText throws StorageError on an unrecognized token.
-std::string conditionToText(CardCondition condition);
-CardCondition conditionFromText(const std::string& text);
+// CardCondition <-> its stable storage token ("NearMint" … "Damaged"). Condition
+// is optional (a copy may be recorded ungraded): nullopt <-> the empty string.
+// conditionFromText throws StorageError on a non-empty unrecognized token.
+std::string conditionToText(std::optional<CardCondition> condition);
+std::optional<CardCondition> conditionFromText(const std::string& text);
 
 // Timestamp <-> ISO-8601 UTC, second precision ("YYYY-MM-DDThh:mm:ssZ").
 // Sub-second parts are truncated on encode. timestampFromIso throws StorageError

@@ -24,7 +24,8 @@ struct CardCopy {
     PokemonDexNum pokemonDexNum;           // which species this copy depicts
     CardReference cardRef;                 // which printing this is a copy of
     CardOwnership ownership;
-    CardCondition condition;
+    std::optional<CardCondition> condition;  // grading is optional — a copy may be
+                                             // recorded ungraded (nullopt)
     std::optional<CardBinderId> binderId;  // filed in this binder, if any;
                                            // clearing it never affects the copy
     std::string comments;                  // multiline free text: capture story,

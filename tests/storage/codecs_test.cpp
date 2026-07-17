@@ -1,3 +1,5 @@
+#include <optional>
+
 #include "core/storage/codecs.h"
 
 #include <gtest/gtest.h>
@@ -77,7 +79,12 @@ TEST(CodecsTest, ConditionTokensAreTheExpectedText) {
 
 TEST(CodecsTest, UnknownConditionTokenThrows) {
     EXPECT_THROW(pokedex::conditionFromText("Mint"), StorageError);
-    EXPECT_THROW(pokedex::conditionFromText(""), StorageError);
+}
+
+// Condition is optional: nullopt <-> the empty string (an ungraded copy).
+TEST(CodecsTest, ConditionOptionalRoundTripsThroughEmptyString) {
+    EXPECT_EQ(pokedex::conditionToText(std::nullopt), "");
+    EXPECT_EQ(pokedex::conditionFromText(""), std::nullopt);
 }
 
 // The stored form matches the literals the schema tests already use.

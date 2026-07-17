@@ -20,7 +20,7 @@ CardCopyService::CardCopyService(CardCopyRepository& repo, Clock clock, IdGenera
     : repo_(repo), clock_(std::move(clock)), idGenerator_(std::move(idGenerator)) {}
 
 CardCopy CardCopyService::create(PokemonDexNum pokemonDexNum, CardReference cardRef,
-                                 CardOwnership ownership, CardCondition condition,
+                                 CardOwnership ownership, std::optional<CardCondition> condition,
                                  std::optional<CardBinderId> binderId, std::string comments) {
     cardRef.expansionCode = trim(cardRef.expansionCode);
     cardRef.language = trim(cardRef.language);
@@ -53,7 +53,7 @@ CardCopy CardCopyService::require(const CardCopyId& id) {
     return *copy;
 }
 
-void CardCopyService::editDetails(const CardCopyId& id, CardCondition condition,
+void CardCopyService::editDetails(const CardCopyId& id, std::optional<CardCondition> condition,
                                   std::string comments) {
     CardCopy copy = require(id);
     copy.condition = condition;

@@ -41,12 +41,13 @@ public:
     // the reference fields are trimmed. Both audit stamps are set to now(). Returns
     // the persisted copy with its freshly minted id.
     CardCopy create(PokemonDexNum pokemonDexNum, CardReference cardRef,
-                    CardOwnership ownership, CardCondition condition,
+                    CardOwnership ownership, std::optional<CardCondition> condition,
                     std::optional<CardBinderId> binderId, std::string comments);
 
-    // Edit a copy's condition and free-text comments, bumping updatedAt. Throws
-    // CardCopyError if no copy has that id.
-    void editDetails(const CardCopyId& id, CardCondition condition, std::string comments);
+    // Edit a copy's condition (optional) and free-text comments, bumping updatedAt.
+    // Throws CardCopyError if no copy has that id.
+    void editDetails(const CardCopyId& id, std::optional<CardCondition> condition,
+                     std::string comments);
 
     // File the copy in a binder, or clear its binder when nullopt — bumping
     // updatedAt. Filing never touches the copy's ownership. Throws CardCopyError if

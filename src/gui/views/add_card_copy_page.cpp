@@ -109,6 +109,9 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
             [this](const QString&) { checkUnmatch(); });
 
     condition_ = new QComboBox(formPane);
+    // Condition is optional (a copy can be recorded ungraded) — default to blank, so
+    // nothing is claimed unless the user picks a grade. The -1 sentinel means "none".
+    condition_->addItem(tr("(Unspecified)"), -1);
     condition_->addItem(tr("Near Mint"), static_cast<int>(CardCondition::NearMint));
     condition_->addItem(tr("Lightly Played"), static_cast<int>(CardCondition::LightlyPlayed));
     condition_->addItem(tr("Moderately Played"), static_cast<int>(CardCondition::ModeratelyPlayed));
@@ -496,7 +499,10 @@ void AddCardCopyPage::submitCopy() {
     ref.collectorNumber = collectorNumber_->text().trimmed().toStdString();
     ref.setName = setName_->text().trimmed().toStdString();
     const auto ownership = static_cast<CardOwnership>(ownership_->currentData().toInt());
-    const auto condition = static_cast<CardCondition>(condition_->currentData().toInt());
+    const int conditionData = condition_->currentData().toInt();
+    const std::optional<CardCondition> condition =
+        conditionData < 0 ? std::nullopt
+                          : std::optional<CardCondition>(static_cast<CardCondition>(conditionData));
     try {
         // No binder for now — assigning a copy to a binder is a later concern.
         copies_.create(dexNumber_, ref, ownership, condition, std::nullopt,

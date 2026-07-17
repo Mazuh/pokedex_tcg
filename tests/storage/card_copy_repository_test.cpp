@@ -66,6 +66,16 @@ TEST(CardCopyRepositoryTest, AddThenListByBinderRoundTripsAllFields) {
     EXPECT_EQ(c.insertedAt, at("2026-07-14T09:00:00Z"));
 }
 
+TEST(CardCopyRepositoryTest, UngradedConditionRoundTripsAsNullopt) {
+    Database db(":memory:");
+    db.migrate();
+    CardCopyRepository repo(db);
+    CardCopy copy = makeCopy("c1", 25, CardOwnership::Owned, std::nullopt);
+    copy.condition = std::nullopt;  // ungraded
+    repo.add(copy);
+    EXPECT_EQ(repo.find("c1")->condition, std::nullopt);
+}
+
 TEST(CardCopyRepositoryTest, FindReturnsTheCopyOrNulloptForAMissingId) {
     Database db(":memory:");
     db.migrate();

@@ -56,6 +56,14 @@ TEST(CardCopyServiceTest, CreateMintsIdStampsAndPersists) {
     EXPECT_EQ(stored->comments, "bought at a con");
 }
 
+TEST(CardCopyServiceTest, CreateAcceptsAnUngradedCondition) {
+    Fixture f;
+    const CardCopy copy = f.service.create(6, ref(), CardOwnership::Owned, std::nullopt,
+                                           std::nullopt, "");
+    EXPECT_EQ(copy.condition, std::nullopt);
+    EXPECT_EQ(f.repo.find("copy-1")->condition, std::nullopt);
+}
+
 TEST(CardCopyServiceTest, CreateTrimsReferenceAndRequiresACollectorNumber) {
     Fixture f;
     const CardCopy copy = f.service.create(6, CardReference{"  OBF ", " EN", " 125/197 "},

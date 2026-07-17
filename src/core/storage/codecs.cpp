@@ -61,9 +61,12 @@ CardOwnership ownershipFromText(const std::string& text) {
     throw StorageError("unknown ownership token: " + text);
 }
 
-std::string conditionToText(CardCondition condition) {
+std::string conditionToText(std::optional<CardCondition> condition) {
+    if (!condition) {
+        return "";  // unspecified / ungraded — condition is optional
+    }
     // Stable on-disk tokens for the TCG grading scale.
-    switch (condition) {
+    switch (*condition) {
         case CardCondition::NearMint:         return "NearMint";
         case CardCondition::LightlyPlayed:    return "LightlyPlayed";
         case CardCondition::ModeratelyPlayed: return "ModeratelyPlayed";
@@ -73,7 +76,10 @@ std::string conditionToText(CardCondition condition) {
     throw StorageError("unknown CardCondition enum value");
 }
 
-CardCondition conditionFromText(const std::string& text) {
+std::optional<CardCondition> conditionFromText(const std::string& text) {
+    if (text.empty()) {
+        return std::nullopt;  // unspecified
+    }
     for (const CardCondition condition :
          {CardCondition::NearMint, CardCondition::LightlyPlayed,
           CardCondition::ModeratelyPlayed, CardCondition::HeavilyPlayed,

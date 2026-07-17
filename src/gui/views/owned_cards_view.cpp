@@ -152,7 +152,8 @@ void OwnedCardsView::reload() {
         table_->setItem(row, 2, cell(cardText(c.cardRef)));
         table_->setItem(row, 3, cell(QString::fromStdString(c.cardRef.setName)));
         table_->setItem(row, 4, cell(QString::fromStdString(c.cardRef.language)));
-        table_->setItem(row, 5, cell(conditionLabel(c.condition)));
+        // Condition is optional (ungraded copies) — blank renders as an em-dash.
+        table_->setItem(row, 5, cell(c.condition ? conditionLabel(*c.condition) : QString()));
         table_->setItem(row, 6, cell(ownershipLabel(c.ownership)));
         QString binderName;
         if (c.binderId) {
