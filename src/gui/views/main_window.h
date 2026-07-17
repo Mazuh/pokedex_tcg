@@ -13,6 +13,7 @@ class WishlistService;
 class MediaService;
 class CardSearchService;
 class CardCopyService;
+class CardImageStore;
 
 // GUI — the application's top-level window: a macOS-style shell with a left
 // sidebar (a source list, like Finder's or System Settings') selecting between
@@ -31,8 +32,8 @@ public:
     MainWindow(BinderService& binderService, BinderGuideService& guide,
                PokemonBrowseService& browse, WishlistService& wishlist,
                MediaService& media, CardSearchService& cardSearch,
-               CardCopyService& cardCopies, const QString& collectionPath,
-               QWidget* parent = nullptr);
+               CardCopyService& cardCopies, CardImageStore& cardImages,
+               const QString& collectionPath, QWidget* parent = nullptr);
 
 private:
     QStackedWidget* sections_;

@@ -25,6 +25,7 @@ namespace pokedex {
 class CardSearchService;
 class CardCopyService;
 class BinderService;
+class CardImageStore;
 
 // GUI — the "add a copy" screen for one Pokémon: a manual entry form on the left, a
 // set-scoped card finder in the middle, and a preview of the picked card on the
@@ -34,8 +35,9 @@ class BinderService;
 // larger image; the form stays usable by hand, and the page works even when the
 // card API is unreachable.
 //
-// Submitting creates a copy via CardCopyService (no image is cached — search
-// results stay display-only), then emits copyAdded() (so the host can refresh any
+// Submitting creates a copy via CardCopyService and, when a card was picked, saves
+// its preview image to the workspace (CardImageStore, keyed by the new copy's id)
+// so "My Cards" can show it; it then emits copyAdded() (so the host can refresh any
 // owned-copy counts) and backRequested() to return to the previous screen. The
 // form carries an optional binder picker: when opened unscoped (from the Pokémon
 // browser) it defaults to "— None —" and the user may file the copy in any binder;
@@ -50,14 +52,15 @@ class AddCardCopyPage : public QWidget {
     Q_OBJECT
 
 public:
-    // `search`, `copies` and `binders` must outlive this page. `speciesName` is
-    // shown in the heading; `dexNumber` drives the printings search and the created
-    // copy. `lockedBinder`, when set, pre-fills the binder picker with that binder
+    // `search`, `copies`, `binders` and `cardImages` must outlive this page.
+    // `speciesName` is shown in the heading; `dexNumber` drives the printings search
+    // and the created copy. `lockedBinder`, when set, pre-fills the binder picker with that binder
     // and locks it (the copy is created there and the user can't repick) — the
     // scoped case, opening from within a binder. When nullopt the picker is a free
     // choice defaulting to "— None —".
     AddCardCopyPage(CardSearchService& search, CardCopyService& copies,
-                    BinderService& binders, int dexNumber, const QString& speciesName,
+                    BinderService& binders, CardImageStore& cardImages, int dexNumber,
+                    const QString& speciesName,
                     std::optional<CardBinderId> lockedBinder = std::nullopt,
                     QWidget* parent = nullptr);
 
@@ -97,6 +100,7 @@ private:
     CardSearchService& search_;
     CardCopyService& copies_;
     BinderService& binders_;
+    CardImageStore& cardImages_;
     int dexNumber_;
     QString speciesName_;
     // Set when the page is scoped to a binder: the copy is filed here regardless of

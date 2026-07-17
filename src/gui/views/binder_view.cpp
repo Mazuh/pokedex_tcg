@@ -30,12 +30,13 @@ namespace pokedex {
 BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
                        WishlistService& wishlist, MediaService& media,
                        CardSearchService& cardSearch, CardCopyService& cardCopies,
-                       BinderService& binders, QWidget* parent)
+                       CardImageStore& cardImages, BinderService& binders, QWidget* parent)
     : QWidget(parent),
       guide_(guide),
       binder_(binder),
       cardSearch_(cardSearch),
       cardCopies_(cardCopies),
+      cardImages_(cardImages),
       binders_(binders) {
     auto* backButton = makeBackButton(this);
     auto* heading = new QLabel(binderComboLabel(binder), this);
@@ -173,7 +174,8 @@ void BinderView::showRow(int row) {
 void BinderView::openAddCopy(int dexNumber, const QString& name) {
     // Scoped to this binder: the copy is filed here and the picker is locked to it.
     auto* page =
-        new AddCardCopyPage(cardSearch_, cardCopies_, binders_, dexNumber, name, binder_.id);
+        new AddCardCopyPage(cardSearch_, cardCopies_, binders_, cardImages_, dexNumber, name,
+                            binder_.id);
     // Adding a copy recomputes the guide: the copy is filed in this binder (so it
     // becomes "Completed" here) and submit auto-returns, so refresh so the guide
     // isn't stale on the way back.

@@ -18,6 +18,7 @@
 #include "core/storage/card_copy_repository.h"
 #include "core/storage/database.h"
 #include "core/storage/wishlist_repository.h"
+#include "gui/services/card_image_store.h"
 #include "gui/services/card_search_service.h"
 #include "gui/services/media_service.h"
 #include "gui/views/first_run_dialog.h"
@@ -88,6 +89,12 @@ int main(int argc, char *argv[]) {
         pokedex::MediaService media(
             externalApi, QString::fromStdString(workspace->mediaDir().string()));
 
+        // The local store for owned-card images (the preview a committed copy keeps),
+        // rooted at the same workspace media dir. A local here so it outlives
+        // app.exec(); one shared instance serves the add-copy flow and My Cards.
+        pokedex::CardImageStore cardImages(
+            QString::fromStdString(workspace->mediaDir().string()));
+
         // The card-catalog adapter (swap this line to change card sources) and the
         // search/transport service backing the "Add copy" flow. Locals here so they
         // outlive app.exec(); one shared instance serves every section. It caches
@@ -96,7 +103,7 @@ int main(int argc, char *argv[]) {
         pokedex::CardSearchService cardSearch(cardApi);
 
         pokedex::MainWindow window(
-            service, guide, browse, wishlist, media, cardSearch, cardCopies,
+            service, guide, browse, wishlist, media, cardSearch, cardCopies, cardImages,
             QString::fromStdString(workspace->root().string()));
         window.show();
 

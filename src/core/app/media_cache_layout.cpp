@@ -20,4 +20,8 @@ std::string mediaCacheRelPath(const std::string& resourceName, MediaKind kind) {
     return "pokemon/" + resourceName + "/" + kindToken(kind) + ".png";
 }
 
+std::string cardImageCacheRelPath(const std::string& copyId) {
+    return "cards/" + copyId + ".png";
+}
+
 }  // namespace pokedex

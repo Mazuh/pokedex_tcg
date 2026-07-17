@@ -18,6 +18,7 @@ class WishlistService;
 class MediaService;
 class CardSearchService;
 class CardCopyService;
+class CardImageStore;
 class BinderService;
 class PokemonDetailPanel;
 
@@ -37,7 +38,8 @@ class BinderView : public QWidget {
 public:
     BinderView(BinderGuideService& guide, const CardBinder& binder,
                WishlistService& wishlist, MediaService& media, CardSearchService& cardSearch,
-               CardCopyService& cardCopies, BinderService& binders, QWidget* parent = nullptr);
+               CardCopyService& cardCopies, CardImageStore& cardImages, BinderService& binders,
+               QWidget* parent = nullptr);
 
 Q_SIGNALS:
     // Emitted when the user asks to leave this page (the Back button). The owner
@@ -63,6 +65,7 @@ private:
     CardBinder binder_;
     CardSearchService& cardSearch_;
     CardCopyService& cardCopies_;
+    CardImageStore& cardImages_;
     BinderService& binders_;
     QStackedWidget* stack_;
     QTableWidget* table_;

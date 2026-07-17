@@ -8,6 +8,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QShowEvent>
+#include <QSplitter>
 #include <QString>
 #include <QStyle>
 #include <QTableWidget>
@@ -24,10 +25,13 @@
 #include "core/domain/card_binder.h"
 #include "core/domain/card_copy.h"
 #include "core/domain/pokemon_catalog.h"
+#include "gui/services/card_image_store.h"
 #include "gui/views/binder_picker_dialog.h"
+#include "gui/views/card_image_panel.h"
 #include "gui/views/condition_labels.h"
 #include "gui/views/ownership_labels.h"
 #include "gui/views/region_labels.h"
+#include "gui/views/splitter_style.h"
 #include "gui/views/table_cell.h"
 
 namespace pokedex {
@@ -65,8 +69,9 @@ QString cardText(const CardReference& ref) {
 
 }  // namespace
 
-OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders, QWidget* parent)
-    : QWidget(parent), copies_(copies), binders_(binders) {
+OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
+                               CardImageStore& images, QWidget* parent)
+    : QWidget(parent), copies_(copies), binders_(binders), images_(images) {
     search_ = new QLineEdit(this);
     search_->setPlaceholderText(
         tr("Search copy by Pokémon, collector number, set or binder…"));
@@ -102,8 +107,10 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders, 
     header->setSectionResizeMode(2, QHeaderView::Interactive);  // Set — free text, capped
     header->setSectionResizeMode(6, QHeaderView::Interactive);  // Binder — free text, capped
     table_->setStyleSheet("QTableView::item { padding-left: 8px; padding-right: 16px; }");
-    connect(table_, &QTableWidget::itemSelectionChanged, this,
-            &OwnedCardsView::updateButtonState);
+    connect(table_, &QTableWidget::itemSelectionChanged, this, [this]() {
+        updateButtonState();
+        showSelectedImage();
+    });
 
     assignButton_ = new QPushButton(tr("Assign to binder…"), this);
     assignButton_->setIcon(style()->standardIcon(QStyle::SP_DirOpenIcon));
@@ -130,13 +137,31 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders, 
     buttons->addWidget(removeButton_);
     buttons->addStretch();
 
-    auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(16, 12, 16, 12);  // match the other sections' padding
-    layout->addWidget(search_);
-    layout->addWidget(table_);
-    layout->addWidget(emptyLabel_);
-    layout->addLayout(buttons);
-    layout->addWidget(countLabel_);
+    // The list pane (left) holds everything the section had before; the card-image
+    // panel (right) shows the selected copy's image — the PokemonListView splitter
+    // idiom, so "My Cards" reads like "All Pokémon".
+    auto* listPane = new QWidget(this);
+    auto* listLayout = new QVBoxLayout(listPane);
+    listLayout->setContentsMargins(16, 12, 16, 12);  // match the other sections' padding
+    listLayout->addWidget(search_);
+    listLayout->addWidget(table_);
+    listLayout->addWidget(emptyLabel_);
+    listLayout->addLayout(buttons);
+    listLayout->addWidget(countLabel_);
+
+    panel_ = new CardImagePanel(this);
+
+    auto* splitter = new QSplitter(Qt::Horizontal, this);
+    splitter->addWidget(listPane);
+    splitter->addWidget(panel_);
+    splitter->setStretchFactor(0, 1);
+    splitter->setStretchFactor(1, 0);
+    splitter->setSizes({560, 240});
+    thinDivider(splitter);
+
+    auto* layout = new QHBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->addWidget(splitter);
 
     updateButtonState();
 }
@@ -230,8 +255,9 @@ void OwnedCardsView::reload() {
             table_->setColumnWidth(col, freeTextCap);
         }
     }
-    // Empty state: swap the table + search + row actions for a friendly hint when
-    // nothing is stored.
+    // Empty state: swap the table + search + row actions (and the card-image panel)
+    // for a friendly hint when nothing is stored — otherwise the "select a card"
+    // panel sits beside a "no cards yet" hint with nothing to select.
     const bool empty = loaded_.empty();
     table_->setVisible(!empty);
     search_->setVisible(!empty);
@@ -239,8 +265,9 @@ void OwnedCardsView::reload() {
     assignButton_->setVisible(!empty);
     removeButton_->setVisible(!empty);
     emptyLabel_->setVisible(empty);
+    panel_->setVisible(!empty);
 
-    applyFilter();  // re-hide non-matches and set the count (search text persists)
+    applyFilter();  // re-hide non-matches, set the count, and re-sync the panel
     updateButtonState();
 }
 
@@ -259,12 +286,41 @@ void OwnedCardsView::applyFilter() {
         }
     }
     countLabel_->setText(tr("Showing %1 of %2 cards").arg(visible).arg(table_->rowCount()));
+    // A filter that hides the selected row doesn't deselect it, so re-sync the panel
+    // (it clears when the current row is hidden).
+    showSelectedImage();
 }
 
 void OwnedCardsView::updateButtonState() {
     const bool hasSelection = table_->currentRow() >= 0 && !table_->selectedItems().isEmpty();
     assignButton_->setEnabled(hasSelection);
     removeButton_->setEnabled(hasSelection);
+}
+
+void OwnedCardsView::showSelectedImage() {
+    const int row = table_->currentRow();
+    const bool valid = row >= 0 && row < static_cast<int>(loaded_.size()) &&
+                       !table_->isRowHidden(row) && !table_->selectedItems().isEmpty();
+    // The copy the panel should show, or "" when nothing valid is selected. Skip if
+    // it hasn't changed — this runs on every keystroke (applyFilter), and load()
+    // does a synchronous PNG decode we don't want to repeat for the same image.
+    const std::string target = valid ? loaded_[row].id : std::string();
+    if (target == shownCopyId_) {
+        return;
+    }
+    shownCopyId_ = target;
+    if (!valid) {
+        panel_->clear();
+        return;
+    }
+    const CardCopy& copy = loaded_[row];
+    // Title mirrors the table: species name plus the printed identity ("BS 44/102").
+    const QString species = speciesName(copy.pokemonDexNum);
+    const QString card = cardText(copy.cardRef);
+    const QString title = species.isEmpty() ? card : species + QStringLiteral(" · ") + card;
+    // A synchronous local disk read (like MediaService's cache-hit path); a null
+    // pixmap (older copy, or one added without a preview) shows the panel placeholder.
+    panel_->showImage(title, images_.load(copy.id));
 }
 
 void OwnedCardsView::assignSelected() {

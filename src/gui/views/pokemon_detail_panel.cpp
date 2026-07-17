@@ -8,6 +8,7 @@
 #include <QVBoxLayout>
 
 #include "gui/services/media_service.h"
+#include "gui/views/scaled_pixmap.h"
 #include "gui/views/wishlist_sources_editor.h"
 
 namespace pokedex {
@@ -109,14 +110,7 @@ void PokemonDetailPanel::renderImage() {
         image_->setText(placeholder_);
         return;
     }
-    // Scale to fit the label while keeping aspect ratio; account for the device
-    // pixel ratio so artwork stays crisp on Retina displays.
-    const qreal dpr = devicePixelRatioF();
-    const QSize target = image_->size() * dpr;
-    QPixmap scaled =
-        originalPixmap_.scaled(target, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-    scaled.setDevicePixelRatio(dpr);
-    image_->setPixmap(scaled);
+    setScaledPixmap(image_, originalPixmap_);
 }
 
 void PokemonDetailPanel::resizeEvent(QResizeEvent* event) {

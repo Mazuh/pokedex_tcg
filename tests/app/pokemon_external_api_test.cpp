@@ -62,4 +62,11 @@ TEST(MediaCacheLayoutTest, ComposesHumanReadablePath) {
               "pokemon/pikachu/official-artwork.png");
 }
 
+// An owned copy's card image is keyed by the copy's synthetic id, under cards/.
+TEST(MediaCacheLayoutTest, ComposesCardImagePathFromCopyId) {
+    EXPECT_EQ(pokedex::cardImageCacheRelPath("a1b2c3"), "cards/a1b2c3.png");
+    EXPECT_EQ(pokedex::cardImageCacheRelPath("00000000-1111-2222-3333-444444444444"),
+              "cards/00000000-1111-2222-3333-444444444444.png");
+}
+
 }  // namespace

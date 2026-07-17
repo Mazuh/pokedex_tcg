@@ -37,12 +37,13 @@ constexpr int kPrefetchMargin = 64;
 
 PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService& wishlist,
                                  MediaService& media, CardSearchService& cardSearch,
-                                 CardCopyService& cardCopies, BinderService& binders,
-                                 QWidget* parent)
+                                 CardCopyService& cardCopies, CardImageStore& cardImages,
+                                 BinderService& binders, QWidget* parent)
     : QWidget(parent),
       service_(service),
       cardSearch_(cardSearch),
       cardCopies_(cardCopies),
+      cardImages_(cardImages),
       binders_(binders) {
     search_ = new QLineEdit(this);
     search_->setPlaceholderText(tr("Search Pokémon…"));
@@ -189,7 +190,8 @@ void PokemonListView::showRow(int row) {
 
 void PokemonListView::openAddCopy(int dexNumber, const QString& name) {
     // Unscoped browse: the binder picker is a free choice defaulting to "— None —".
-    auto* page = new AddCardCopyPage(cardSearch_, cardCopies_, binders_, dexNumber, name);
+    auto* page =
+        new AddCardCopyPage(cardSearch_, cardCopies_, binders_, cardImages_, dexNumber, name);
     // A newly added copy changes the Owned column; refresh so it's current.
     connect(page, &AddCardCopyPage::copyAdded, this, &PokemonListView::refresh);
     connect(page, &AddCardCopyPage::backRequested, this, [this, page]() {

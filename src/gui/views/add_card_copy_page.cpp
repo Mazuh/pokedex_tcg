@@ -30,9 +30,11 @@
 #include "core/domain/card_condition.h"
 #include "core/domain/card_ownership.h"
 #include "core/domain/card_reference.h"
+#include "gui/services/card_image_store.h"
 #include "gui/services/card_search_service.h"
 #include "gui/views/back_button.h"
 #include "gui/views/binder_combo.h"
+#include "gui/views/scaled_pixmap.h"
 #include "gui/views/splitter_style.h"
 
 namespace pokedex {
@@ -68,13 +70,14 @@ QString setEntryLabel(const CardSetInfo& s) {
 }  // namespace
 
 AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& copies,
-                                 BinderService& binders, int dexNumber,
-                                 const QString& speciesName,
+                                 BinderService& binders, CardImageStore& cardImages,
+                                 int dexNumber, const QString& speciesName,
                                  std::optional<CardBinderId> lockedBinder, QWidget* parent)
     : QWidget(parent),
       search_(search),
       copies_(copies),
       binders_(binders),
+      cardImages_(cardImages),
       dexNumber_(dexNumber),
       speciesName_(speciesName),
       lockedBinder_(std::move(lockedBinder)) {
@@ -419,11 +422,7 @@ void AddCardCopyPage::renderPreview() {
     if (previewPixmap_.isNull()) {
         return;
     }
-    const qreal dpr = devicePixelRatioF();
-    QPixmap scaled = previewPixmap_.scaled(preview_->size() * dpr, Qt::KeepAspectRatio,
-                                           Qt::SmoothTransformation);
-    scaled.setDevicePixelRatio(dpr);
-    preview_->setPixmap(scaled);
+    setScaledPixmap(preview_, previewPixmap_);
 }
 
 void AddCardCopyPage::checkUnmatch() {
@@ -541,13 +540,30 @@ void AddCardCopyPage::submitCopy() {
     // that binder is missing from the combo. Unscoped, the user's combo choice wins.
     const std::optional<CardBinderId> binderId =
         lockedBinder_ ? lockedBinder_ : binderComboSelection(*binder_);
+    CardCopy created;
     try {
-        copies_.create(dexNumber_, ref, ownership, condition, binderId,
-                       comments_->toPlainText().toStdString());
+        created = copies_.create(dexNumber_, ref, ownership, condition, binderId,
+                                 comments_->toPlainText().toStdString());
     } catch (const std::exception& e) {
         QMessageBox::warning(this, tr("Pokedex TCG"),
                              tr("Could not add the copy:\n%1").arg(QString::fromUtf8(e.what())));
         return;
+    }
+    // Persist the picked card's image for "My Cards" to show. selectedIndex_ >= 0
+    // means a real printing is selected (checkUnmatch drops it once the form is
+    // edited off-card). If its preview already loaded, save that pixmap outright (no
+    // re-download); otherwise the user submitted before it finished, so fetch it by
+    // URL — the store outlives this page, so the download still lands. Both are
+    // best-effort: a failure never blocks the copy.
+    if (selectedIndex_ >= 0 && selectedIndex_ < static_cast<int>(candidates_.size())) {
+        if (!previewPixmap_.isNull()) {
+            cardImages_.save(created.id, previewPixmap_);
+        } else {
+            const CardCandidate& c = candidates_[selectedIndex_];
+            const QString url = QString::fromStdString(
+                c.imageUrlLarge.empty() ? c.imageUrlSmall : c.imageUrlLarge);
+            cardImages_.fetchAndSave(created.id, url);  // no-ops on a blank url
+        }
     }
     Q_EMIT copyAdded();
     // Return to the previous screen after a successful add — the host's
