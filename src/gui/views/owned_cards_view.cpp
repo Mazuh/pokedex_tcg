@@ -169,11 +169,14 @@ void OwnedCardsView::reload() {
         }
         haystacks_[row] = hay.toLower();
     }
-    // Empty state: swap the table + search for a friendly hint when nothing is stored.
+    // Empty state: swap the table + search + row actions for a friendly hint when
+    // nothing is stored.
     const bool empty = loaded_.empty();
     table_->setVisible(!empty);
     search_->setVisible(!empty);
     countLabel_->setVisible(!empty);
+    assignButton_->setVisible(!empty);
+    removeButton_->setVisible(!empty);
     emptyLabel_->setVisible(empty);
 
     applyFilter();  // re-hide non-matches and set the count (search text persists)
