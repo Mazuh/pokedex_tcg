@@ -349,6 +349,11 @@ void AddCardCopyPage::rebuildCompleters() {
     auto* nameCompleter = new QCompleter(nameEntries, setName_);
     nameCompleter->setCaseSensitivity(Qt::CaseInsensitive);
     nameCompleter->setFilterMode(Qt::MatchContains);
+    // Set names are long and often differ only by a trailing year (McDonald's
+    // Collection 2019/2020/…). The popup defaults to the narrow field's width and
+    // would elide that distinguishing suffix, so widen it and never elide.
+    nameCompleter->popup()->setMinimumWidth(420);
+    nameCompleter->popup()->setTextElideMode(Qt::ElideNone);
     connect(nameCompleter, qOverload<const QString&>(&QCompleter::activated), this,
             [this](const QString& picked) {
                 for (const CardSetInfo& s : search_.sets()) {
