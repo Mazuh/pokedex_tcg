@@ -23,6 +23,7 @@
 #include "core/domain/card_binder.h"
 #include "gui/views/binder_editor_dialog.h"
 #include "gui/views/binder_view.h"
+#include "gui/views/datetime_label.h"
 #include "gui/views/region_labels.h"
 #include "gui/views/table_cell.h"
 
@@ -55,8 +56,8 @@ BindersPage::BindersPage(BinderService& service, BinderGuideService& guide,
     // A read-only two-column table: binder name (stretches) and region. Whole-row
     // single selection, no editing, no vertical header.
     table_ = new QTableWidget(listPage);
-    table_->setColumnCount(2);
-    table_->setHorizontalHeaderLabels({tr("Binder"), tr("Region")});
+    table_->setColumnCount(4);
+    table_->setHorizontalHeaderLabels({tr("Binder"), tr("Region"), tr("Added"), tr("Updated")});
     table_->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -64,6 +65,8 @@ BindersPage::BindersPage(BinderService& service, BinderGuideService& guide,
     table_->verticalHeader()->setVisible(false);
     table_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
     table_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    table_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    table_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
     // Cell padding so content clears the edges and the overlay scrollbar.
     table_->setStyleSheet("QTableView::item { padding-left: 8px; padding-right: 16px; }");
 
@@ -131,6 +134,8 @@ void BindersPage::refresh() {
             const QString region =
                 binder.pokemonRegion ? regionLabel(*binder.pokemonRegion) : QString();
             table_->setItem(i, 1, cell(region));
+            table_->setItem(i, 2, cell(dateTimeLabel(binder.insertedAt)));
+            table_->setItem(i, 3, cell(dateTimeLabel(binder.updatedAt)));
         }
     } catch (const std::exception& e) {
         QMessageBox::critical(this, tr("Pokedex TCG"),
