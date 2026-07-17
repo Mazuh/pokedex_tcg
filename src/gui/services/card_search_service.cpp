@@ -45,8 +45,11 @@ std::int64_t monotonicNowMs() {
         .count();
 }
 
-// A transient failure worth retrying: any network-layer error, or an HTTP 5xx /
-// 429. A 4xx (other than 429) is a client error we should not hammer.
+// A transient failure worth retrying: any network-layer error, or an HTTP 429 /
+// 5xx / 404. 404 counts because pokemontcg.io intermittently returns spurious
+// 404s (and 504s) under load for perfectly valid queries — a search never has a
+// legitimate 404 (no results is a 200 with an empty list), and an immediate retry
+// typically succeeds. A 4xx other than 404 is a real client error we don't hammer.
 bool isTransient(QNetworkReply* reply) {
     if (reply->error() == QNetworkReply::NoError) {
         return false;
@@ -56,7 +59,29 @@ bool isTransient(QNetworkReply* reply) {
         return true;  // no HTTP status → a network-layer error (timeout, DNS, reset)
     }
     const int code = status.toInt();
-    return code == 429 || code >= 500;
+    return code == 404 || code == 429 || code >= 500;
+}
+
+// A human-readable one-liner naming the HTTP status (and what it usually means for
+// this API), so the logs distinguish rate-limiting from the API just flaking.
+QString httpStatusNote(QNetworkReply* reply) {
+    const QVariant status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
+    if (!status.isValid()) {
+        return QStringLiteral("network error (no HTTP status)");
+    }
+    const int code = status.toInt();
+    QString meaning;
+    switch (code) {
+        case 404: meaning = QStringLiteral("spurious — API flaking, retryable"); break;
+        case 429: meaning = QStringLiteral("RATE LIMITED"); break;
+        case 500:
+        case 502:
+        case 503: meaning = QStringLiteral("server error"); break;
+        case 504: meaning = QStringLiteral("gateway timeout — API busy"); break;
+        default: meaning = (code >= 200 && code < 300) ? QStringLiteral("ok")
+                                                       : QStringLiteral("error");
+    }
+    return QStringLiteral("HTTP %1 (%2)").arg(code).arg(meaning);
 }
 
 }  // namespace
@@ -89,29 +114,43 @@ void CardSearchService::ensureSetsLoading() {
         return;
     }
     setsLoading_ = true;
+    fetchSets(kMaxSearchRetries);
+}
+
+void CardSearchService::fetchSets(int retriesLeft) {
     QNetworkRequest request{QUrl(QString::fromStdString(api_.resolveSets().url))};
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                          QNetworkRequest::NoLessSafeRedirectPolicy);
     QNetworkReply* reply = nam_->get(request);
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, retriesLeft]() {
         reply->deleteLater();
-        setsLoading_ = false;
         if (reply->error() == QNetworkReply::NoError) {
+            setsLoading_ = false;
             try {
                 sets_ = parseSetsResponse(reply->readAll().toStdString());
                 setsLoaded_ = true;
+                qInfo().noquote() << "CardSearchService: loaded" << sets_.size() << "sets";
                 Q_EMIT setsReady();
             } catch (const std::exception& e) {
                 qWarning() << "CardSearchService: could not parse set list:" << e.what();
             }
+        } else if (isTransient(reply) && retriesLeft > 0) {
+            const int attempt = kMaxSearchRetries - retriesLeft;
+            const int delay = kBackoffBaseMs * (1 << attempt);
+            qWarning().noquote() << "CardSearchService: set list" << httpStatusNote(reply)
+                                 << "— retrying in" << delay << "ms (" << retriesLeft << "left)";
+            QTimer::singleShot(delay, this, [this, retriesLeft]() { fetchSets(retriesLeft - 1); });
+            return;  // keep setsLoading_ true across the retry
         } else {
             // Not fatal: searches proceed without the table (no narrowing, and
             // expansion codes fall back to each card's embedded set). The next
             // search will attempt the load again, since setsLoaded_ stays false.
-            qWarning() << "CardSearchService: set list fetch failed:" << reply->errorString();
+            setsLoading_ = false;
+            qWarning().noquote() << "CardSearchService: set list fetch failed —"
+                                 << httpStatusNote(reply) << ":" << reply->errorString();
         }
-        // Whether it loaded, failed, or a search was already waiting, let the
-        // pending search proceed now that the load is no longer in flight.
+        // On a terminal outcome (loaded, parse-fail, or exhausted), let any pending
+        // search proceed now that the load is no longer in flight.
         if (pendingSearch_ && !searchDebounce_->isActive()) {
             dispatchSearch();
         }
@@ -170,14 +209,19 @@ void CardSearchService::startCardFetch(int dexNumber, std::uint64_t generation,
                     if (isTransient(reply) && retriesLeft > 0) {
                         const int attempt = kMaxSearchRetries - retriesLeft;
                         const int delay = kBackoffBaseMs * (1 << attempt);  // 400, 800, 1600…
+                        qWarning().noquote()
+                            << "CardSearchService: dex" << dexNumber << httpStatusNote(reply)
+                            << "— retrying in" << delay << "ms (" << retriesLeft << "left)";
                         QTimer::singleShot(delay, this, [this, dexNumber, generation, url,
                                                          retriesLeft]() {
                             startCardFetch(dexNumber, generation, url, retriesLeft - 1);
                         });
                         return;
                     }
-                    qWarning() << "CardSearchService: search failed for dex" << dexNumber << ":"
-                               << reply->errorString();
+                    qWarning().noquote()
+                        << "CardSearchService: search failed for dex" << dexNumber << "—"
+                        << httpStatusNote(reply) << ":" << reply->errorString()
+                        << "| url:" << url;
                     Q_EMIT printingsFailed(generation, dexNumber);
                     return;
                 }

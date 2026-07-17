@@ -81,6 +81,7 @@ private:
     };
 
     void ensureSetsLoading();                 // kick off the one-time /v2/sets GET
+    void fetchSets(int retriesLeft);          // the GET itself, with transient-retry
     void dispatchSearch();                     // debounce/limiter gate → startCardFetch
     void startCardFetch(int dexNumber, std::uint64_t generation, const QString& url,
                         int retriesLeft);

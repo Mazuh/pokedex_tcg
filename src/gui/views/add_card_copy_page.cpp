@@ -4,6 +4,7 @@
 #include <QCompleter>
 #include <QEvent>
 #include <QFont>
+#include <QFontMetrics>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QIcon>
@@ -351,9 +352,17 @@ void AddCardCopyPage::rebuildCompleters() {
     nameCompleter->setFilterMode(Qt::MatchContains);
     // Set names are long and often differ only by a trailing year (McDonald's
     // Collection 2019/2020/…). The popup defaults to the narrow field's width and
-    // would elide that distinguishing suffix, so widen it and never elide.
-    nameCompleter->popup()->setMinimumWidth(420);
+    // would elide that distinguishing suffix, so size it to the longest name
+    // (capped) and never elide.
     nameCompleter->popup()->setTextElideMode(Qt::ElideNone);
+    const QFontMetrics fm(setName_->font());
+    int widest = 0;
+    for (const QString& entry : nameEntries) {
+        widest = std::max(widest, fm.horizontalAdvance(entry));
+    }
+    if (widest > 0) {
+        nameCompleter->popup()->setMinimumWidth(std::min(widest + 32, 440));  // +padding, capped
+    }
     connect(nameCompleter, qOverload<const QString&>(&QCompleter::activated), this,
             [this](const QString& picked) {
                 for (const CardSetInfo& s : search_.sets()) {
