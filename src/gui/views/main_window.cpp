@@ -39,7 +39,7 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
         "QListWidget::item:selected:!active { background: rgba(128, 128, 128, 0.32);"
         " color: palette(text); }");
     new QListWidgetItem(tr("Binders"), sidebar);
-    new QListWidgetItem(tr("Pokémon"), sidebar);
+    new QListWidgetItem(tr("All Pokémon"), sidebar);
     new QListWidgetItem(tr("My Cards"), sidebar);
     new QListWidgetItem(tr("Wishlist"), sidebar);
 
