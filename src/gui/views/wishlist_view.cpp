@@ -28,6 +28,7 @@
 #include "core/app/wishlist_service.h"
 #include "core/domain/pokemon.h"
 #include "core/domain/pokemon_catalog.h"
+#include "gui/views/datetime_label.h"
 #include "gui/views/source_label.h"
 #include "gui/views/table_cell.h"
 #include "gui/views/wishlist_edit.h"
@@ -92,11 +93,13 @@ std::optional<std::pair<int, QString>> promptAddSource(QWidget* parent) {
 
 WishlistView::WishlistView(WishlistService& wishlist, QWidget* parent)
     : QWidget(parent), wishlist_(wishlist) {
-    // A read-only three-column table: dex number, name, source (one row per
-    // source). Whole-row single selection; the source column takes the slack.
+    // A read-only five-column table: dex number, name, source (one row per source),
+    // and the wishlist's added/updated stamps. Whole-row single selection; the source
+    // column takes the slack.
     table_ = new QTableWidget(this);
-    table_->setColumnCount(3);
-    table_->setHorizontalHeaderLabels({tr("#"), tr("Pokémon"), tr("Source")});
+    table_->setColumnCount(5);
+    table_->setHorizontalHeaderLabels(
+        {tr("#"), tr("Pokémon"), tr("Source"), tr("Added"), tr("Updated")});
     table_->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     // The "#" header sits over right-aligned dex numbers, so right-align it to match.
     table_->horizontalHeaderItem(0)->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -107,6 +110,8 @@ WishlistView::WishlistView(WishlistService& wishlist, QWidget* parent)
     table_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     table_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     table_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+    table_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+    table_->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
     table_->setStyleSheet("QTableView::item { padding-left: 8px; padding-right: 16px; }");
 
     // Shown in place of the table when the wishlist is empty.
@@ -195,6 +200,9 @@ void WishlistView::refresh() {
                 } else {
                     table_->setItem(row, 2, cell(text));
                 }
+                // Per-species stamps, repeated on each of its source rows.
+                table_->setItem(row, 3, cell(dateTimeLabel(entry.insertedAt)));
+                table_->setItem(row, 4, cell(dateTimeLabel(entry.updatedAt)));
                 ++row;
             }
         }

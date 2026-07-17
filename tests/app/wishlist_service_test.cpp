@@ -98,7 +98,9 @@ TEST_F(WishlistServiceTest, RemoveSourceDeletesEmptyParent) {
     EXPECT_FALSE(service.forPokemon(25).has_value());
 }
 
-TEST_F(WishlistServiceTest, ListAllPairsCatalogSpeciesInDexOrder) {
+TEST_F(WishlistServiceTest, ListAllTiebreaksEqualStampsByDexOrder) {
+    // With the fixture's fixed clock every stamp is equal, so the sort falls back to
+    // dex order — Charizard (6) before Pikachu (25).
     service.addSource(25, "ebay");        // Pikachu
     service.addSource(6, "shop-a");       // Charizard
     service.addSource(6, "shop-b");
@@ -110,6 +112,19 @@ TEST_F(WishlistServiceTest, ListAllPairsCatalogSpeciesInDexOrder) {
     EXPECT_EQ(all[0].sources, (std::vector<std::string>{"shop-a", "shop-b"}));
     EXPECT_EQ(all[1].pokemon.dexNumber, 25);
     EXPECT_EQ(all[1].pokemon.name, "Pikachu");
+}
+
+TEST_F(WishlistServiceTest, ListAllReturnsMostRecentlyUpdatedFirst) {
+    now = at("2026-07-15T10:00:00Z");
+    service.addSource(6, "shop-a");   // Charizard, updated earlier
+    now = at("2026-07-16T10:00:00Z");
+    service.addSource(25, "ebay");    // Pikachu, updated later
+
+    std::vector<WishlistEntry> all = service.listAll();
+    ASSERT_EQ(all.size(), 2u);
+    EXPECT_EQ(all[0].pokemon.dexNumber, 25);  // most recently updated first
+    EXPECT_EQ(all[0].updatedAt, at("2026-07-16T10:00:00Z"));
+    EXPECT_EQ(all[1].pokemon.dexNumber, 6);
 }
 
 }  // namespace

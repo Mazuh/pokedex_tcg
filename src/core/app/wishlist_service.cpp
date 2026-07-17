@@ -1,5 +1,6 @@
 #include "core/app/wishlist_service.h"
 
+#include <algorithm>
 #include <span>
 #include <utility>
 
@@ -46,8 +47,21 @@ std::vector<WishlistEntry> WishlistService::listAll() {
         }
         entry.pokemon = catalog[index];
         entry.sources.assign(wishlist.sources.begin(), wishlist.sources.end());
+        entry.insertedAt = wishlist.insertedAt;
+        entry.updatedAt = wishlist.updatedAt;
         entries.push_back(std::move(entry));
     }
+    // Most recently updated first (the shopping-list order); tiebreak by newest
+    // insertion, then dex number for a stable ordering.
+    std::sort(entries.begin(), entries.end(), [](const WishlistEntry& a, const WishlistEntry& b) {
+        if (a.updatedAt != b.updatedAt) {
+            return a.updatedAt > b.updatedAt;
+        }
+        if (a.insertedAt != b.insertedAt) {
+            return a.insertedAt > b.insertedAt;
+        }
+        return a.pokemon.dexNumber < b.pokemon.dexNumber;
+    });
     return entries;
 }
 

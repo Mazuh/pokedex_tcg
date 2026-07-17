@@ -27,6 +27,8 @@ public:
 struct WishlistEntry {
     Pokemon pokemon;
     std::vector<std::string> sources;  // sorted, as stored
+    Timestamp insertedAt;              // the wishlist's audit stamps (per species,
+    Timestamp updatedAt;               // shared by all its sources)
 };
 
 // APP — the verbs of the Wishlist root: the manage-sources use cases behind both
@@ -43,9 +45,9 @@ public:
     // A single Pokémon's wishlist, or nullopt when it has none yet.
     std::optional<Wishlist> forPokemon(PokemonDexNum pokemonDexNum);
 
-    // Every wished species with its sources, paired with its catalog entry, in
-    // dex-number order — the data behind the unscoped section (the GUI flattens
-    // each entry to one row per source).
+    // Every wished species with its sources, paired with its catalog entry,
+    // most-recently-updated first — the shopping-list order behind the unscoped
+    // section (the GUI flattens each entry to one row per source).
     std::vector<WishlistEntry> listAll();
 
     // Add a source to a Pokémon's wishlist, creating the wishlist if needed. The
