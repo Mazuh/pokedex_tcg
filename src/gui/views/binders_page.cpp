@@ -223,7 +223,8 @@ void BindersPage::openSelected() {
     // Navigate in place: push a binder guide onto the stack and show it. Back
     // returns to the list and disposes of the page, so each open starts fresh
     // (recomputing the guide) rather than showing a stale one.
-    auto* view = new BinderView(guide_, *it, wishlist_, media_, cardSearch_, cardCopies_);
+    auto* view =
+        new BinderView(guide_, *it, wishlist_, media_, cardSearch_, cardCopies_, service_);
     connect(view, &BinderView::backRequested, this, [this, view]() {
         stack_->setCurrentIndex(0);
         stack_->removeWidget(view);

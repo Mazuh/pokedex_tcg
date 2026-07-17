@@ -19,37 +19,26 @@
 #include "core/app/binder_guide_service.h"
 #include "gui/views/add_card_copy_page.h"
 #include "gui/views/back_button.h"
+#include "gui/views/binder_combo.h"
 #include "gui/views/pokemon_detail_panel.h"
-#include "gui/views/region_labels.h"
 #include "gui/views/splitter_style.h"
 #include "gui/views/status_labels.h"
 #include "gui/views/table_cell.h"
 
 namespace pokedex {
 
-namespace {
-
-QString headingText(const CardBinder& binder) {
-    const QString name = QString::fromStdString(binder.name);
-    if (binder.pokemonRegion) {
-        return QStringLiteral("%1 — %2").arg(name, regionLabel(*binder.pokemonRegion));
-    }
-    return name;
-}
-
-}  // namespace
-
 BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
                        WishlistService& wishlist, MediaService& media,
                        CardSearchService& cardSearch, CardCopyService& cardCopies,
-                       QWidget* parent)
+                       BinderService& binders, QWidget* parent)
     : QWidget(parent),
       guide_(guide),
       binder_(binder),
       cardSearch_(cardSearch),
-      cardCopies_(cardCopies) {
+      cardCopies_(cardCopies),
+      binders_(binders) {
     auto* backButton = makeBackButton(this);
-    auto* heading = new QLabel(headingText(binder), this);
+    auto* heading = new QLabel(binderComboLabel(binder), this);
 
     connect(backButton, &QPushButton::clicked, this, &BinderView::backRequested);
 
@@ -182,10 +171,12 @@ void BinderView::showRow(int row) {
 }
 
 void BinderView::openAddCopy(int dexNumber, const QString& name) {
-    auto* page = new AddCardCopyPage(cardSearch_, cardCopies_, dexNumber, name);
-    // Adding a copy recomputes the guide: a created copy is filed in no binder for
-    // now, but it can flip an "owned elsewhere" status, and submit auto-returns
-    // here, so refresh so the guide isn't stale on the way back.
+    // Scoped to this binder: the copy is filed here and the picker is locked to it.
+    auto* page =
+        new AddCardCopyPage(cardSearch_, cardCopies_, binders_, dexNumber, name, binder_.id);
+    // Adding a copy recomputes the guide: the copy is filed in this binder (so it
+    // becomes "Completed" here) and submit auto-returns, so refresh so the guide
+    // isn't stale on the way back.
     connect(page, &AddCardCopyPage::copyAdded, this, &BinderView::refresh);
     connect(page, &AddCardCopyPage::backRequested, this, [this, page]() {
         stack_->setCurrentIndex(0);

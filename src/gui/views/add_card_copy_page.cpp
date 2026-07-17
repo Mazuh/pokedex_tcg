@@ -25,12 +25,14 @@
 #include <exception>
 #include <optional>
 
+#include "core/app/binder_service.h"
 #include "core/app/card_copy_service.h"
 #include "core/domain/card_condition.h"
 #include "core/domain/card_ownership.h"
 #include "core/domain/card_reference.h"
 #include "gui/services/card_search_service.h"
 #include "gui/views/back_button.h"
+#include "gui/views/binder_combo.h"
 #include "gui/views/splitter_style.h"
 
 namespace pokedex {
@@ -66,12 +68,16 @@ QString setEntryLabel(const CardSetInfo& s) {
 }  // namespace
 
 AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& copies,
-                                 int dexNumber, const QString& speciesName, QWidget* parent)
+                                 BinderService& binders, int dexNumber,
+                                 const QString& speciesName,
+                                 std::optional<CardBinderId> lockedBinder, QWidget* parent)
     : QWidget(parent),
       search_(search),
       copies_(copies),
+      binders_(binders),
       dexNumber_(dexNumber),
-      speciesName_(speciesName) {
+      speciesName_(speciesName),
+      lockedBinder_(std::move(lockedBinder)) {
     // --- Top bar: Back + heading -------------------------------------------
     auto* backButton = makeBackButton(this);
     connect(backButton, &QPushButton::clicked, this, &AddCardCopyPage::backRequested);
@@ -134,6 +140,15 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
     ownership_->addItem(tr("Removed"), static_cast<int>(CardOwnership::Removed));
     ownership_->setCurrentIndex(ownership_->findData(static_cast<int>(CardOwnership::Owned)));
 
+    // The binder the copy is filed in. Opened unscoped, it is a free choice
+    // defaulting to "— None —". Opened from within a binder (lockedBinder set), it is
+    // pre-filled with that binder and disabled, so the copy lands where the user is.
+    binder_ = new QComboBox(formPane);
+    fillBinderCombo(*binder_, binders_.list(), lockedBinder_);
+    if (lockedBinder_) {
+        binder_->setEnabled(false);
+    }
+
     comments_ = new QPlainTextEdit(formPane);
     comments_->setPlaceholderText(
         tr("Capture story, price, seller, imperfections, dates…"));
@@ -144,6 +159,7 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
     form->addRow(tr("Collector number"), collectorNumber_);
     form->addRow(tr("Condition"), condition_);
     form->addRow(tr("Ownership"), ownership_);
+    form->addRow(tr("Binder"), binder_);
     form->addRow(tr("Comments"), comments_);
 
     // Submit creates the copy; it stays disabled until the required collector
@@ -520,9 +536,13 @@ void AddCardCopyPage::submitCopy() {
     const std::optional<CardCondition> condition =
         conditionData < 0 ? std::nullopt
                           : std::optional<CardCondition>(static_cast<CardCondition>(conditionData));
+    // When scoped, the locked binder is authoritative — the disabled combo is only
+    // a display, so filing off lockedBinder_ can't silently land the copy unfiled if
+    // that binder is missing from the combo. Unscoped, the user's combo choice wins.
+    const std::optional<CardBinderId> binderId =
+        lockedBinder_ ? lockedBinder_ : binderComboSelection(*binder_);
     try {
-        // No binder for now — assigning a copy to a binder is a later concern.
-        copies_.create(dexNumber_, ref, ownership, condition, std::nullopt,
+        copies_.create(dexNumber_, ref, ownership, condition, binderId,
                        comments_->toPlainText().toStdString());
     } catch (const std::exception& e) {
         QMessageBox::warning(this, tr("Pokedex TCG"),

@@ -109,6 +109,25 @@ TEST(CardCopyServiceTest, AssignToBinderFilesAndClearsWithoutTouchingOwnership) 
     EXPECT_FALSE(f.repo.find("copy-1")->binderId.has_value());
 }
 
+TEST(CardCopyServiceTest, CreateFilesIntoABinderWhenGiven) {
+    Fixture f;
+    // The storage FK requires a real binder row to file into.
+    f.db.exec(
+        "INSERT INTO card_binder(id,name,region,inserted_at,updated_at)"
+        " VALUES('b1','Kanto',NULL,'2026-07-16T10:00:00Z','2026-07-16T10:00:00Z');");
+
+    const CardCopy copy = f.service.create(6, ref(), CardOwnership::Owned,
+                                           CardCondition::NearMint, std::string("b1"), "");
+    ASSERT_TRUE(copy.binderId.has_value());
+    EXPECT_EQ(*copy.binderId, "b1");
+    // And it survives the round-trip through storage (the read path the My Cards
+    // binder column relies on).
+    const auto stored = f.repo.find("copy-1");
+    ASSERT_TRUE(stored.has_value());
+    ASSERT_TRUE(stored->binderId.has_value());
+    EXPECT_EQ(*stored->binderId, "b1");
+}
+
 TEST(CardCopyServiceTest, RemoveSoftDeletesToRemovedOwnership) {
     Fixture f;
     f.service.create(6, ref(), CardOwnership::Owned, CardCondition::NearMint, std::nullopt, "");

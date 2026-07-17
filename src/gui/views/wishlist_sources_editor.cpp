@@ -76,15 +76,18 @@ void WishlistSourcesEditor::reload() {
     while (QLayoutItem* item = rows_->takeAt(0)) {
         if (QWidget* w = item->widget()) {
             w->deleteLater();
-        }
-        if (QLayout* child = item->layout()) {
+        } else if (QLayout* child = item->layout()) {
+            // A nested row layout: empty it (widgets deferred, item wrappers freed).
+            // Do NOT delete `child` here — a QLayout *is* a QLayoutItem, so `item`
+            // and `child` are the same object; the single `delete item` below frees
+            // it exactly once. (Deleting both double-freed it and crashed on the
+            // second, virtual, destructor call.)
             while (QLayoutItem* inner = child->takeAt(0)) {
                 if (QWidget* iw = inner->widget()) {
                     iw->deleteLater();
                 }
                 delete inner;
             }
-            delete child;
         }
         delete item;
     }

@@ -6,9 +6,11 @@
 #include <QWidget>
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "core/app/card_catalog_dto.h"
+#include "core/domain/types.h"
 
 class QComboBox;
 class QLabel;
@@ -22,6 +24,7 @@ namespace pokedex {
 
 class CardSearchService;
 class CardCopyService;
+class BinderService;
 
 // GUI — the "add a copy" screen for one Pokémon: a manual entry form on the left, a
 // set-scoped card finder in the middle, and a preview of the picked card on the
@@ -33,9 +36,12 @@ class CardCopyService;
 //
 // Submitting creates a copy via CardCopyService (no image is cached — search
 // results stay display-only), then emits copyAdded() (so the host can refresh any
-// owned-copy counts) and backRequested() to return to the previous screen. A
-// created copy is filed nowhere for now — binder assignment and the
-// remove-with-note flow are separate, later concerns.
+// owned-copy counts) and backRequested() to return to the previous screen. The
+// form carries an optional binder picker: when opened unscoped (from the Pokémon
+// browser) it defaults to "— None —" and the user may file the copy in any binder;
+// when opened from within a binder it is pre-filled with that binder and locked, so
+// the copy lands where the user already is. (The remove-with-note flow lives
+// elsewhere, in OwnedCardsView.)
 //
 // It is an in-window page pushed onto a host's QStackedWidget (PokemonListView or
 // BinderView); a Back button emits backRequested() and the host pops + disposes
@@ -44,10 +50,16 @@ class AddCardCopyPage : public QWidget {
     Q_OBJECT
 
 public:
-    // `search` and `copies` must outlive this page. `speciesName` is shown in the
-    // heading; `dexNumber` drives the printings search and the created copy.
-    AddCardCopyPage(CardSearchService& search, CardCopyService& copies, int dexNumber,
-                    const QString& speciesName, QWidget* parent = nullptr);
+    // `search`, `copies` and `binders` must outlive this page. `speciesName` is
+    // shown in the heading; `dexNumber` drives the printings search and the created
+    // copy. `lockedBinder`, when set, pre-fills the binder picker with that binder
+    // and locks it (the copy is created there and the user can't repick) — the
+    // scoped case, opening from within a binder. When nullopt the picker is a free
+    // choice defaulting to "— None —".
+    AddCardCopyPage(CardSearchService& search, CardCopyService& copies,
+                    BinderService& binders, int dexNumber, const QString& speciesName,
+                    std::optional<CardBinderId> lockedBinder = std::nullopt,
+                    QWidget* parent = nullptr);
 
 Q_SIGNALS:
     void backRequested();
@@ -84,8 +96,13 @@ private:
 
     CardSearchService& search_;
     CardCopyService& copies_;
+    BinderService& binders_;
     int dexNumber_;
     QString speciesName_;
+    // Set when the page is scoped to a binder: the copy is filed here regardless of
+    // the (disabled) combo's display state, so it never lands unfiled even if the
+    // binder is absent from the combo (e.g. removed after the guide was opened).
+    std::optional<CardBinderId> lockedBinder_;
 
     // Form
     QLineEdit* expansionCode_;
@@ -94,6 +111,7 @@ private:
     QLineEdit* collectorNumber_;
     QComboBox* condition_;
     QComboBox* ownership_;
+    QComboBox* binder_;
     QPlainTextEdit* comments_;
     QPushButton* submit_;
 
