@@ -66,6 +66,7 @@ private:
                           const std::vector<CardCandidate>& cards);
     void onPrintingsFailed(std::uint64_t requestId, int dexNumber);
     void onThumbnailReady(const QString& cardId, const QPixmap& pixmap);
+    void onSetsReady();                // set table arrived: rebuild completer + re-run search
     void rebuildSetCompleter();        // "CODE — Name" typeahead on the search field
     void chooseSet(const CardSetInfo& set);  // fill the form's code + set-name from one set
 

@@ -172,26 +172,37 @@ void CardSearchService::dispatchSearch() {
     if (!setsLoaded_ && setsLoading_) {
         return;
     }
-    if (!limiter_.tryAcquire(monotonicNowMs())) {
-        searchDebounce_->start(kThrottleRetryMs);
-        return;
-    }
 
     const PendingSearch req = *pendingSearch_;
-    pendingSearch_.reset();
 
+    // Resolve the typed set filter (code or name) to set ids, BEFORE spending a rate
+    // token — a filter that matches nothing needs no request. This is the single
+    // authority on narrowing; callers pass a raw filter and read back the results.
     CardSearchQuery query;
     query.dexNumber = req.dexNumber;
-    if (!req.setCodeFilter.trimmed().isEmpty()) {
-        // Resolve the typed set filter (code or name) to set ids. An in-progress
-        // value that matches nothing yet resolves to no ids → search unnarrowed
-        // rather than showing an empty list mid-typing. A filter matching too many
-        // sets is dropped (unnarrowed) to keep the query URL bounded.
-        query.setIds = resolveSetFilterToIds(req.setCodeFilter.toStdString(), sets_);
+    const std::string filter = req.setCodeFilter.trimmed().toStdString();
+    if (!filter.empty()) {
+        query.setIds = resolveSetFilterToIds(filter, sets_);
+        if (query.setIds.empty()) {
+            // A non-empty filter that matches no set (or was typed before the set
+            // table loaded) yields NO cards — never fall back to fetching every
+            // printing of the species. Emit an empty result for this request.
+            pendingSearch_.reset();
+            Q_EMIT printingsReady(req.generation, req.dexNumber, {});
+            return;
+        }
         if (query.setIds.size() > kMaxNarrowSets) {
-            query.setIds.clear();
+            // Too broad to send as one query URL; cap it (still narrowed — never the
+            // whole species) so the user sees something and can refine.
+            query.setIds.resize(kMaxNarrowSets);
         }
     }
+
+    if (!limiter_.tryAcquire(monotonicNowMs())) {
+        searchDebounce_->start(kThrottleRetryMs);  // keep pendingSearch_ for the retry
+        return;
+    }
+    pendingSearch_.reset();
     startCardFetch(req.dexNumber, req.generation,
                    QString::fromStdString(api_.resolveSearch(query).url), kMaxSearchRetries);
 }

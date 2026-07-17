@@ -25,7 +25,6 @@
 #include <exception>
 #include <optional>
 
-#include "core/app/card_catalog_parse.h"
 #include "core/app/card_copy_service.h"
 #include "core/domain/card_condition.h"
 #include "core/domain/card_ownership.h"
@@ -212,8 +211,7 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
             &AddCardCopyPage::onPrintingsFailed);
     connect(&search_, &CardSearchService::thumbnailReady, this,
             &AddCardCopyPage::onThumbnailReady);
-    connect(&search_, &CardSearchService::setsReady, this,
-            &AddCardCopyPage::rebuildSetCompleter);
+    connect(&search_, &CardSearchService::setsReady, this, &AddCardCopyPage::onSetsReady);
     rebuildSetCompleter();  // the set table is warmed at startup, so usually ready
 
     // Nothing is fetched on open — a species can have hundreds of printings. The
@@ -235,21 +233,16 @@ bool AddCardCopyPage::eventFilter(QObject* watched, QEvent* event) {
 }
 
 void AddCardCopyPage::onSearchTextChanged(const QString& text) {
-    const QString t = text.trimmed();
-    if (t.size() < 3) {
+    if (text.trimmed().size() < 3) {
         clearResults();  // too short to search
         updateStatus();  // falls back to the "type 3+ chars" hint
         return;
     }
-    // Only fetch when the text actually matches a set; otherwise the query would
-    // resolve to no set ids and fall back to fetching ALL of the species' printings.
-    if (resolveSetFilterToIds(t.toStdString(), search_.sets()).empty()) {
-        clearResults();
-        status_->setText(
-            tr("No set matches “%1” — try a code (OBF) or name (Obsidian Flames).").arg(t));
-        return;
-    }
-    searchWith(text);  // the service debounces the actual request
+    // Hand the raw filter to the service — it is the single authority on resolving a
+    // code/name to sets, waiting for the set table, and returning empty when nothing
+    // matches (so we don't duplicate that logic here, and a not-yet-loaded set table
+    // no longer dead-ends the finder). The service debounces the request.
+    searchWith(text);
 }
 
 void AddCardCopyPage::clearResults() {
@@ -458,10 +451,14 @@ void AddCardCopyPage::rebuildSetCompleter() {
     if (widest > 0) {
         completer->popup()->setMinimumWidth(std::min(widest + 32, 460));
     }
+    searchField_->setCompleter(completer);
+    // Connect AFTER setCompleter so this slot runs after QLineEdit's own handler
+    // (which would otherwise leave the decorated "CODE — Name" in the field — a
+    // string that matches no set, so a later edit would wrongly clear the results).
     connect(completer, qOverload<const QString&>(&QCompleter::activated), this,
             [this](const QString& picked) {
                 // Map the picked "CODE — Name"/"Name" entry back to its set, fill the
-                // form, and fetch that set's cards for this species.
+                // form, put the clean set name in the field, and fetch that set's cards.
                 for (const CardSetInfo& s : search_.sets()) {
                     const QString name = QString::fromStdString(s.name);
                     const QString code = QString::fromStdString(s.ptcgoCode);
@@ -469,12 +466,23 @@ void AddCardCopyPage::rebuildSetCompleter() {
                         code.isEmpty() ? name : QStringLiteral("%1 — %2").arg(code, name);
                     if (entry == picked) {
                         chooseSet(s);
-                        searchWith(name.isEmpty() ? code : name);
+                        const QString clean = name.isEmpty() ? code : name;
+                        searchField_->setText(clean);  // replace the decorated entry
+                        searchWith(clean);
                         return;
                     }
                 }
             });
-    searchField_->setCompleter(completer);
+}
+
+void AddCardCopyPage::onSetsReady() {
+    rebuildSetCompleter();
+    // Re-run the current search now that the set table is available: the user may
+    // have typed a filter before it loaded (or a failed startup fetch just retried),
+    // in which case the finder was empty and would otherwise stay stale.
+    if (searchField_->text().trimmed().size() >= 3) {
+        onSearchTextChanged(searchField_->text());
+    }
 }
 
 void AddCardCopyPage::updateSubmitEnabled() {
