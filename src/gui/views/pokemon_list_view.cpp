@@ -219,7 +219,10 @@ void PokemonListView::loadMore() {
         table_->setItem(row, 0, number);
         table_->setItem(row, 1, cell(QString::fromStdString(entry.pokemon.name)));
         table_->setItem(row, 2, cell(regionLabel(entry.pokemon.region)));
-        auto* owned = cell(QString::number(entry.ownedCount));
+        // Render a zero owned-count as an em-dash (cell() does this for empty text)
+        // so the column reads as "none" at a glance rather than a wall of 0s.
+        auto* owned =
+            cell(entry.ownedCount == 0 ? QString() : QString::number(entry.ownedCount));
         owned->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
         table_->setItem(row, 3, owned);
     }
