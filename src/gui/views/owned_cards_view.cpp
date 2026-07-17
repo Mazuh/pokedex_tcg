@@ -27,6 +27,7 @@
 #include "gui/views/binder_picker_dialog.h"
 #include "gui/views/condition_labels.h"
 #include "gui/views/ownership_labels.h"
+#include "gui/views/region_labels.h"
 #include "gui/views/table_cell.h"
 
 namespace pokedex {
@@ -43,6 +44,17 @@ QString speciesName(PokemonDexNum dexNumber) {
     return QString::fromStdString(catalog[dexNumber - 1].name);
 }
 
+// The region label for a dex number, from the same compile-time catalog. Not
+// shown in any column, but appended to the search haystack so a copy is findable
+// by its species' region. Empty for an out-of-range number (defensive).
+QString speciesRegionLabel(PokemonDexNum dexNumber) {
+    const auto catalog = pokemonCatalog();
+    if (dexNumber < 1 || dexNumber > static_cast<int>(catalog.size())) {
+        return QString();
+    }
+    return regionLabel(catalog[dexNumber - 1].region);
+}
+
 // The printed identity as one cell: "BS 44/102", or just the number when the
 // expansion code is unknown.
 QString cardText(const CardReference& ref) {
@@ -56,7 +68,8 @@ QString cardText(const CardReference& ref) {
 OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders, QWidget* parent)
     : QWidget(parent), copies_(copies), binders_(binders) {
     search_ = new QLineEdit(this);
-    search_->setPlaceholderText(tr("Search cards…"));  // name, set, number, condition…
+    search_->setPlaceholderText(
+        tr("Search copy by Pokémon, collector number, set or binder…"));
     search_->setClearButtonEnabled(true);
     connect(search_, &QLineEdit::textChanged, this, [this](const QString&) { applyFilter(); });
 
@@ -143,11 +156,19 @@ void OwnedCardsView::reload() {
         return a.insertedAt < b.insertedAt;
     });
 
-    // Resolve a binder id to its display name (re-fetched each reload, so a binder
-    // renamed/removed in the Binders section shows correctly here).
-    std::unordered_map<std::string, QString> binderNames;
+    // Resolve a binder id to its display name (shown in the Binder column) and its
+    // region (search-only) in one lookup — re-fetched each reload, so a binder
+    // renamed/removed in the Binders section shows correctly here.
+    struct BinderInfo {
+        QString name;
+        QString region;  // empty when the binder wasn't scoped to a region
+    };
+    std::unordered_map<std::string, BinderInfo> binderInfo;
     for (const CardBinder& binder : binders_.list()) {
-        binderNames.emplace(binder.id, QString::fromStdString(binder.name));
+        binderInfo.emplace(binder.id,
+                           BinderInfo{QString::fromStdString(binder.name),
+                                      binder.pokemonRegion ? regionLabel(*binder.pokemonRegion)
+                                                           : QString()});
     }
 
     table_->setRowCount(static_cast<int>(loaded_.size()));
@@ -165,25 +186,35 @@ void OwnedCardsView::reload() {
         // Condition is optional (ungraded copies) — blank renders as an em-dash.
         table_->setItem(row, 4, cell(c.condition ? conditionAbbrev(*c.condition) : QString()));
         table_->setItem(row, 5, cell(ownershipLabel(c.ownership)));
-        QString binderName;
+        // Resolve the copy's binder once — its name goes in the cell, its region
+        // into the search haystack below.
+        const BinderInfo* binder = nullptr;
         if (c.binderId) {
-            const auto it = binderNames.find(*c.binderId);
-            binderName = it != binderNames.end() ? it->second : QString();
+            const auto it = binderInfo.find(*c.binderId);
+            if (it != binderInfo.end()) {
+                binder = &it->second;
+            }
         }
+        const QString binderName = binder ? binder->name : QString();
         auto* binderCell = cell(binderName);
         binderCell->setToolTip(binderName);
         table_->setItem(row, 6, binderCell);
 
-        // Precompute this row's lowercased search text from its cells, plus the
-        // dex number and the full condition label — neither shows verbatim in the
-        // table (the "#" column was dropped; condition is abbreviated to NM/LP/…),
-        // yet users still expect to filter by dex number or full condition name.
+        // Precompute this row's lowercased search text from its cells, plus a few
+        // fields that don't show verbatim in the table yet users still expect to
+        // filter by: the dex number (the "#" column was dropped), the full
+        // condition label (the column abbreviates to NM/LP/…), and both regions —
+        // the species' region and, if filed, the binder's region.
         QString hay = QString::number(c.pokemonDexNum) + QLatin1Char(' ');
         for (int col = 0; col < table_->columnCount(); ++col) {
             hay += table_->item(row, col)->text() + QLatin1Char(' ');
         }
         if (c.condition) {
             hay += conditionLabel(*c.condition) + QLatin1Char(' ');
+        }
+        hay += speciesRegionLabel(c.pokemonDexNum) + QLatin1Char(' ');
+        if (binder && !binder->region.isEmpty()) {
+            hay += binder->region + QLatin1Char(' ');
         }
         haystacks_[row] = hay.toLower();
     }
