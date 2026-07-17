@@ -62,8 +62,8 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders, 
 
     // A read-only seven-column table: Pokémon, card ref, set, language,
     // condition, ownership, binder. Whole-row selection, no editing; the Pokémon
-    // column takes slack (and carries a min width — it's the primary column).
-    // The Set column carries the human set name, which for code-less sets
+    // column stretches to take up slack, while every data column sizes to its
+    // content. The Set column carries the human set name, which for code-less sets
     // (McDonald's, POP…) is the only disambiguator.
     table_ = new QTableWidget(this);
     table_->setColumnCount(7);
@@ -75,15 +75,19 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders, 
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
     table_->verticalHeader()->setVisible(false);
     auto* header = table_->horizontalHeader();
-    // Pokémon is the primary column: give it a generous fixed width so it never
-    // gets squeezed, and let the trailing Binder column absorb any slack. The
-    // middle columns size to their (short) content.
-    header->setSectionResizeMode(0, QHeaderView::Interactive);
-    for (int col = 1; col <= 5; ++col) {
+    // Pokémon (the primary, recognizable column) is the flexible one: it stretches
+    // to absorb slack and elides when space is tight. (Previously Binder was the
+    // Stretch column, so a narrow window shrank it to nothing *and* left no overflow
+    // to scroll to.) The short metadata columns size to their content. Set and
+    // Binder hold free text — a long set or user-named binder — so they are sized to
+    // content but capped in reload() (Interactive lets reload() set their width and
+    // keeps them user-draggable), so one long name can't crowd out Pokémon.
+    header->setSectionResizeMode(0, QHeaderView::Stretch);
+    for (const int col : {1, 3, 4, 5}) {  // Card, Lang, Cond., Ownership — short
         header->setSectionResizeMode(col, QHeaderView::ResizeToContents);
     }
-    header->setSectionResizeMode(6, QHeaderView::Stretch);
-    table_->setColumnWidth(0, 200);
+    header->setSectionResizeMode(2, QHeaderView::Interactive);  // Set — free text, capped
+    header->setSectionResizeMode(6, QHeaderView::Interactive);  // Binder — free text, capped
     table_->setStyleSheet("QTableView::item { padding-left: 8px; padding-right: 16px; }");
     connect(table_, &QTableWidget::itemSelectionChanged, this,
             &OwnedCardsView::updateButtonState);
@@ -152,7 +156,11 @@ void OwnedCardsView::reload() {
         const CardCopy& c = loaded_[row];
         table_->setItem(row, 0, cell(speciesName(c.pokemonDexNum)));
         table_->setItem(row, 1, cell(cardText(c.cardRef)));
-        table_->setItem(row, 2, cell(QString::fromStdString(c.cardRef.setName)));
+        // Set and Binder are the free-text, capped columns: carry the full value as
+        // a tooltip so it stays readable when the cap elides it.
+        auto* setCell = cell(QString::fromStdString(c.cardRef.setName));
+        setCell->setToolTip(QString::fromStdString(c.cardRef.setName));
+        table_->setItem(row, 2, setCell);
         table_->setItem(row, 3, cell(QString::fromStdString(c.cardRef.language)));
         // Condition is optional (ungraded copies) — blank renders as an em-dash.
         table_->setItem(row, 4, cell(c.condition ? conditionAbbrev(*c.condition) : QString()));
@@ -162,7 +170,9 @@ void OwnedCardsView::reload() {
             const auto it = binderNames.find(*c.binderId);
             binderName = it != binderNames.end() ? it->second : QString();
         }
-        table_->setItem(row, 6, cell(binderName));
+        auto* binderCell = cell(binderName);
+        binderCell->setToolTip(binderName);
+        table_->setItem(row, 6, binderCell);
 
         // Precompute this row's lowercased search text from its cells, plus the
         // dex number and the full condition label — neither shows verbatim in the
@@ -176,6 +186,18 @@ void OwnedCardsView::reload() {
             hay += conditionLabel(*c.condition) + QLatin1Char(' ');
         }
         haystacks_[row] = hay.toLower();
+    }
+    // Size the free-text columns (Set, Binder) to their content, then cap them: a
+    // long set or user-named binder elides (…) — with the full value on its tooltip
+    // and the column still draggable — rather than crowding out the flexible Pokémon
+    // column. The cap is a representative long set name, so ordinary names show whole.
+    const int freeTextCap =
+        table_->fontMetrics().horizontalAdvance(QStringLiteral("McDonald's Collection 2021")) + 32;
+    for (const int col : {2, 6}) {
+        table_->resizeColumnToContents(col);
+        if (table_->columnWidth(col) > freeTextCap) {
+            table_->setColumnWidth(col, freeTextCap);
+        }
     }
     // Empty state: swap the table + search + row actions for a friendly hint when
     // nothing is stored.
