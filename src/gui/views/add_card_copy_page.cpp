@@ -25,6 +25,7 @@
 #include <exception>
 #include <optional>
 
+#include "core/app/card_catalog_parse.h"
 #include "core/app/card_copy_service.h"
 #include "core/domain/card_condition.h"
 #include "core/domain/card_ownership.h"
@@ -85,19 +86,17 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
     form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
     formPane->setMaximumWidth(560);
 
+    // The reference fields are stored data (autofilled from a picked card, or typed).
+    // A USER edit (textEdited, not the autofill's setText) that no longer matches the
+    // selected card drops the preview via checkUnmatch().
     expansionCode_ = new QLineEdit(formPane);
     expansionCode_->setPlaceholderText(tr("e.g. OBF"));
-    // Stored data only — narrowing the printings is driven by the Set field below, so
-    // this field never re-searches (a partial code is not a valid narrow and would
-    // hide the target card mid-typing). Its completer cross-fills the set name.
+    connect(expansionCode_, &QLineEdit::textEdited, this,
+            [this](const QString&) { checkUnmatch(); });
 
     setName_ = new QLineEdit(formPane);
-    setName_->setPlaceholderText(tr("filter by set — e.g. Obsidian Flames, OBF, McDonald's"));
-    // The single narrowing input: matches an exact code OR a set-name substring.
-    // setText() (autofill / completer) fires textChanged, not textEdited, so there
-    // is no feedback loop.
-    connect(setName_, &QLineEdit::textEdited, this,
-            [this](const QString& text) { searchWith(text); });
+    setName_->setPlaceholderText(tr("e.g. Obsidian Flames"));
+    connect(setName_, &QLineEdit::textEdited, this, [this](const QString&) { checkUnmatch(); });
 
     language_ = new QComboBox(formPane);
     language_->addItems(languageCodes());
@@ -107,6 +106,8 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
     // The collector number is the required printed identity — it gates submit.
     connect(collectorNumber_, &QLineEdit::textChanged, this,
             [this](const QString&) { updateSubmitEnabled(); });
+    connect(collectorNumber_, &QLineEdit::textEdited, this,
+            [this](const QString&) { checkUnmatch(); });
 
     condition_ = new QComboBox(formPane);
     condition_->addItem(tr("Near Mint"), static_cast<int>(CardCondition::NearMint));
@@ -139,13 +140,18 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
     connect(submit_, &QPushButton::clicked, this, &AddCardCopyPage::submitCopy);
     form->addRow(QString(), submit_);
 
-    // --- Printings list (right) --------------------------------------------
-    auto* listPane = new QWidget(this);
-    status_ = new QLabel(listPane);
+    // --- Finder (middle): search field + results ---------------------------
+    auto* finderPane = new QWidget(this);
+    searchField_ = new QLineEdit(finderPane);
+    searchField_->setPlaceholderText(tr("Find by set — code or name, 3+ characters…"));
+    searchField_->setClearButtonEnabled(true);
+    connect(searchField_, &QLineEdit::textEdited, this, &AddCardCopyPage::onSearchTextChanged);
+
+    status_ = new QLabel(finderPane);
     status_->setEnabled(false);  // muted status/hint text
     status_->setWordWrap(true);
 
-    printings_ = new QListWidget(listPane);
+    printings_ = new QListWidget(finderPane);
     printings_->setIconSize(QSize(kThumbW, kThumbH));
     printings_->setUniformItemSizes(true);
     printings_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
@@ -166,18 +172,32 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
     });
     printings_->viewport()->installEventFilter(this);
 
-    auto* listLayout = new QVBoxLayout(listPane);
-    listLayout->setContentsMargins(0, 0, 0, 0);
-    listLayout->addWidget(status_);
-    listLayout->addWidget(printings_);
+    auto* finderLayout = new QVBoxLayout(finderPane);
+    finderLayout->setContentsMargins(0, 0, 0, 0);
+    finderLayout->addWidget(searchField_);
+    finderLayout->addWidget(status_);
+    finderLayout->addWidget(printings_);
+
+    // --- Preview (right): the selected card, larger ------------------------
+    auto* previewPane = new QWidget(this);
+    preview_ = new QLabel(previewPane);
+    preview_->setAlignment(Qt::AlignCenter);
+    preview_->setMinimumWidth(180);
+    preview_->setWordWrap(true);
+    preview_->installEventFilter(this);  // rescale the image when the pane resizes
+    auto* previewLayout = new QVBoxLayout(previewPane);
+    previewLayout->setContentsMargins(0, 0, 0, 0);
+    previewLayout->addWidget(preview_);
 
     // --- Assemble -----------------------------------------------------------
     auto* splitter = new QSplitter(Qt::Horizontal, this);
     splitter->addWidget(formPane);
-    splitter->addWidget(listPane);
+    splitter->addWidget(finderPane);
+    splitter->addWidget(previewPane);
     splitter->setStretchFactor(0, 1);
     splitter->setStretchFactor(1, 1);
-    splitter->setSizes({420, 380});
+    splitter->setStretchFactor(2, 1);
+    splitter->setSizes({320, 300, 260});
     thinDivider(splitter);
 
     auto* layout = new QVBoxLayout(this);
@@ -193,19 +213,53 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
     connect(&search_, &CardSearchService::thumbnailReady, this,
             &AddCardCopyPage::onThumbnailReady);
     connect(&search_, &CardSearchService::setsReady, this,
-            &AddCardCopyPage::rebuildCompleters);
-    rebuildCompleters();  // sets may already be cached from a prior open
+            &AddCardCopyPage::rebuildSetCompleter);
+    rebuildSetCompleter();  // the set table is warmed at startup, so usually ready
 
+    // Nothing is fetched on open — a species can have hundreds of printings. The
+    // user searches by set first (see onSearchTextChanged).
+    clearPreview();
     updateStatus();
     updateSubmitEnabled();
-    pendingRequestId_ = search_.searchPrintings(dexNumber_, QString());
 }
 
 bool AddCardCopyPage::eventFilter(QObject* watched, QEvent* event) {
-    if (watched == printings_->viewport() && event->type() == QEvent::Resize) {
-        fillViewport();
+    if (event->type() == QEvent::Resize) {
+        if (watched == printings_->viewport()) {
+            fillViewport();
+        } else if (watched == preview_) {
+            renderPreview();
+        }
     }
     return QWidget::eventFilter(watched, event);
+}
+
+void AddCardCopyPage::onSearchTextChanged(const QString& text) {
+    const QString t = text.trimmed();
+    if (t.size() < 3) {
+        clearResults();  // too short to search
+        updateStatus();  // falls back to the "type 3+ chars" hint
+        return;
+    }
+    // Only fetch when the text actually matches a set; otherwise the query would
+    // resolve to no set ids and fall back to fetching ALL of the species' printings.
+    if (resolveSetFilterToIds(t.toStdString(), search_.sets()).empty()) {
+        clearResults();
+        status_->setText(
+            tr("No set matches “%1” — try a code (OBF) or name (Obsidian Flames).").arg(t));
+        return;
+    }
+    searchWith(text);  // the service debounces the actual request
+}
+
+void AddCardCopyPage::clearResults() {
+    pendingRequestId_ = 0;  // ignore any in-flight reply for a now-abandoned query
+    loading_ = false;
+    candidates_.clear();
+    loadedCount_ = 0;
+    itemById_.clear();
+    printings_->clear();
+    clearPreview();
 }
 
 void AddCardCopyPage::onPrintingsReady(std::uint64_t requestId, int dexNumber,
@@ -219,6 +273,7 @@ void AddCardCopyPage::onPrintingsReady(std::uint64_t requestId, int dexNumber,
     loadedCount_ = 0;
     itemById_.clear();
     printings_->clear();
+    clearPreview();  // fresh results → no card selected yet
     fillViewport();
     updateStatus();
 }
@@ -233,6 +288,7 @@ void AddCardCopyPage::onPrintingsFailed(std::uint64_t requestId, int dexNumber) 
     loadedCount_ = 0;
     itemById_.clear();
     printings_->clear();
+    clearPreview();
     updateStatus();
 }
 
@@ -283,6 +339,11 @@ void AddCardCopyPage::fillViewport() {
 }
 
 void AddCardCopyPage::onThumbnailReady(const QString& cardId, const QPixmap& pixmap) {
+    if (!previewCardId_.isEmpty() && cardId == previewCardId_) {
+        previewPixmap_ = pixmap;  // the large image for the selected card
+        renderPreview();
+        return;
+    }
     if (QListWidgetItem* item = itemById_.value(cardId, nullptr)) {
         item->setIcon(QIcon(pixmap));
     }
@@ -292,13 +353,65 @@ void AddCardCopyPage::selectCandidate(int index) {
     if (index < 0 || index >= static_cast<int>(candidates_.size())) {
         return;
     }
+    selectedIndex_ = index;
     const CardCandidate& c = candidates_[index];
     // Autofill the printed identity. setText() does not fire textEdited, so this
-    // does not re-narrow the search. Language / condition / ownership are the
-    // user's to choose — the card source cannot supply them.
+    // does not trip checkUnmatch. Language / condition / ownership are the user's to
+    // choose — the card source cannot supply them.
     expansionCode_->setText(QString::fromStdString(c.cardRef.expansionCode));
     setName_->setText(QString::fromStdString(c.cardRef.setName));
     collectorNumber_->setText(QString::fromStdString(c.cardRef.collectorNumber));
+    showPreview(index);
+}
+
+void AddCardCopyPage::showPreview(int index) {
+    const CardCandidate& c = candidates_[index];
+    previewPixmap_ = QPixmap();
+    // Keyed distinctly from the row thumbnail ("preview:" prefix) so both can be in
+    // flight; fetched into memory only (never cached to disk), like every card image.
+    previewCardId_ = QStringLiteral("preview:") + QString::fromStdString(c.id);
+    preview_->setText(tr("Loading card…"));
+    const QString url = QString::fromStdString(c.imageUrlLarge.empty() ? c.imageUrlSmall
+                                                                       : c.imageUrlLarge);
+    search_.fetchThumbnail(previewCardId_, url);
+}
+
+void AddCardCopyPage::clearPreview() {
+    selectedIndex_ = -1;
+    previewCardId_.clear();
+    previewPixmap_ = QPixmap();
+    preview_->setText(tr("Select a card to preview it."));
+    // Drop the list highlight; setCurrentItem(nullptr) fires currentItemChanged with a
+    // null current, which selectCandidate ignores (guarded), so this does not recurse.
+    printings_->setCurrentItem(nullptr);
+}
+
+void AddCardCopyPage::renderPreview() {
+    if (previewPixmap_.isNull()) {
+        return;
+    }
+    const qreal dpr = devicePixelRatioF();
+    QPixmap scaled = previewPixmap_.scaled(preview_->size() * dpr, Qt::KeepAspectRatio,
+                                           Qt::SmoothTransformation);
+    scaled.setDevicePixelRatio(dpr);
+    preview_->setPixmap(scaled);
+}
+
+void AddCardCopyPage::checkUnmatch() {
+    if (selectedIndex_ < 0 || selectedIndex_ >= static_cast<int>(candidates_.size())) {
+        return;
+    }
+    // Once the user edits the reference away from the selected card, the preview no
+    // longer represents the form — drop it. (Language/condition/etc. aren't part of
+    // the printed identity, so they don't count.)
+    const CardReference& ref = candidates_[selectedIndex_].cardRef;
+    const bool matches =
+        expansionCode_->text().trimmed().toStdString() == ref.expansionCode &&
+        setName_->text().trimmed().toStdString() == ref.setName &&
+        collectorNumber_->text().trimmed().toStdString() == ref.collectorNumber;
+    if (!matches) {
+        clearPreview();
+    }
 }
 
 void AddCardCopyPage::searchWith(const QString& filter) {
@@ -308,76 +421,60 @@ void AddCardCopyPage::searchWith(const QString& filter) {
 }
 
 void AddCardCopyPage::chooseSet(const CardSetInfo& set) {
-    // Fill BOTH stored fields from one chosen set (so a coded set keeps its code even
-    // when picked by name, and vice-versa), then narrow to it. setText() does not
-    // fire textEdited, so this does not recurse.
+    // Fill BOTH stored form fields from one chosen set (so a coded set keeps its code
+    // even when picked by name). setText() does not fire textEdited, so this does not
+    // trip checkUnmatch. The caller drives the search.
     expansionCode_->setText(QString::fromStdString(set.ptcgoCode));
     setName_->setText(QString::fromStdString(set.name));
-    searchWith(QString::fromStdString(set.name.empty() ? set.ptcgoCode : set.name));
 }
 
-void AddCardCopyPage::rebuildCompleters() {
-    // Two typeahead completers over the in-memory set table: codes on the Expansion
-    // field ("CODE — Name"), names on the Set field. Picking from EITHER cross-fills
-    // both fields (chooseSet) so nothing is silently dropped. Code-less sets appear
-    // only in the name completer (they have no code).
-    // Plain codes (not "CODE — Name") so the completer's own text-set leaves a clean
-    // "OBF" in the field rather than a decorated string; chooseSet then cross-fills.
-    QStringList codeEntries;
-    QStringList nameEntries;
+void AddCardCopyPage::rebuildSetCompleter() {
+    // A "CODE — Name" (or just "Name" for code-less sets) typeahead on the finder's
+    // search field. Picking one fills the form's set fields and fetches that set's
+    // cards for this species.
+    QStringList entries;
     for (const CardSetInfo& s : search_.sets()) {
-        if (!s.ptcgoCode.empty()) {
-            codeEntries << QString::fromStdString(s.ptcgoCode);
+        if (s.name.empty() && s.ptcgoCode.empty()) {
+            continue;
         }
-        if (!s.name.empty()) {
-            nameEntries << QString::fromStdString(s.name);
-        }
+        const QString name = QString::fromStdString(s.name);
+        const QString code = QString::fromStdString(s.ptcgoCode);
+        entries << (code.isEmpty() ? name : QStringLiteral("%1 — %2").arg(code, name));
     }
-    codeEntries.removeDuplicates();
-    codeEntries.sort(Qt::CaseInsensitive);
-    nameEntries.removeDuplicates();
-    nameEntries.sort(Qt::CaseInsensitive);
+    entries.removeDuplicates();
+    entries.sort(Qt::CaseInsensitive);
 
-    auto* codeCompleter = new QCompleter(codeEntries, expansionCode_);
-    codeCompleter->setCaseSensitivity(Qt::CaseInsensitive);
-    codeCompleter->setFilterMode(Qt::MatchContains);
-    connect(codeCompleter, qOverload<const QString&>(&QCompleter::activated), this,
-            [this](const QString& picked) {
-                for (const CardSetInfo& s : search_.sets()) {
-                    if (QString::fromStdString(s.ptcgoCode) == picked) {
-                        chooseSet(s);
-                        break;
-                    }
-                }
-            });
-    expansionCode_->setCompleter(codeCompleter);
-
-    auto* nameCompleter = new QCompleter(nameEntries, setName_);
-    nameCompleter->setCaseSensitivity(Qt::CaseInsensitive);
-    nameCompleter->setFilterMode(Qt::MatchContains);
-    // Set names are long and often differ only by a trailing year (McDonald's
-    // Collection 2019/2020/…). The popup defaults to the narrow field's width and
-    // would elide that distinguishing suffix, so size it to the longest name
-    // (capped) and never elide.
-    nameCompleter->popup()->setTextElideMode(Qt::ElideNone);
-    const QFontMetrics fm(setName_->font());
+    auto* completer = new QCompleter(entries, searchField_);
+    completer->setCaseSensitivity(Qt::CaseInsensitive);
+    completer->setFilterMode(Qt::MatchContains);
+    // Entries can be long and differ only by a trailing year (McDonald's Collection
+    // 2019/2020/…); size the popup to the longest one (capped) and never elide.
+    completer->popup()->setTextElideMode(Qt::ElideNone);
+    const QFontMetrics fm(searchField_->font());
     int widest = 0;
-    for (const QString& entry : nameEntries) {
+    for (const QString& entry : entries) {
         widest = std::max(widest, fm.horizontalAdvance(entry));
     }
     if (widest > 0) {
-        nameCompleter->popup()->setMinimumWidth(std::min(widest + 32, 440));  // +padding, capped
+        completer->popup()->setMinimumWidth(std::min(widest + 32, 460));
     }
-    connect(nameCompleter, qOverload<const QString&>(&QCompleter::activated), this,
+    connect(completer, qOverload<const QString&>(&QCompleter::activated), this,
             [this](const QString& picked) {
+                // Map the picked "CODE — Name"/"Name" entry back to its set, fill the
+                // form, and fetch that set's cards for this species.
                 for (const CardSetInfo& s : search_.sets()) {
-                    if (QString::fromStdString(s.name) == picked) {
+                    const QString name = QString::fromStdString(s.name);
+                    const QString code = QString::fromStdString(s.ptcgoCode);
+                    const QString entry =
+                        code.isEmpty() ? name : QStringLiteral("%1 — %2").arg(code, name);
+                    if (entry == picked) {
                         chooseSet(s);
-                        break;
+                        searchWith(name.isEmpty() ? code : name);
+                        return;
                     }
                 }
             });
-    setName_->setCompleter(nameCompleter);
+    searchField_->setCompleter(completer);
 }
 
 void AddCardCopyPage::updateSubmitEnabled() {
@@ -403,24 +500,27 @@ void AddCardCopyPage::submitCopy() {
     }
     Q_EMIT copyAdded();
     // Stay on the page so several copies can be added in a row: clear the entry
-    // fields but keep the species, the printings list, and the sticky
+    // fields and the preview but keep the search + results and the sticky
     // condition/ownership choices.
     expansionCode_->clear();
     setName_->clear();
     collectorNumber_->clear();
     comments_->clear();
+    clearPreview();
     status_->setText(tr("Added ✓ — add another, or go Back."));
 }
 
 void AddCardCopyPage::updateStatus() {
     if (loading_) {
-        status_->setText(tr("Searching for %1 cards…").arg(speciesName_));
+        status_->setText(tr("Searching…"));
+    } else if (searchField_->text().trimmed().size() < 3) {
+        status_->setText(tr("Find %1's cards by set — type a code or name (3+ characters).")
+                             .arg(speciesName_));
     } else if (candidates_.empty()) {
-        status_->setText(
-            tr("No cards to show — the catalog may be unreachable. You can still fill "
-               "the form by hand."));
+        status_->setText(tr("No printings found for that set — you can still fill the form "
+                            "by hand, or the catalog may be flaking (retry)."));
     } else {
-        status_->setText(tr("Showing %1 of %2 printings — select one to autofill.")
+        status_->setText(tr("Showing %1 of %2 — select a card to autofill.")
                              .arg(loadedCount_)
                              .arg(static_cast<int>(candidates_.size())));
     }
