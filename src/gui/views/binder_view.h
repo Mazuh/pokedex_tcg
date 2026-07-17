@@ -22,9 +22,10 @@ class PokemonDetailPanel;
 
 // GUI — the "open binder" screen: the binder's guide as a list of its Pokémon,
 // each paired with its CollectionStatus, above a live partial-name search box.
-// A thin shell over BinderGuideService (the Qt-free verb). Read-only: it computes
-// the entries once on construction and only re-filters the cached list as the
-// user types — there are no per-entry actions in this slice.
+// A thin shell over BinderGuideService (the Qt-free verb). It computes the entries
+// on construction and re-filters the cached list as the user types; adding a copy
+// from here recomputes the guide (a new copy can change an "owned elsewhere"
+// status), so returning from Add-copy shows current state rather than stale.
 //
 // This is an embedded page, not a separate window: BindersWindow shows it inside
 // a QStackedWidget and a "Back" button (which emits backRequested) returns to the
@@ -43,8 +44,12 @@ Q_SIGNALS:
     void backRequested();
 
 private:
+    // (Re)compute the guide's entries from the source of truth and (re)build the
+    // table rows, then re-apply the current search filter. Run once on construction
+    // and again after a copy is added from this page (statuses may have changed).
+    void refresh();
     // Show only the rows whose Pokémon name contains `filter` (case-insensitive);
-    // an empty filter shows all. Rows are built once and toggled, not rebuilt.
+    // an empty filter shows all. Rows are toggled, not rebuilt.
     void applyFilter(const QString& filter);
     // Show the clicked/selected row's Pokémon in the detail panel. Reads the dex
     // number and name from the row's cells (columns 0 and 1).
@@ -53,6 +58,8 @@ private:
     // and disposes it, returning to the binder guide.
     void openAddCopy(int dexNumber, const QString& name);
 
+    BinderGuideService& guide_;
+    CardBinder binder_;
     CardSearchService& cardSearch_;
     CardCopyService& cardCopies_;
     QStackedWidget* stack_;

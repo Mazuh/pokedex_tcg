@@ -18,6 +18,7 @@
 
 #include "core/app/binder_guide_service.h"
 #include "gui/views/add_card_copy_page.h"
+#include "gui/views/back_button.h"
 #include "gui/views/pokemon_detail_panel.h"
 #include "gui/views/region_labels.h"
 #include "gui/views/splitter_style.h"
@@ -42,9 +43,12 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
                        WishlistService& wishlist, MediaService& media,
                        CardSearchService& cardSearch, CardCopyService& cardCopies,
                        QWidget* parent)
-    : QWidget(parent), cardSearch_(cardSearch), cardCopies_(cardCopies) {
-    auto* backButton = new QPushButton(tr("Back"), this);
-    backButton->setIcon(style()->standardIcon(QStyle::SP_ArrowBack));
+    : QWidget(parent),
+      guide_(guide),
+      binder_(binder),
+      cardSearch_(cardSearch),
+      cardCopies_(cardCopies) {
+    auto* backButton = makeBackButton(this);
     auto* heading = new QLabel(headingText(binder), this);
 
     connect(backButton, &QPushButton::clicked, this, &BinderView::backRequested);
@@ -115,20 +119,24 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(stack_);
 
-    // Compute the guide once; the search box only re-filters this cached vector,
-    // never re-queries. A failure here (e.g. the workspace went away) is reported
-    // and leaves an empty table rather than crashing.
+    refresh();  // compute the guide and populate the table for the first time
+}
+
+void BinderView::refresh() {
+    // (Re)compute the guide's entries. A failure here (e.g. the workspace went
+    // away) is reported and leaves an empty table rather than crashing.
     try {
-        entries_ = guide.buildEntries(binder);
+        entries_ = guide_.buildEntries(binder_);
     } catch (const std::exception& e) {
+        entries_.clear();
         QMessageBox::critical(this, tr("Pokedex TCG"),
                               tr("Could not open this binder:\n%1")
                                   .arg(QString::fromUtf8(e.what())));
     }
 
-    // Build every row once. Rows never change after this (status is fixed for the
-    // life of the page), so filtering just toggles row visibility — no
-    // per-keystroke allocation. entries_ and table rows stay 1:1 and aligned.
+    // Rebuild every row from the freshly computed entries; entries_ and table rows
+    // stay 1:1 and aligned. Statuses are fixed until the next refresh, so filtering
+    // then just toggles row visibility — no per-keystroke allocation.
     table_->setRowCount(static_cast<int>(entries_.size()));
     for (int i = 0; i < static_cast<int>(entries_.size()); ++i) {
         const CardBinderEntry& entry = entries_[i];
@@ -138,7 +146,7 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
         table_->setItem(i, 1, cell(QString::fromStdString(entry.pokemon.name)));
         table_->setItem(i, 2, cell(statusLabel(entry.status)));
     }
-    applyFilter(QString());
+    applyFilter(search_->text());  // preserve the current filter across a refresh
 }
 
 void BinderView::applyFilter(const QString& filter) {
@@ -175,9 +183,10 @@ void BinderView::showRow(int row) {
 
 void BinderView::openAddCopy(int dexNumber, const QString& name) {
     auto* page = new AddCardCopyPage(cardSearch_, cardCopies_, dexNumber, name);
-    // NOTE: the binder guide's statuses are computed once on open and are not
-    // refreshed after adding a copy here (a created copy is filed nowhere for now,
-    // so it only affects the "owned elsewhere" case). Reopening the binder recomputes.
+    // Adding a copy recomputes the guide: a created copy is filed in no binder for
+    // now, but it can flip an "owned elsewhere" status, and submit auto-returns
+    // here, so refresh so the guide isn't stale on the way back.
+    connect(page, &AddCardCopyPage::copyAdded, this, &BinderView::refresh);
     connect(page, &AddCardCopyPage::backRequested, this, [this, page]() {
         stack_->setCurrentIndex(0);
         stack_->removeWidget(page);

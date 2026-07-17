@@ -32,11 +32,10 @@ class CardCopyService;
 // card API is unreachable.
 //
 // Submitting creates a copy via CardCopyService (no image is cached — search
-// results stay display-only). On success the page stays open with the form
-// cleared, so several copies of the same species can be added in a row, and
-// copyAdded() lets the host refresh any owned-copy counts. A created copy is filed
-// nowhere for now — binder assignment and the remove-with-note flow are separate,
-// later concerns.
+// results stay display-only), then emits copyAdded() (so the host can refresh any
+// owned-copy counts) and backRequested() to return to the previous screen. A
+// created copy is filed nowhere for now — binder assignment and the
+// remove-with-note flow are separate, later concerns.
 //
 // It is an in-window page pushed onto a host's QStackedWidget (PokemonListView or
 // BinderView); a Back button emits backRequested() and the host pops + disposes

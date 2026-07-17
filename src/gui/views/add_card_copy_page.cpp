@@ -30,6 +30,7 @@
 #include "core/domain/card_ownership.h"
 #include "core/domain/card_reference.h"
 #include "gui/services/card_search_service.h"
+#include "gui/views/back_button.h"
 #include "gui/views/splitter_style.h"
 
 namespace pokedex {
@@ -52,6 +53,16 @@ const QStringList& languageCodes() {
     return codes;
 }
 
+// The completer entry for a set: "CODE — Name", or just "Name" for a code-less
+// set. Built when populating the completer and reverse-matched when a set is
+// picked, so it must be formatted in exactly one place — a divergence between the
+// two would leave picked entries matching no set (silently doing nothing).
+QString setEntryLabel(const CardSetInfo& s) {
+    const QString name = QString::fromStdString(s.name);
+    const QString code = QString::fromStdString(s.ptcgoCode);
+    return code.isEmpty() ? name : QStringLiteral("%1 — %2").arg(code, name);
+}
+
 }  // namespace
 
 AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& copies,
@@ -62,8 +73,7 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
       dexNumber_(dexNumber),
       speciesName_(speciesName) {
     // --- Top bar: Back + heading -------------------------------------------
-    auto* backButton = new QPushButton(tr("Back"), this);
-    backButton->setIcon(style()->standardIcon(QStyle::SP_ArrowBack));
+    auto* backButton = makeBackButton(this);
     connect(backButton, &QPushButton::clicked, this, &AddCardCopyPage::backRequested);
 
     auto* heading = new QLabel(tr("Add a copy — %1").arg(speciesName_), this);
@@ -363,12 +373,19 @@ void AddCardCopyPage::selectCandidate(int index) {
 void AddCardCopyPage::showPreview(int index) {
     const CardCandidate& c = candidates_[index];
     previewPixmap_ = QPixmap();
+    const QString url = QString::fromStdString(c.imageUrlLarge.empty() ? c.imageUrlSmall
+                                                                       : c.imageUrlLarge);
+    if (url.isEmpty()) {
+        // No artwork for this printing — say so rather than hang on "Loading card…"
+        // forever (fetchThumbnail no-ops on a blank url, so no reply ever clears it).
+        previewCardId_.clear();
+        preview_->setText(tr("No image available for this card."));
+        return;
+    }
     // Keyed distinctly from the row thumbnail ("preview:" prefix) so both can be in
     // flight; fetched into memory only (never cached to disk), like every card image.
     previewCardId_ = QStringLiteral("preview:") + QString::fromStdString(c.id);
     preview_->setText(tr("Loading card…"));
-    const QString url = QString::fromStdString(c.imageUrlLarge.empty() ? c.imageUrlSmall
-                                                                       : c.imageUrlLarge);
     search_.fetchThumbnail(previewCardId_, url);
 }
 
@@ -400,11 +417,15 @@ void AddCardCopyPage::checkUnmatch() {
     // Once the user edits the reference away from the selected card, the preview no
     // longer represents the form — drop it. (Language/condition/etc. aren't part of
     // the printed identity, so they don't count.)
+    // Trim BOTH sides: the form fields are trimmed, and a candidate ref parsed from
+    // the API may carry stray whitespace — comparing trimmed-vs-raw would clear the
+    // preview spuriously the moment the user touches any field.
     const CardReference& ref = candidates_[selectedIndex_].cardRef;
     const bool matches =
-        expansionCode_->text().trimmed().toStdString() == ref.expansionCode &&
-        setName_->text().trimmed().toStdString() == ref.setName &&
-        collectorNumber_->text().trimmed().toStdString() == ref.collectorNumber;
+        expansionCode_->text().trimmed() == QString::fromStdString(ref.expansionCode).trimmed() &&
+        setName_->text().trimmed() == QString::fromStdString(ref.setName).trimmed() &&
+        collectorNumber_->text().trimmed() ==
+            QString::fromStdString(ref.collectorNumber).trimmed();
     if (!matches) {
         clearPreview();
     }
@@ -433,9 +454,7 @@ void AddCardCopyPage::rebuildSetCompleter() {
         if (s.name.empty() && s.ptcgoCode.empty()) {
             continue;
         }
-        const QString name = QString::fromStdString(s.name);
-        const QString code = QString::fromStdString(s.ptcgoCode);
-        entries << (code.isEmpty() ? name : QStringLiteral("%1 — %2").arg(code, name));
+        entries << setEntryLabel(s);
     }
     entries.removeDuplicates();
     entries.sort(Qt::CaseInsensitive);
@@ -463,12 +482,10 @@ void AddCardCopyPage::rebuildSetCompleter() {
                 // Map the picked "CODE — Name"/"Name" entry back to its set, fill the
                 // form, put the clean set name in the field, and fetch that set's cards.
                 for (const CardSetInfo& s : search_.sets()) {
-                    const QString name = QString::fromStdString(s.name);
-                    const QString code = QString::fromStdString(s.ptcgoCode);
-                    const QString entry =
-                        code.isEmpty() ? name : QStringLiteral("%1 — %2").arg(code, name);
-                    if (entry == picked) {
+                    if (setEntryLabel(s) == picked) {
                         chooseSet(s);
+                        const QString name = QString::fromStdString(s.name);
+                        const QString code = QString::fromStdString(s.ptcgoCode);
                         const QString clean = name.isEmpty() ? code : name;
                         searchField_->setText(clean);  // replace the decorated entry
                         searchWith(clean);
@@ -513,15 +530,10 @@ void AddCardCopyPage::submitCopy() {
         return;
     }
     Q_EMIT copyAdded();
-    // Stay on the page so several copies can be added in a row: clear the entry
-    // fields and the preview but keep the search + results and the sticky
-    // condition/ownership choices.
-    expansionCode_->clear();
-    setName_->clear();
-    collectorNumber_->clear();
-    comments_->clear();
-    clearPreview();
-    status_->setText(tr("Added ✓ — add another, or go Back."));
+    // Return to the previous screen after a successful add — the host's
+    // backRequested handler pops this page. (Emit last: the handler schedules the
+    // page for deletion via deleteLater, so no member is touched afterward.)
+    Q_EMIT backRequested();
 }
 
 void AddCardCopyPage::updateStatus() {
