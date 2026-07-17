@@ -126,7 +126,7 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
         tr("Capture story, price, seller, imperfections, dates…"));
 
     form->addRow(tr("Expansion code"), expansionCode_);
-    form->addRow(tr("Set"), setName_);
+    form->addRow(tr("Set name"), setName_);
     form->addRow(tr("Language"), language_);
     form->addRow(tr("Collector number"), collectorNumber_);
     form->addRow(tr("Condition"), condition_);
@@ -142,7 +142,7 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
     // --- Finder (middle): search field + results ---------------------------
     auto* finderPane = new QWidget(this);
     searchField_ = new QLineEdit(finderPane);
-    searchField_->setPlaceholderText(tr("Find by set — code or name, 3+ characters…"));
+    searchField_->setPlaceholderText(tr("Find by set — code or name…"));
     searchField_->setClearButtonEnabled(true);
     connect(searchField_, &QLineEdit::textEdited, this, &AddCardCopyPage::onSearchTextChanged);
 
