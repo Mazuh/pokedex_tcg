@@ -56,6 +56,7 @@ private:
     BinderService& binders_;
     QLineEdit* search_;
     QTableWidget* table_;
+    QLabel* emptyLabel_;   // shown in place of the table when no cards are recorded yet
     QPushButton* assignButton_;
     QPushButton* removeButton_;
     QLabel* countLabel_;

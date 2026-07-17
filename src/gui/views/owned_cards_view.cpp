@@ -91,6 +91,15 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders, 
     removeButton_->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
     connect(removeButton_, &QPushButton::clicked, this, &OwnedCardsView::removeSelected);
 
+    // Shown in place of the table (and search) when the collection is empty.
+    emptyLabel_ = new QLabel(
+        tr("No cards yet. Open a Pokémon in “All Pokémon” and use “Add copy…” to "
+           "record one."),
+        this);
+    emptyLabel_->setWordWrap(true);
+    emptyLabel_->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
+    emptyLabel_->setEnabled(false);  // muted: a hint, not content
+
     countLabel_ = new QLabel(this);
     countLabel_->setEnabled(false);  // muted: a status detail, not an action
 
@@ -103,6 +112,7 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders, 
     layout->setContentsMargins(16, 12, 16, 12);  // match the other sections' padding
     layout->addWidget(search_);
     layout->addWidget(table_);
+    layout->addWidget(emptyLabel_);
     layout->addLayout(buttons);
     layout->addWidget(countLabel_);
 
@@ -158,6 +168,13 @@ void OwnedCardsView::reload() {
         }
         haystacks_[row] = hay.toLower();
     }
+    // Empty state: swap the table + search for a friendly hint when nothing is stored.
+    const bool empty = loaded_.empty();
+    table_->setVisible(!empty);
+    search_->setVisible(!empty);
+    countLabel_->setVisible(!empty);
+    emptyLabel_->setVisible(empty);
+
     applyFilter();  // re-hide non-matches and set the count (search text persists)
     updateButtonState();
 }
