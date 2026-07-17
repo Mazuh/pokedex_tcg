@@ -79,6 +79,11 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
     // --- Form (left) --------------------------------------------------------
     auto* formPane = new QWidget(this);
     auto* form = new QFormLayout(formPane);
+    // Let the inputs grow to fill the column (macOS defaults to leaving them at
+    // their small size hint, which clips values like "McDonald's Collection 2021"),
+    // and cap the pane so they don't become absurdly wide on a large window.
+    form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    formPane->setMaximumWidth(560);
 
     expansionCode_ = new QLineEdit(formPane);
     expansionCode_->setPlaceholderText(tr("e.g. OBF"));
