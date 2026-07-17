@@ -97,6 +97,11 @@ CardSearchService::CardSearchService(const CardCatalogApi& api, QObject* parent)
     connect(searchDebounce_, &QTimer::timeout, this, &CardSearchService::dispatchSearch);
     thumbPump_->setSingleShot(true);
     connect(thumbPump_, &QTimer::timeout, this, &CardSearchService::pumpThumbnails);
+
+    // Warm the set table immediately (the GET dispatches once the event loop runs),
+    // so it is cached in memory before the user ever opens "Add copy" — no wait on
+    // first use. The service outlives the window, so this happens once per session.
+    ensureSetsLoading();
 }
 
 std::uint64_t CardSearchService::searchPrintings(int dexNumber, const QString& setCodeFilter) {
