@@ -30,7 +30,7 @@ EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardImageStore& im
     : QWidget(parent), images_(images), copies_(copies), copy_(std::move(copy)) {
     // --- Top bar: Back + heading -------------------------------------------
     auto* backButton = makeBackButton(this);
-    connect(backButton, &QPushButton::clicked, this, &EditCardCopyPage::backRequested);
+    connect(backButton, &QPushButton::clicked, this, &EditCardCopyPage::handleBack);
 
     auto* heading = new QLabel(tr("Edit card — %1").arg(title), this);
     QFont headingFont = heading->font();
@@ -96,7 +96,7 @@ EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardImageStore& im
     layout->addWidget(makeCardCopySplitter(form_, finder_), /*stretch=*/1);
 }
 
-void EditCardCopyPage::saveComments() {
+bool EditCardCopyPage::saveComments() {
     try {
         // Condition is read-only here, so form_->condition() is the recorded value —
         // editDetails only really changes the comments.
@@ -104,11 +104,33 @@ void EditCardCopyPage::saveComments() {
     } catch (const std::exception& e) {
         QMessageBox::warning(this, tr("Pokedex TCG"),
                              tr("Could not save comments:\n%1").arg(QString::fromUtf8(e.what())));
-        return;
+        return false;
     }
     copy_.comments = form_->comments();  // record it so the button disables until re-edited
     saveComments_->setEnabled(false);
     showToast(this, tr("Comments saved."));
+    return true;
+}
+
+void EditCardCopyPage::handleBack() {
+    // Comments are the only editable field that lives unsaved on this page (image
+    // changes save immediately). If the box diverges from the record, don't drop the
+    // typing silently on Back — offer to save it, discard it, or stay. (Save failing
+    // keeps the user here so nothing is lost.)
+    if (form_->comments() != copy_.comments) {
+        const auto choice = QMessageBox::question(
+            this, tr("Unsaved comments"),
+            tr("You have unsaved changes to this card's comments."),
+            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
+            QMessageBox::Save);
+        if (choice == QMessageBox::Cancel) {
+            return;  // stay on the page
+        }
+        if (choice == QMessageBox::Save && !saveComments()) {
+            return;  // the save failed (already reported) — don't leave and lose it
+        }
+    }
+    Q_EMIT backRequested();
 }
 
 void EditCardCopyPage::saveFromFinder() {

@@ -35,8 +35,9 @@ struct CardBinder;
 // its My Cards preview.
 //
 // It is an in-window page pushed onto OwnedCardsView's inner QStackedWidget; Back
-// emits backRequested() and the host pops + disposes of it. (Explicit save: leaving
-// without pressing "Save comments" discards comment edits.)
+// emits backRequested() and the host pops + disposes of it. Comments save
+// explicitly ("Save comments"); leaving with the box diverged from the record
+// prompts to save, discard, or stay rather than dropping the edit silently.
 class EditCardCopyPage : public QWidget {
     Q_OBJECT
 
@@ -54,7 +55,9 @@ Q_SIGNALS:
     void backRequested();
 
 private:
-    void saveComments();    // persist the edited comments via CardCopyService::editDetails
+    // Persist the edited comments via CardCopyService::editDetails; true on success.
+    bool saveComments();
+    void handleBack();      // guard Back on unsaved comments (save/discard/cancel), then leave
     void saveFromFinder();  // persist the picked card's (loaded) preview as the image
     void uploadPhoto();     // pick a local image file and persist it as the image
 
