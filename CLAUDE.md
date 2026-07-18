@@ -61,7 +61,8 @@ Folders are created as real code lands; the tree above is the target
 shape, not a scaffold to pre-create. `domain/` is populated. Schema migrations are
 **incremental and additive**: `Database::migrate()` applies each step whose target
 version exceeds the file's `user_version` (v1 = initial schema; v2 added
-`card_copy.ref_set_name`), so a fresh DB runs the whole chain and an existing one
+`card_copy.ref_set_name`; v3 added `card_copy.ref_name`, the printed card name),
+so a fresh DB runs the whole chain and an existing one
 only the tail — bump `kSchemaVersion` and add a step (never edit `kSchemaV1`) when
 the schema changes. `storage/` holds
 workspace resolution, the SQLite `Database` wrapper + schema/migrations, the
@@ -84,7 +85,10 @@ like `BinderService`), `WishlistService` (the manage-sources verbs), and the
 `PokemonExternalApi` but for *cards*), its concrete `PokemonTcgIoApi` (pokemontcg.io
 URL/Lucene query building), the DTOs (`card_catalog_dto.h`: `CardSetInfo`,
 `CardCandidate`), and `card_catalog_parse` (nlohmann/json parsers/mappers — see the
-JSON note in the tech stack). `gui/views/` holds the
+JSON note in the tech stack). A `CardSearchQuery` is scoped EITHER by species
+(`dexNumber`, → `nationalPokedexNumbers:N`) OR by card name (`nameQuery`, →
+`name:"…"`) — the latter is how a species-free card is found; on the GUI side
+`CardSearchService::searchByName` and `CardFinderPanel`'s name-search mode drive it. `gui/views/` holds the
 `MainWindow` shell (a macOS-style sidebar selecting sections in an outer
 `QStackedWidget`: Binders, Pokémon, My Cards, Wishlist), the first-run setup dialog,
 the binders section (`BindersPage`, a table with its own list ⇄ binder-guide stack),
@@ -101,8 +105,15 @@ creates a copy); the `EditCardCopyPage` assembles them read-only-but-comments (a
 copy's first edit surface — edit comments with an explicit "Save comments" via
 `CardCopyService::editDetails`, and change the image by re-searching the catalog
 ["Use this card's image", centered under the preview] or uploading a photo, staying
-on the page after each save). `OwnedCardsView` ("My Cards" inventory:
-browse/search/assign-to-binder/remove) hosts the edit page on an inner stack and
+on the page after each save). `AddCardCopyPage` does double duty by its
+`std::optional<PokemonDexNum> dexNumber` ctor arg: with a dex number it is a
+species' add-copy page (finder species-scoped); with `nullopt` (opened from "My
+Cards") it is the **species-free** add page for a non-Pokémon card, with the finder
+in by-name search mode (`CardFinderPanel::NameSearchMode`). `OwnedCardsView` ("My
+Cards" inventory: browse/search/assign-to-binder/remove, plus an **"Add a card…"**
+button — always available, even when empty — that pushes the species-free
+`AddCardCopyPage`, the only place a non-Pokémon card can be recorded) hosts the
+add/edit pages on an inner stack and
 reloads on return so an edited comment shows. The `CardImagePanel` is the "My Cards"
 right-hand detail panel (title + image + the copy's comments beneath). The unscoped
 wishlist section (`WishlistView`), and the
@@ -166,6 +177,16 @@ Conventions that hold across the model:
   (`CardReference`) and species (`pokemonDexNum`) directly. A full card
   catalog is a future fetch-and-cache concern, not something this domain
   stores or manages.
+- **A `CardCopy`'s species is optional.** `pokemonDexNum` is
+  `std::optional<PokemonDexNum>`: most cards depict a species, but a TCG
+  collection also holds cards that depict none — Trainer/Energy cards, promos.
+  A species-free copy (nullopt) is fully supported (create/edit/image-search/
+  file-in-binder) but appears only in the flat "My Cards" inventory, never in a
+  species-oriented projection (the Pokémon browser, a binder guide). Storage
+  encodes nullopt as `0` in the `NOT NULL pokemon_dex_num` column (real dex
+  numbers are ≥1) — the same sentinel convention as condition's `"" ↔ nullopt`,
+  avoiding a nullable-column table rebuild. `CardReference` carries a `name` (the
+  printed card name) so a species-free card has a real label, not just set/number.
 - **Docs live as docstrings**, next to the code they describe, rather than as
   standalone markdown design notes.
 

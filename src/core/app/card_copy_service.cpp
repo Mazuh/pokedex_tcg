@@ -19,13 +19,14 @@ CardCopyService::IdGenerator CardCopyService::uuidGenerator() {
 CardCopyService::CardCopyService(CardCopyRepository& repo, Clock clock, IdGenerator idGenerator)
     : repo_(repo), clock_(std::move(clock)), idGenerator_(std::move(idGenerator)) {}
 
-CardCopy CardCopyService::create(PokemonDexNum pokemonDexNum, CardReference cardRef,
+CardCopy CardCopyService::create(std::optional<PokemonDexNum> pokemonDexNum, CardReference cardRef,
                                  CardOwnership ownership, std::optional<CardCondition> condition,
                                  std::optional<CardBinderId> binderId, std::string comments) {
     cardRef.expansionCode = trim(cardRef.expansionCode);
     cardRef.language = trim(cardRef.language);
     cardRef.collectorNumber = trim(cardRef.collectorNumber);
     cardRef.setName = trim(cardRef.setName);
+    cardRef.name = trim(cardRef.name);
     if (cardRef.collectorNumber.empty()) {
         throw CardCopyError("A card needs a collector number.");
     }

@@ -32,4 +32,17 @@ TEST(CardCopyTest, RecordsSpeciesPrintingStateAndCondition) {
     EXPECT_EQ(*copy.binderId, "binder-1");
 }
 
+// A card that depicts no species (a Trainer/Energy card) records no dex number; its
+// printed name on the reference is then the only human-readable label it has.
+TEST(CardCopyTest, RecordsASpeciesFreeCard) {
+    CardCopy copy{
+        .id = "copy-2",
+        .pokemonDexNum = std::nullopt,
+        .cardRef = CardReference{.collectorNumber = "196/198", .name = "Boss's Orders"},
+        .ownership = CardOwnership::Owned,
+    };
+    EXPECT_FALSE(copy.pokemonDexNum.has_value());
+    EXPECT_EQ(copy.cardRef.name, "Boss's Orders");
+}
+
 }  // namespace

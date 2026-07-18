@@ -153,6 +153,7 @@ TEST(ParseCardSearchResponseTest, ResolvesCodeAndTotalFromTableNotEmbeddedSet) {
     EXPECT_EQ(charizard.cardRef.collectorNumber, "125/197");  // total from table
     EXPECT_EQ(charizard.setName, "Obsidian Flames");  // table name, not embedded
     EXPECT_EQ(charizard.cardRef.setName, "Obsidian Flames");  // carried into the reference
+    EXPECT_EQ(charizard.cardRef.name, "Charizard ex");  // printed name carried into the reference
     EXPECT_TRUE(charizard.cardRef.language.empty());  // the user picks language
     EXPECT_EQ(charizard.imageUrlSmall, "https://img/small.png");
     EXPECT_EQ(charizard.imageUrlLarge, "https://img/large.png");

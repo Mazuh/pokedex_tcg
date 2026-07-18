@@ -56,6 +56,13 @@ CREATE TABLE wishlist_source (
 constexpr char kMigrationV2[] =
     "ALTER TABLE card_copy ADD COLUMN ref_set_name TEXT NOT NULL DEFAULT '';";
 
+// v2 → v3: record the printed card name. A species card can derive a title from
+// its dex number, but a species-free card (Trainer/Energy) has none — this is
+// its only human-readable label. Optional (blank default) so existing rows and
+// hand-entered copies are valid without it.
+constexpr char kMigrationV3[] =
+    "ALTER TABLE card_copy ADD COLUMN ref_name TEXT NOT NULL DEFAULT '';";
+
 }  // namespace
 
 Database::Database(const std::filesystem::path& path) {
@@ -122,6 +129,9 @@ void Database::migrate() {
         }
         if (from < 2) {
             exec(kMigrationV2);
+        }
+        if (from < 3) {
+            exec(kMigrationV3);
         }
         setUserVersion(kSchemaVersion);
         exec("COMMIT;");

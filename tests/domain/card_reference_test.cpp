@@ -21,6 +21,16 @@ TEST(CardReferenceTest, DiffersWhenAnyFieldDiffers) {
     EXPECT_NE(a, b);
 }
 
+// The printed card name is part of the reference (it's the only label a species-free
+// card has), so it participates in value equality like the other fields.
+TEST(CardReferenceTest, DiffersWhenTheNameDiffers) {
+    CardReference a = mew151();
+    CardReference b = mew151();
+    a.name = "Mew";
+    b.name = "Mewtwo";
+    EXPECT_NE(a, b);
+}
+
 TEST(CardReferenceTest, GroupsCopiesByPrintingAsOrderedKey) {
     std::set<CardReference> printings;
     printings.insert(mew151());

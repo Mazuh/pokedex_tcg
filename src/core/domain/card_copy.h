@@ -19,9 +19,17 @@ namespace pokedex {
 // remaining fields describe the physical copy — state, condition, free-text
 // history, and which binder (if any) it is filed in. It deliberately does NOT
 // know its "collected" standing; that is inferred (see CardBinderEntry).
+//
+// pokemonDexNum is optional: most cards depict a species, but a TCG collection
+// also holds cards that depict none — Trainer and Energy cards, promos, etc.
+// A species-free copy (nullopt) is a fully supported second-class citizen: it is
+// created, edited, image-searched, and filed in binders like any other, but it
+// carries no dex number and so never appears in a species-oriented projection
+// (the Pokémon browser, a binder guide) — only in the flat "My Cards" inventory.
 struct CardCopy {
     CardCopyId id;
-    PokemonDexNum pokemonDexNum;           // which species this copy depicts
+    std::optional<PokemonDexNum> pokemonDexNum;  // which species, if any (nullopt
+                                                 // for Trainer/Energy/etc. cards)
     CardReference cardRef;                 // which printing this is a copy of
     CardOwnership ownership;
     std::optional<CardCondition> condition;  // grading is optional — a copy may be

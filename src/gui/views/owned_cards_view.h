@@ -23,6 +23,7 @@ class CardImageStore;
 class CardSearchService;
 class CardImagePanel;
 class EditCardCopyPage;
+class AddCardCopyPage;
 
 // GUI — the "My Cards" section: a flat, read-only inventory of every card copy the
 // user has recorded (Owned, Incoming, or soft-Removed), so they can keep track of
@@ -66,6 +67,10 @@ private:
     void removeSelected();
     // Push the in-window "Edit card" page for the selected copy (to change its image).
     void editSelectedCard();
+    // Push the in-window "Add a card" page for a species-free card (a Trainer/Energy
+    // card that depicts no Pokémon) — the only place such a card can be recorded, since
+    // the Pokémon browser's "Add copy" is always scoped to a species.
+    void addNewCard();
 
     CardCopyService& copies_;
     BinderService& binders_;
@@ -76,6 +81,7 @@ private:
     QLineEdit* search_;
     QTableWidget* table_;
     QLabel* emptyLabel_;   // shown in place of the table when no cards are recorded yet
+    QPushButton* addButton_;   // "Add a card…" — stays available even when empty
     QPushButton* assignButton_;
     QPushButton* removeButton_;
     QPushButton* editButton_;

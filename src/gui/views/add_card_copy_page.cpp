@@ -27,7 +27,7 @@ namespace pokedex {
 
 AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& copies,
                                  BinderService& binders, CardImageStore& cardImages,
-                                 int dexNumber, const QString& speciesName,
+                                 std::optional<PokemonDexNum> dexNumber, const QString& speciesName,
                                  std::optional<CardBinderId> lockedBinder, QWidget* parent)
     : QWidget(parent),
       copies_(copies),
@@ -39,7 +39,9 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
     auto* backButton = makeBackButton(this);
     connect(backButton, &QPushButton::clicked, this, &AddCardCopyPage::handleBack);
 
-    auto* heading = new QLabel(tr("Add a copy — %1").arg(speciesName), this);
+    // Species-scoped names the Pokémon; species-free (a Trainer/Energy card) can't.
+    auto* heading = new QLabel(
+        dexNumber_ ? tr("Add a copy — %1").arg(speciesName) : tr("Add a card"), this);
     QFont headingFont = heading->font();
     headingFont.setBold(true);
     heading->setFont(headingFont);
@@ -67,8 +69,12 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
     form_->addAction(submit_);
 
     // --- Finder (right): the shared search + preview widget ----------------
-    finder_ = new CardFinderPanel(search, dexNumber_, speciesName, this);
-    // When a set has no printings, remind the user the form on the left still works.
+    // Scoped: search the species' printings by set. Species-free: search by card name
+    // (there is no dex number to scope by).
+    finder_ = dexNumber_
+                  ? new CardFinderPanel(search, *dexNumber_, speciesName, this)
+                  : new CardFinderPanel(search, CardFinderPanel::NameSearchMode{}, QString(), this);
+    // When a search has no printings, remind the user the form on the left still works.
     finder_->setNoResultsHint(
         tr("you can still fill the form by hand, or the catalog may be flaking (retry)."));
     // A picked card autofills the form's card reference; a picked set fills the set
@@ -110,6 +116,8 @@ void AddCardCopyPage::checkUnmatch() {
     const CardReference form = form_->cardReference();
     const CardReference ref = finder_->selectedCandidate().cardRef;
     const bool matches =
+        QString::fromStdString(form.name).trimmed() ==
+            QString::fromStdString(ref.name).trimmed() &&
         QString::fromStdString(form.expansionCode).trimmed() ==
             QString::fromStdString(ref.expansionCode).trimmed() &&
         QString::fromStdString(form.setName).trimmed() ==
@@ -132,8 +140,8 @@ bool AddCardCopyPage::isDirty() const {
     // by the identity check: it autofills those fields (and checkUnmatch drops the pick
     // once they're edited away), so it never needs a separate term here.
     const CardReference ref = form_->cardReference();
-    if (!ref.expansionCode.empty() || !ref.setName.empty() || !ref.collectorNumber.empty() ||
-        !ref.language.empty()) {
+    if (!ref.name.empty() || !ref.expansionCode.empty() || !ref.setName.empty() ||
+        !ref.collectorNumber.empty() || !ref.language.empty()) {
         return true;
     }
     if (!form_->comments().empty() || form_->condition().has_value() ||
@@ -198,8 +206,18 @@ void AddCardCopyPage::submitCopy() {
         }
     }
     // Confirm before navigating away: the toast is parented to the window, so it
-    // outlives this page once backRequested() disposes of it.
-    showToast(this, tr("Copy of %1 added.").arg(speciesName_));
+    // outlives this page once backRequested() disposes of it. A species-free card has
+    // no species to name — fall back to its card name, or a generic line.
+    QString toastText;
+    if (!speciesName_.isEmpty()) {
+        toastText = tr("Copy of %1 added.").arg(speciesName_);
+    } else if (const QString name = QString::fromStdString(created.cardRef.name);
+               !name.isEmpty()) {
+        toastText = tr("%1 added.").arg(name);
+    } else {
+        toastText = tr("Card added.");
+    }
+    showToast(this, toastText);
     Q_EMIT copyAdded();
     // Return to the previous screen after a successful add — the host's
     // backRequested handler pops this page. (Emit last: the handler schedules the

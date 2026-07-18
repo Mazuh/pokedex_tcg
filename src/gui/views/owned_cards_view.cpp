@@ -27,6 +27,7 @@
 #include "core/domain/card_copy.h"
 #include "core/domain/pokemon_catalog.h"
 #include "gui/services/card_image_store.h"
+#include "gui/views/add_card_copy_page.h"
 #include "gui/views/binder_picker_dialog.h"
 #include "gui/views/card_image_panel.h"
 #include "gui/views/edit_card_copy_page.h"
@@ -70,13 +71,22 @@ QString cardText(const CardReference& ref) {
     return expansion.isEmpty() ? number : expansion + QStringLiteral(" ") + number;
 }
 
-// A copy's display title: species name plus its printed identity ("Pikachu · BS
-// 44/102"), or just the printed identity when the species is unknown. Shared by the
-// image panel and the Edit-card heading so the two never diverge.
+// A copy's identifying label: its species name, or (for a species-free Trainer/Energy
+// card, or an out-of-range dex) its printed card name. Empty when neither resolves.
+// The single source for both the table's name column and titleFor(), so they agree.
+QString speciesOrCardName(const CardCopy& copy) {
+    const QString species =
+        copy.pokemonDexNum ? speciesName(*copy.pokemonDexNum) : QString();
+    return species.isEmpty() ? QString::fromStdString(copy.cardRef.name) : species;
+}
+
+// A copy's display title: its label plus its printed identity ("Pikachu · BS 44/102"),
+// or just the printed identity when the label is empty. Shared by the image panel and
+// the Edit-card heading so the two never diverge.
 QString titleFor(const CardCopy& copy) {
-    const QString species = speciesName(copy.pokemonDexNum);
+    const QString label = speciesOrCardName(copy);
     const QString card = cardText(copy.cardRef);
-    return species.isEmpty() ? card : species + QStringLiteral(" · ") + card;
+    return label.isEmpty() ? card : label + QStringLiteral(" · ") + card;
 }
 
 }  // namespace
@@ -145,10 +155,17 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     editButton_->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
     connect(editButton_, &QPushButton::clicked, this, &OwnedCardsView::editSelectedCard);
 
+    // "Add a card…" records a species-free card (a Trainer/Energy card) — needs no row
+    // selection, so it stays available even when the collection is empty. Pokémon
+    // copies are still added from "All Pokémon" (scoped to a species).
+    addButton_ = new QPushButton(tr("Add a card…"), this);
+    addButton_->setIcon(style()->standardIcon(QStyle::SP_FileDialogNewFolder));
+    connect(addButton_, &QPushButton::clicked, this, &OwnedCardsView::addNewCard);
+
     // Shown in place of the table (and search) when the collection is empty.
     emptyLabel_ = new QLabel(
-        tr("No cards yet. Open a Pokémon in “All Pokémon” and use “Add copy…” to "
-           "record one."),
+        tr("No cards yet. Use “Add a card…” below for a Trainer or Energy card, or open "
+           "a Pokémon in “All Pokémon” and use “Add copy…”."),
         this);
     emptyLabel_->setWordWrap(true);
     emptyLabel_->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
@@ -158,6 +175,7 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     countLabel_->setEnabled(false);  // muted: a status detail, not an action
 
     auto* buttons = new QHBoxLayout;
+    buttons->addWidget(addButton_);
     buttons->addWidget(assignButton_);
     buttons->addWidget(removeButton_);
     buttons->addWidget(editButton_);
@@ -243,7 +261,9 @@ void OwnedCardsView::reload() {
     haystacks_.assign(loaded_.size(), QString());
     for (int row = 0; row < static_cast<int>(loaded_.size()); ++row) {
         const CardCopy& c = loaded_[row];
-        table_->setItem(row, 0, cell(speciesName(c.pokemonDexNum)));
+        // Column 0 identifies the row: the species name, or (for a species-free
+        // Trainer/Energy card) its printed card name so the row isn't blank.
+        table_->setItem(row, 0, cell(speciesOrCardName(c)));
         table_->setItem(row, 1, cell(cardText(c.cardRef)));
         // Set and Binder are the free-text, capped columns: carry the full value as
         // a tooltip so it stays readable when the cap elides it.
@@ -273,14 +293,19 @@ void OwnedCardsView::reload() {
         // filter by: the dex number (the "#" column was dropped), the full
         // condition label (the column abbreviates to NM/LP/…), and both regions —
         // the species' region and, if filed, the binder's region.
-        QString hay = QString::number(c.pokemonDexNum) + QLatin1Char(' ');
+        QString hay;
+        if (c.pokemonDexNum) {
+            hay += QString::number(*c.pokemonDexNum) + QLatin1Char(' ');
+        }
         for (int col = 0; col < table_->columnCount(); ++col) {
             hay += table_->item(row, col)->text() + QLatin1Char(' ');
         }
         if (c.condition) {
             hay += conditionLabel(*c.condition) + QLatin1Char(' ');
         }
-        hay += speciesRegionLabel(c.pokemonDexNum) + QLatin1Char(' ');
+        if (c.pokemonDexNum) {
+            hay += speciesRegionLabel(*c.pokemonDexNum) + QLatin1Char(' ');
+        }
         if (binder && !binder->region.isEmpty()) {
             hay += binder->region + QLatin1Char(' ');
         }
@@ -447,6 +472,25 @@ void OwnedCardsView::editSelectedCard() {
         shownCopyId_.clear();
         showSelectedImage();
     });
+    stack_->setCurrentWidget(page);
+}
+
+void OwnedCardsView::addNewCard() {
+    // Species-free (dexNumber = nullopt): the finder searches by card name and the copy
+    // depicts no Pokémon. Free binder choice (no locked binder). Reuses the same in-
+    // window push/pop idiom as editSelectedCard.
+    auto* page = new AddCardCopyPage(cardSearch_, copies_, binders_, images_, std::nullopt,
+                                     /*speciesName=*/QString());
+    stack_->addWidget(page);
+    const auto pop = [this, page]() {
+        stack_->setCurrentIndex(0);
+        stack_->removeWidget(page);
+        page->deleteLater();
+    };
+    // copyAdded fires before backRequested; reload so the new card is in the list the
+    // moment we return to it.
+    connect(page, &AddCardCopyPage::copyAdded, this, &OwnedCardsView::reload);
+    connect(page, &AddCardCopyPage::backRequested, this, pop);
     stack_->setCurrentWidget(page);
 }
 

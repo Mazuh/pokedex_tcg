@@ -23,11 +23,12 @@ TEST(DatabaseTest, MigrateStampsSchemaVersionAndIsIdempotent) {
     EXPECT_EQ(db.userVersion(), Database::kSchemaVersion);
 }
 
-// The v1 → v2 upgrade of an existing database adds card_copy.ref_set_name without
-// losing data, so a user's pre-v2 file keeps working.
-TEST(DatabaseTest, UpgradesAnExistingV1DatabaseByAddingSetName) {
+// Upgrading an existing v1 database runs the whole tail of the chain (v2 then v3),
+// adding card_copy.ref_set_name and card_copy.ref_name without losing data — so a
+// user's pre-v2 file keeps working.
+TEST(DatabaseTest, UpgradesAnExistingV1DatabaseThroughTheChain) {
     Database db(":memory:");
-    // Stand up a v1 card_copy (no ref_set_name) with a row, and stamp it v1.
+    // Stand up a v1 card_copy (no ref_set_name / ref_name) with a row, and stamp it v1.
     db.exec(
         "CREATE TABLE card_copy(id TEXT PRIMARY KEY, pokemon_dex_num INTEGER NOT NULL,"
         " ref_expansion TEXT NOT NULL, ref_language TEXT NOT NULL, ref_collector TEXT NOT NULL,"
@@ -41,11 +42,39 @@ TEST(DatabaseTest, UpgradesAnExistingV1DatabaseByAddingSetName) {
     db.setUserVersion(1);
 
     db.migrate();
-    EXPECT_EQ(db.userVersion(), 2);
-    // The pre-existing row survives and gains a blank set name.
-    Statement stmt(db, "SELECT ref_set_name FROM card_copy WHERE id = 'c1';");
+    EXPECT_EQ(db.userVersion(), Database::kSchemaVersion);
+    // The pre-existing row survives and gains a blank set name and card name.
+    Statement stmt(db, "SELECT ref_set_name, ref_name FROM card_copy WHERE id = 'c1';");
     ASSERT_TRUE(stmt.step());
     EXPECT_EQ(stmt.columnText(0), "");
+    EXPECT_EQ(stmt.columnText(1), "");
+}
+
+// The v2 → v3 upgrade adds card_copy.ref_name to an existing v2 file (one that
+// already has ref_set_name) without losing data.
+TEST(DatabaseTest, UpgradesAnExistingV2DatabaseByAddingCardName) {
+    Database db(":memory:");
+    // Stand up a v2 card_copy (has ref_set_name, no ref_name) with a row, stamp it v2.
+    db.exec(
+        "CREATE TABLE card_copy(id TEXT PRIMARY KEY, pokemon_dex_num INTEGER NOT NULL,"
+        " ref_expansion TEXT NOT NULL, ref_language TEXT NOT NULL, ref_collector TEXT NOT NULL,"
+        " ownership TEXT NOT NULL, condition TEXT NOT NULL, binder_id TEXT,"
+        " comments TEXT NOT NULL DEFAULT '', inserted_at TEXT NOT NULL, updated_at TEXT NOT NULL,"
+        " ref_set_name TEXT NOT NULL DEFAULT '');");
+    db.exec(
+        "INSERT INTO card_copy(id,pokemon_dex_num,ref_expansion,ref_language,ref_collector,"
+        "ownership,condition,binder_id,comments,inserted_at,updated_at,ref_set_name)"
+        " VALUES('c1',6,'OBF','EN','125/197','Owned','NearMint',NULL,'',"
+        "'2026-07-16T00:00:00Z','2026-07-16T00:00:00Z','Obsidian Flames');");
+    db.setUserVersion(2);
+
+    db.migrate();
+    EXPECT_EQ(db.userVersion(), Database::kSchemaVersion);
+    // The pre-existing row survives, keeps its set name, and gains a blank card name.
+    Statement stmt(db, "SELECT ref_set_name, ref_name FROM card_copy WHERE id = 'c1';");
+    ASSERT_TRUE(stmt.step());
+    EXPECT_EQ(stmt.columnText(0), "Obsidian Flames");
+    EXPECT_EQ(stmt.columnText(1), "");
 }
 
 // Exercising the tables through DML proves they exist with the expected columns

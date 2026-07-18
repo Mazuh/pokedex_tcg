@@ -52,10 +52,21 @@ CardFinderPanel::CardFinderPanel(CardSearchService& search, int dexNumber,
       search_(search),
       dexNumber_(dexNumber),
       speciesName_(std::move(speciesName)) {
+    init(QString());  // species mode never seeds the field
+}
+
+CardFinderPanel::CardFinderPanel(CardSearchService& search, NameSearchMode,
+                                 QString initialQuery, QWidget* parent)
+    : QWidget(parent), search_(search), dexNumber_(0), nameMode_(true) {
+    init(initialQuery);
+}
+
+void CardFinderPanel::init(const QString& initialQuery) {
     // --- Search field + results list (left) --------------------------------
     auto* listPane = new QWidget(this);
     searchField_ = new QLineEdit(listPane);
-    searchField_->setPlaceholderText(tr("Find by set — code or name…"));
+    searchField_->setPlaceholderText(nameMode_ ? tr("Find a card by name…")
+                                               : tr("Find by set — code or name…"));
     searchField_->setClearButtonEnabled(true);
     connect(searchField_, &QLineEdit::textEdited, this, &CardFinderPanel::onSearchTextChanged);
 
@@ -122,11 +133,20 @@ CardFinderPanel::CardFinderPanel(CardSearchService& search, int dexNumber,
     connect(&search_, &CardSearchService::thumbnailReady, this,
             &CardFinderPanel::onThumbnailReady);
     connect(&search_, &CardSearchService::setsReady, this, &CardFinderPanel::onSetsReady);
-    rebuildSetCompleter();  // the set table is warmed at startup, so usually ready
+    if (!nameMode_) {
+        rebuildSetCompleter();  // the set table is warmed at startup, so usually ready
+    }
 
     // Nothing is fetched on open — a species can have hundreds of printings. The
     // user searches by set first (see onSearchTextChanged).
     clearPreview();
+    // In name mode a host may seed the field (e.g. the card's stored name) so its
+    // printings appear without the user retyping. setText() does not fire textEdited,
+    // so kick the search explicitly.
+    if (nameMode_ && initialQuery.trimmed().size() >= 3) {
+        searchField_->setText(initialQuery);
+        searchWith(initialQuery);
+    }
     updateStatus();
 }
 
@@ -302,10 +322,14 @@ void CardFinderPanel::renderPreview() {
     setScaledPixmap(preview_, previewPixmap_);
 }
 
-void CardFinderPanel::searchWith(const QString& filter) {
+void CardFinderPanel::searchWith(const QString& query) {
     loading_ = true;
     updateStatus();
-    pendingRequestId_ = search_.searchPrintings(dexNumber_, filter);
+    // In name mode the field text is the card-name query; in species mode it is a
+    // set-code/name filter narrowing the species. The service tags the reply so
+    // onPrintingsReady still matches by request id either way.
+    pendingRequestId_ = nameMode_ ? search_.searchByName(query, QString())
+                                  : search_.searchPrintings(dexNumber_, query);
 }
 
 void CardFinderPanel::rebuildSetCompleter() {
@@ -359,7 +383,9 @@ void CardFinderPanel::rebuildSetCompleter() {
 }
 
 void CardFinderPanel::onSetsReady() {
-    rebuildSetCompleter();
+    if (!nameMode_) {
+        rebuildSetCompleter();  // name mode has no set completer
+    }
     // Re-run the current search now that the set table is available: the user may
     // have typed a filter before it loaded (or a failed startup fetch just retried),
     // in which case the finder was empty and would otherwise stay stale.
@@ -372,10 +398,14 @@ void CardFinderPanel::updateStatus() {
     if (loading_) {
         status_->setText(tr("Searching…"));
     } else if (searchField_->text().trimmed().size() < 3) {
-        status_->setText(tr("Find %1's cards by set — type a code or name (3+ characters).")
-                             .arg(speciesName_));
+        status_->setText(nameMode_
+                             ? tr("Find a card by name — type its name (3+ characters).")
+                             : tr("Find %1's cards by set — type a code or name (3+ characters).")
+                                   .arg(speciesName_));
     } else if (candidates_.empty()) {
-        status_->setText(tr("No printings found for that set — %1").arg(noResultsHint_));
+        status_->setText(nameMode_
+                             ? tr("No cards found by that name — %1").arg(noResultsHint_)
+                             : tr("No printings found for that set — %1").arg(noResultsHint_));
     } else {
         status_->setText(tr("Showing %1 of %2 — select a card.")
                              .arg(loadedCount_)

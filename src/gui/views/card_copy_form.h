@@ -82,6 +82,7 @@ Q_SIGNALS:
     void binderChanged();
 
 private:
+    QLineEdit* cardName_;
     QLineEdit* expansionCode_;
     QLineEdit* setName_;
     QComboBox* language_;

@@ -9,18 +9,30 @@ namespace pokedex {
 namespace {
 
 // The column list shared by every SELECT, in the order readCopy() expects.
-// ref_set_name is last (added in schema v2), so the earlier indices are unchanged.
+// ref_set_name (v2) then ref_name (v3) are appended last, so the earlier indices
+// are unchanged.
 constexpr const char* kCopyColumns =
     "id, pokemon_dex_num, ref_expansion, ref_language, ref_collector, ownership,"
-    " condition, binder_id, comments, inserted_at, updated_at, ref_set_name";
+    " condition, binder_id, comments, inserted_at, updated_at, ref_set_name,"
+    " ref_name";
+
+// A species-free copy (no dex number) is stored as 0 in the NOT NULL
+// pokemon_dex_num column — real national dex numbers start at 1, so 0 is an
+// unambiguous "absent" sentinel, mirroring how condition uses "" for nullopt.
+// This keeps the column simple (no nullable rebuild) while the domain field
+// stays a genuine std::optional.
+constexpr PokemonDexNum kNoDexNum = 0;
 
 // Read a full CardCopy from a row whose columns are, in order:
 // id, pokemon_dex_num, ref_expansion, ref_language, ref_collector, ownership,
-// condition, binder_id, comments, inserted_at, updated_at, ref_set_name.
+// condition, binder_id, comments, inserted_at, updated_at, ref_set_name, ref_name.
 CardCopy readCopy(Statement& stmt) {
     CardCopy copy;
     copy.id = stmt.columnText(0);
-    copy.pokemonDexNum = stmt.columnInt(1);
+    const int dexNum = stmt.columnInt(1);
+    if (dexNum != kNoDexNum) {
+        copy.pokemonDexNum = dexNum;
+    }
     copy.cardRef.expansionCode = stmt.columnText(2);
     copy.cardRef.language = stmt.columnText(3);
     copy.cardRef.collectorNumber = stmt.columnText(4);
@@ -33,6 +45,7 @@ CardCopy readCopy(Statement& stmt) {
     copy.insertedAt = timestampFromIso(stmt.columnText(9));
     copy.updatedAt = timestampFromIso(stmt.columnText(10));
     copy.cardRef.setName = stmt.columnText(11);
+    copy.cardRef.name = stmt.columnText(12);
     return copy;
 }
 
@@ -42,10 +55,10 @@ void CardCopyRepository::add(const CardCopy& copy) {
     Statement stmt(db_,
                    "INSERT INTO card_copy(id, pokemon_dex_num, ref_expansion,"
                    " ref_language, ref_collector, ownership, condition, binder_id,"
-                   " comments, inserted_at, updated_at, ref_set_name)"
-                   " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);");
+                   " comments, inserted_at, updated_at, ref_set_name, ref_name)"
+                   " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);");
     stmt.bindText(1, copy.id);
-    stmt.bindInt(2, copy.pokemonDexNum);
+    stmt.bindInt(2, copy.pokemonDexNum.value_or(kNoDexNum));
     stmt.bindText(3, copy.cardRef.expansionCode);
     stmt.bindText(4, copy.cardRef.language);
     stmt.bindText(5, copy.cardRef.collectorNumber);
@@ -60,6 +73,7 @@ void CardCopyRepository::add(const CardCopy& copy) {
     stmt.bindText(10, timestampToIso(copy.insertedAt));
     stmt.bindText(11, timestampToIso(copy.updatedAt));
     stmt.bindText(12, copy.cardRef.setName);
+    stmt.bindText(13, copy.cardRef.name);
     stmt.step();
 }
 
@@ -87,9 +101,10 @@ void CardCopyRepository::update(const CardCopy& copy) {
     Statement stmt(db_,
                    "UPDATE card_copy SET pokemon_dex_num = ?, ref_expansion = ?,"
                    " ref_language = ?, ref_collector = ?, ownership = ?, condition = ?,"
-                   " binder_id = ?, comments = ?, updated_at = ?, ref_set_name = ?"
+                   " binder_id = ?, comments = ?, updated_at = ?, ref_set_name = ?,"
+                   " ref_name = ?"
                    " WHERE id = ?;");
-    stmt.bindInt(1, copy.pokemonDexNum);
+    stmt.bindInt(1, copy.pokemonDexNum.value_or(kNoDexNum));
     stmt.bindText(2, copy.cardRef.expansionCode);
     stmt.bindText(3, copy.cardRef.language);
     stmt.bindText(4, copy.cardRef.collectorNumber);
@@ -103,7 +118,8 @@ void CardCopyRepository::update(const CardCopy& copy) {
     stmt.bindText(8, copy.comments);
     stmt.bindText(9, timestampToIso(copy.updatedAt));
     stmt.bindText(10, copy.cardRef.setName);
-    stmt.bindText(11, copy.id);
+    stmt.bindText(11, copy.cardRef.name);
+    stmt.bindText(12, copy.id);
     stmt.step();
     if (db_.changes() == 0) {
         throw StorageError("no card copy with id " + copy.id);
@@ -136,7 +152,8 @@ std::vector<PokemonDexNum> CardCopyRepository::ownedElsewhere(const CardBinderId
     // this query match nothing).
     Statement stmt(db_,
                    "SELECT DISTINCT pokemon_dex_num FROM card_copy"
-                   " WHERE ownership = ? AND (binder_id IS NULL OR binder_id != ?);");
+                   " WHERE ownership = ? AND pokemon_dex_num != 0"
+                   " AND (binder_id IS NULL OR binder_id != ?);");
     stmt.bindText(1, ownershipToText(CardOwnership::Owned));
     stmt.bindText(2, binderId);
     std::vector<PokemonDexNum> dexNums;
@@ -152,7 +169,8 @@ std::unordered_map<PokemonDexNum, int> CardCopyRepository::ownedCountsByDexNum()
     // in SQLite so the caller gets one row per owned species.
     Statement stmt(db_,
                    "SELECT pokemon_dex_num, COUNT(*) FROM card_copy"
-                   " WHERE ownership = ? GROUP BY pokemon_dex_num;");
+                   " WHERE ownership = ? AND pokemon_dex_num != 0"
+                   " GROUP BY pokemon_dex_num;");
     stmt.bindText(1, ownershipToText(CardOwnership::Owned));
     std::unordered_map<PokemonDexNum, int> counts;
     while (stmt.step()) {

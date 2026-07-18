@@ -25,7 +25,9 @@ public:
     // schema changes; migrations are additive.
     //   v1 — initial schema (binders, copies, wishlist).
     //   v2 — card_copy.ref_set_name (the human set name, for code-less sets).
-    static constexpr int kSchemaVersion = 2;
+    //   v3 — card_copy.ref_name (the printed card name; the only title a
+    //        species-free Trainer/Energy card has).
+    static constexpr int kSchemaVersion = 3;
 
     // Open (creating if absent) the database at `path`, or an in-memory database
     // when path == ":memory:". Throws StorageError on failure.

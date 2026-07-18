@@ -20,9 +20,13 @@ class CardCopyForm;
 struct CardCandidate;
 struct CardSetInfo;
 
-// GUI — the "add a copy" screen for one Pokémon: the shared CardCopyForm (editable)
-// on the left and the shared CardFinderPanel (search + preview) on the right — the
-// same two building blocks the "Edit card" page uses, assembled for creation.
+// GUI — the "add a copy" screen: the shared CardCopyForm (editable) on the left and
+// the shared CardFinderPanel (search + preview) on the right — the same two building
+// blocks the "Edit card" page uses, assembled for creation. It serves two cases,
+// keyed by whether `dexNumber` is set: scoped to a Pokémon species (opened from the
+// Pokémon browser or a binder — the finder searches that species' printings), or
+// species-free (opened from "My Cards" — for a Trainer/Energy card that depicts no
+// species, the finder searches by card name instead).
 // Nothing is fetched on open — a species can have hundreds of printings, so the user
 // searches by set (code or name, 3+ chars, debounced) to pull just that set's cards.
 // Selecting a card in the finder autofills the form's card reference and shows a
@@ -49,14 +53,16 @@ class AddCardCopyPage : public QWidget {
 
 public:
     // `search`, `copies`, `binders` and `cardImages` must outlive this page.
-    // `speciesName` is shown in the heading; `dexNumber` drives the printings search
-    // and the created copy. `lockedBinder`, when set, pre-fills the binder picker with that binder
-    // and locks it (the copy is created there and the user can't repick) — the
-    // scoped case, opening from within a binder. When nullopt the picker is a free
-    // choice defaulting to "— None —".
+    // `dexNumber` set → scoped to that species (its printings drive the finder and the
+    // created copy names the species); nullopt → species-free (the finder searches by
+    // card name and the copy depicts no Pokémon). `speciesName` is shown in the heading
+    // in the scoped case (leave blank when species-free). `lockedBinder`, when set,
+    // pre-fills the binder picker with that binder and locks it (the copy is created
+    // there and the user can't repick) — opening from within a binder. When nullopt the
+    // picker is a free choice defaulting to "— None —".
     AddCardCopyPage(CardSearchService& search, CardCopyService& copies,
-                    BinderService& binders, CardImageStore& cardImages, int dexNumber,
-                    const QString& speciesName,
+                    BinderService& binders, CardImageStore& cardImages,
+                    std::optional<PokemonDexNum> dexNumber, const QString& speciesName,
                     std::optional<CardBinderId> lockedBinder = std::nullopt,
                     QWidget* parent = nullptr);
 
@@ -76,7 +82,7 @@ private:
 
     CardCopyService& copies_;
     CardImageStore& cardImages_;
-    int dexNumber_;
+    std::optional<PokemonDexNum> dexNumber_;  // nullopt → species-free card
     QString speciesName_;  // for the success toast, which shows after the page is gone
     // Set when the page is scoped to a binder: the copy is filed here regardless of
     // the (disabled) combo's display state, so it never lands unfiled even if the

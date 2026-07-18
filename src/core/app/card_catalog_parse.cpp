@@ -155,6 +155,9 @@ std::vector<CardCandidate> parseCardSearchResponse(const std::string& jsonText,
         // Carry the set name into the stored reference too: for code-less sets it is
         // the only thing that distinguishes otherwise-identical collector numbers.
         c.cardRef.setName = c.setName;
+        // Carry the printed card name into the stored reference: for a species-free
+        // card (Trainer/Energy) it is the only human-readable title the copy keeps.
+        c.cardRef.name = c.name;
 
         candidates.push_back(std::move(c));
     }

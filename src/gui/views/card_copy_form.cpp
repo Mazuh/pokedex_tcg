@@ -38,6 +38,11 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     // The reference fields are stored data (autofilled from a picked card, or typed).
     // A USER edit (textEdited, not the autofill's setText) is reported so a host can
     // drop a now-stale finder selection.
+    cardName_ = new QLineEdit(this);
+    cardName_->setPlaceholderText(tr("e.g. Charizard ex"));
+    connect(cardName_, &QLineEdit::textEdited, this,
+            [this](const QString&) { Q_EMIT referenceEdited(); });
+
     expansionCode_ = new QLineEdit(this);
     expansionCode_->setPlaceholderText(tr("e.g. OBF"));
     connect(expansionCode_, &QLineEdit::textEdited, this,
@@ -88,6 +93,7 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     connect(comments_, &QPlainTextEdit::textChanged, this,
             [this]() { Q_EMIT commentsChanged(); });
 
+    form->addRow(tr("Card name"), cardName_);
     form->addRow(tr("Expansion code"), expansionCode_);
     form->addRow(tr("Set name"), setName_);
     form->addRow(tr("Language"), language_);
@@ -119,7 +125,7 @@ void CardCopyForm::setReferenceEditable(bool editable) {
     // text though, which read as confusing next to the disabled combos; so when
     // locked we also mute the text to the theme's disabled colour, matching the
     // greyed-out look of the other read-only fields while keeping copy-out.
-    for (QLineEdit* field : {expansionCode_, setName_, collectorNumber_}) {
+    for (QLineEdit* field : {cardName_, expansionCode_, setName_, collectorNumber_}) {
         field->setReadOnly(!editable);
         if (editable) {
             field->setPalette(QPalette());  // inherit defaults (normal, bright text)
@@ -141,12 +147,14 @@ void CardCopyForm::setReferenceEditable(bool editable) {
 void CardCopyForm::setCardReference(const CardReference& ref) {
     // Autofill the printed identity. setText() does not fire textEdited, so this does
     // not emit referenceEdited(). Language / condition / ownership are left to the user.
+    cardName_->setText(QString::fromStdString(ref.name));
     expansionCode_->setText(QString::fromStdString(ref.expansionCode));
     setName_->setText(QString::fromStdString(ref.setName));
     collectorNumber_->setText(QString::fromStdString(ref.collectorNumber));
 }
 
 void CardCopyForm::loadCopy(const CardCopy& copy) {
+    cardName_->setText(QString::fromStdString(copy.cardRef.name));
     expansionCode_->setText(QString::fromStdString(copy.cardRef.expansionCode));
     setName_->setText(QString::fromStdString(copy.cardRef.setName));
     collectorNumber_->setText(QString::fromStdString(copy.cardRef.collectorNumber));
@@ -170,6 +178,7 @@ CardReference CardCopyForm::cardReference() const {
     ref.language = language_->currentText().toStdString();  // "" when unspecified
     ref.collectorNumber = collectorNumber_->text().trimmed().toStdString();
     ref.setName = setName_->text().trimmed().toStdString();
+    ref.name = cardName_->text().trimmed().toStdString();
     return ref;
 }
 

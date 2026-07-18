@@ -89,8 +89,16 @@ EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardImageStore& im
     });
 
     // --- Finder (right): the shared search + preview widget ----------------
-    const QString species = title.section(QStringLiteral(" · "), 0, 0);
-    finder_ = new CardFinderPanel(search, copy_.pokemonDexNum, species, this);
+    // A species copy scopes the finder to that species (its name is the title's lead
+    // segment). A species-free card (Trainer/Energy) has no dex to scope by, so the
+    // finder searches by card name, seeded with the card's stored name.
+    if (copy_.pokemonDexNum) {
+        const QString species = title.section(QStringLiteral(" · "), 0, 0);
+        finder_ = new CardFinderPanel(search, *copy_.pokemonDexNum, species, this);
+    } else {
+        finder_ = new CardFinderPanel(search, CardFinderPanel::NameSearchMode{},
+                                      QString::fromStdString(copy_.cardRef.name), this);
+    }
     // When a set has no printings (e.g. a card too new for the catalog), point the
     // user at the upload path instead.
     finder_->setNoResultsHint(

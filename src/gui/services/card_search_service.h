@@ -57,6 +57,14 @@ public:
     // a second live page would consume or strand this page's result.
     std::uint64_t searchPrintings(int dexNumber, const QString& setCodeFilter);
 
+    // Search by card NAME rather than species — for a card that depicts no Pokémon
+    // (a Trainer or Energy card), which has no national dex number to search by.
+    // `nameQuery` is matched as a name prefix; `setCodeFilter` narrows to a set as in
+    // searchPrintings (blank = any set). Same debounce/stale-guard contract: returns a
+    // request id the eventual printingsReady()/printingsFailed() carries (with a
+    // dexNumber of 0, since there is no species). The caller must ignore foreign ids.
+    std::uint64_t searchByName(const QString& nameQuery, const QString& setCodeFilter);
+
     // Fetch one card image into memory (never to disk) and emit thumbnailReady().
     // A blank url or a failed/invalid fetch simply yields no signal (the row keeps
     // its placeholder). Concurrent requests for the same cardId are de-duplicated.
@@ -75,7 +83,8 @@ Q_SIGNALS:
 
 private:
     struct PendingSearch {
-        int dexNumber;
+        int dexNumber;          // 0 == a by-name search (nameQuery is then set)
+        QString nameQuery;      // the card-name query, when dexNumber == 0
         QString setCodeFilter;
         std::uint64_t generation;
     };

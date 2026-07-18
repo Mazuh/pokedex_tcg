@@ -22,6 +22,12 @@ namespace pokedex {
 // with as little as a collector number); the card picker fills them in to
 // encourage complete data.
 //
+// `name` is the printed card name (e.g. "Charizard ex", "Boss's Orders"). It is
+// a display label carried with the printing, filled from the card picker. For a
+// species card it merely echoes the Pokémon; for a species-free card (a Trainer
+// or Energy card, whose CardCopy has no dex number) it is the ONLY human-readable
+// title there is, so a copy without it would show as bare set/collector text.
+//
 // Immutable and compared by value. It is embedded in a CardCopy to record which
 // printing that copy is. Ordering is defaulted so copies can be grouped by
 // printing (map/set key).
@@ -30,6 +36,7 @@ struct CardReference {
     std::string language;
     std::string collectorNumber;
     std::string setName;
+    std::string name;
 
     auto operator<=>(const CardReference&) const = default;
 };

@@ -108,8 +108,19 @@ std::uint64_t CardSearchService::searchPrintings(int dexNumber, const QString& s
     // Mint a unique id for this request; the reply carries it so the caller can tell
     // its own result from another page's (this service is shared app-wide).
     const std::uint64_t requestId = ++generation_;
-    pendingSearch_ = PendingSearch{dexNumber, setCodeFilter, requestId};
+    pendingSearch_ = PendingSearch{dexNumber, QString(), setCodeFilter, requestId};
     ensureSetsLoading();  // load the set table once, in parallel with the debounce
+    searchDebounce_->start(kDebounceMs);
+    return requestId;
+}
+
+std::uint64_t CardSearchService::searchByName(const QString& nameQuery,
+                                              const QString& setCodeFilter) {
+    // A by-name search is tagged with dexNumber 0 (no species); the rest of the
+    // pipeline — debounce, set-filter resolution, stale-guard — is identical.
+    const std::uint64_t requestId = ++generation_;
+    pendingSearch_ = PendingSearch{0, nameQuery, setCodeFilter, requestId};
+    ensureSetsLoading();
     searchDebounce_->start(kDebounceMs);
     return requestId;
 }
@@ -179,7 +190,20 @@ void CardSearchService::dispatchSearch() {
     // token — a filter that matches nothing needs no request. This is the single
     // authority on narrowing; callers pass a raw filter and read back the results.
     CardSearchQuery query;
-    query.dexNumber = req.dexNumber;
+    if (req.dexNumber != 0) {
+        query.dexNumber = req.dexNumber;  // species search
+    } else {
+        query.nameQuery = req.nameQuery.trimmed().toStdString();  // by-name search
+        if (query.nameQuery.empty()) {
+            // A blank name has no scope clause — never fall back to fetching the whole
+            // catalog (resolveSearch would build an empty `q=`). Emit no results, as the
+            // empty-set-filter branch below does. (The finder gates on 3+ chars, so this
+            // is defense for the public searchByName seam.)
+            pendingSearch_.reset();
+            Q_EMIT printingsReady(req.generation, req.dexNumber, {});
+            return;
+        }
+    }
     const std::string filter = req.setCodeFilter.trimmed().toStdString();
     if (!filter.empty()) {
         query.setIds = resolveSetFilterToIds(filter, sets_);

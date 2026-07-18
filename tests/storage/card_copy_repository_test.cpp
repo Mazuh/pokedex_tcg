@@ -66,6 +66,48 @@ TEST(CardCopyRepositoryTest, AddThenListByBinderRoundTripsAllFields) {
     EXPECT_EQ(c.insertedAt, at("2026-07-14T09:00:00Z"));
 }
 
+// A species-free card (a Trainer/Energy card) has no dex number — it round-trips as
+// nullopt (stored as the 0 sentinel) and keeps its printed card name.
+TEST(CardCopyRepositoryTest, SpeciesFreeCopyRoundTripsWithNulloptDexAndCardName) {
+    Database db(":memory:");
+    db.migrate();
+    CardCopyRepository repo(db);
+    CardCopy copy = makeCopy("c1", 25, CardOwnership::Owned, std::nullopt);
+    copy.pokemonDexNum = std::nullopt;  // no species
+    copy.cardRef.name = "Boss's Orders";
+    repo.add(copy);
+
+    const auto found = repo.find("c1");
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(found->pokemonDexNum, std::nullopt);
+    EXPECT_EQ(found->cardRef.name, "Boss's Orders");
+
+    // And an update preserves the species-free-ness and the name.
+    CardCopy edited = *found;
+    edited.comments = "traded for it";
+    repo.update(edited);
+    const auto reloaded = repo.find("c1");
+    EXPECT_EQ(reloaded->pokemonDexNum, std::nullopt);
+    EXPECT_EQ(reloaded->cardRef.name, "Boss's Orders");
+}
+
+// A species-free copy must never surface in the species-oriented reads (its 0
+// sentinel would otherwise pollute the guide's counts / "owned elsewhere").
+TEST(CardCopyRepositoryTest, SpeciesFreeCopyIsIgnoredByOwnedElsewhere) {
+    Database db(":memory:");
+    db.migrate();
+    db.exec(
+        "INSERT INTO card_binder(id,name,region,inserted_at,updated_at)"
+        " VALUES('b1','A',NULL,'2026-07-14T09:00:00Z','2026-07-14T09:00:00Z');");
+    CardCopyRepository repo(db);
+    CardCopy trainer = makeCopy("c1", 25, CardOwnership::Owned, std::nullopt);
+    trainer.pokemonDexNum = std::nullopt;
+    repo.add(trainer);
+
+    EXPECT_TRUE(repo.ownedElsewhere("b1").empty());          // no dex 0 row
+    EXPECT_TRUE(repo.ownedCountsByDexNum().find(0) == repo.ownedCountsByDexNum().end());
+}
+
 TEST(CardCopyRepositoryTest, UngradedConditionRoundTripsAsNullopt) {
     Database db(":memory:");
     db.migrate();

@@ -43,6 +43,18 @@ public:
     CardFinderPanel(CardSearchService& search, int dexNumber, QString speciesName,
                     QWidget* parent = nullptr);
 
+    // Tag selecting the by-name construction below (disambiguates it from the
+    // species ctor above).
+    struct NameSearchMode {};
+
+    // Name-search mode: the search field is a free card-name query, for a card that
+    // depicts no species (a Trainer or Energy card) and so cannot be scoped by dex
+    // number. There is no species scope and no set-name completer — the field IS the
+    // query. `initialQuery` seeds the field (pass the card's stored name so a host
+    // editing an existing card shows its printings immediately; "" starts blank).
+    CardFinderPanel(CardSearchService& search, NameSearchMode, QString initialQuery,
+                    QWidget* parent = nullptr);
+
     // Whether a printing is currently picked (its preview may still be loading).
     bool hasSelection() const;
     // The picked candidate, or a default-constructed CardCandidate when nothing is
@@ -104,11 +116,13 @@ private:
     void showPreview(int index);       // request the large image for the selected card
     void clearPreview();               // drop the selection + its preview, emit selectionCleared
     void renderPreview();              // scale the preview pixmap to its label
-    void searchWith(const QString& filter);  // search this species scoped to a set filter
+    void init(const QString& initialQuery);  // shared body of both constructors
+    void searchWith(const QString& query);   // species: set filter; name mode: name query
     void updateStatus();
 
     CardSearchService& search_;
-    int dexNumber_;
+    int dexNumber_;          // 0 in name-search mode (no species)
+    bool nameMode_ = false;  // search the field text as a card name, not a set filter
     QString speciesName_;
     // The host-specific tail of the "no printings found" status (see setNoResultsHint).
     QString noResultsHint_ = tr("the catalog may not list it, or it may be flaking (retry).");

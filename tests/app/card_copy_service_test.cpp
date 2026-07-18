@@ -56,6 +56,22 @@ TEST(CardCopyServiceTest, CreateMintsIdStampsAndPersists) {
     EXPECT_EQ(stored->comments, "bought at a con");
 }
 
+TEST(CardCopyServiceTest, CreateAcceptsASpeciesFreeCard) {
+    Fixture f;
+    // A Trainer/Energy card: no dex number, but a card name carried on the reference.
+    CardReference trainerRef{"SVI", "EN", "196/198"};
+    trainerRef.name = "Boss's Orders";
+    const CardCopy copy = f.service.create(std::nullopt, trainerRef, CardOwnership::Owned,
+                                           std::nullopt, std::nullopt, "");
+    EXPECT_EQ(copy.pokemonDexNum, std::nullopt);
+    EXPECT_EQ(copy.cardRef.name, "Boss's Orders");
+    // It round-trips through storage as species-free with its name intact.
+    const auto stored = f.repo.find("copy-1");
+    ASSERT_TRUE(stored.has_value());
+    EXPECT_EQ(stored->pokemonDexNum, std::nullopt);
+    EXPECT_EQ(stored->cardRef.name, "Boss's Orders");
+}
+
 TEST(CardCopyServiceTest, CreateAcceptsAnUngradedCondition) {
     Fixture f;
     const CardCopy copy = f.service.create(6, ref(), CardOwnership::Owned, std::nullopt,

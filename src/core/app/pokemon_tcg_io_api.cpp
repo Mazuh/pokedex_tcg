@@ -1,6 +1,7 @@
 #include "core/app/pokemon_tcg_io_api.h"
 
 #include <cctype>
+#include <sstream>
 #include <string>
 
 namespace pokedex {
@@ -32,13 +33,57 @@ std::string urlEncode(const std::string& s) {
     return out;
 }
 
+// Backslash-escape the Lucene query-syntax metacharacters, so a user-typed word is
+// matched literally rather than parsed as an operator. Without this a name with a
+// paren / quote / colon (e.g. "Research (Magnolia)") produces a malformed query the
+// API rejects with 400. The wildcard `*` we add ourselves is applied AFTER escaping,
+// so it stays a wildcard; a literal `*`/`?` inside the user's text is escaped here.
+std::string escapeLucene(const std::string& word) {
+    static const std::string kSpecial = R"(+-&|!(){}[]^"~*?:\/)";
+    std::string out;
+    out.reserve(word.size());
+    for (const char c : word) {
+        if (kSpecial.find(c) != std::string::npos) {
+            out += '\\';
+        }
+        out += c;
+    }
+    return out;
+}
+
+// Build the Lucene name clause for a by-name search. Each whitespace-separated word
+// becomes a `name:*word*` substring term, ANDed together (Lucene's default). Per-word
+// wildcards are what actually work on pokemontcg.io: a single quoted phrase with a
+// trailing wildcard ("boss orders*") matches nothing, whereas `name:*boss* name:*orders*`
+// finds "Boss's Orders" regardless of the apostrophe or word order.
+std::string nameClause(const std::string& query) {
+    std::istringstream words(query);
+    std::string word;
+    std::string clause;
+    while (words >> word) {
+        if (!clause.empty()) {
+            clause += " ";
+        }
+        clause += "name:*" + escapeLucene(word) + "*";
+    }
+    return clause;
+}
+
 }  // namespace
 
 HttpRequest PokemonTcgIoApi::resolveSearch(const CardSearchQuery& query) const {
-    // Species clause, then an optional set-narrowing clause ORing set.id values
-    // (set.id, not the printed ptcgoCode, because the ptcgoCode search index is
-    // unreliable). e.g. "nationalPokedexNumbers:6 (set.id:sv3 OR set.id:sv4)".
-    std::string q = "nationalPokedexNumbers:" + std::to_string(query.dexNumber);
+    // The scope clause — by species when a dex number is given, else by card name
+    // (per-word substring terms, so "boss orders" finds "Boss's Orders"). Then an
+    // optional set-narrowing clause ORing set.id values (set.id, not the printed
+    // ptcgoCode, because the ptcgoCode search index is unreliable). e.g.
+    // "nationalPokedexNumbers:6 (set.id:sv3 OR set.id:sv4)" or
+    // "name:*boss* name:*orders* (set.id:sv3)".
+    std::string q;
+    if (query.dexNumber) {
+        q = "nationalPokedexNumbers:" + std::to_string(*query.dexNumber);
+    } else {
+        q = nameClause(query.nameQuery);
+    }
     if (!query.setIds.empty()) {
         q += " (";
         for (std::size_t i = 0; i < query.setIds.size(); ++i) {

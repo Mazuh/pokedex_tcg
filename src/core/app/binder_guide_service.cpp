@@ -28,7 +28,10 @@ std::map<PokemonDexNum, FiledStates> filedStatesByDex(
     const std::vector<CardCopy>& copiesInBinder) {
     std::map<PokemonDexNum, FiledStates> byDex;
     for (const CardCopy& copy : copiesInBinder) {
-        FiledStates& states = byDex[copy.pokemonDexNum];
+        if (!copy.pokemonDexNum) {
+            continue;  // a species-free card (Trainer/Energy) has no guide row
+        }
+        FiledStates& states = byDex[*copy.pokemonDexNum];
         switch (copy.ownership) {
             case CardOwnership::Incoming: states.incoming = true; break;
             case CardOwnership::Owned:    states.owned = true;    break;
@@ -77,7 +80,9 @@ std::vector<CardBinderEntry> BinderGuideService::buildEntries(const CardBinder& 
         }
     }
     for (const CardCopy& copy : copiesInBinder) {
-        dexNums.insert(copy.pokemonDexNum);
+        if (copy.pokemonDexNum) {
+            dexNums.insert(*copy.pokemonDexNum);
+        }
     }
 
     std::vector<CardBinderEntry> entries;

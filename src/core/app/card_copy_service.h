@@ -38,9 +38,10 @@ public:
 
     // Record a new copy the user owns / is receiving. The collector number is the
     // card's printed identity and is required — a blank one throws CardCopyError;
-    // the reference fields are trimmed. Both audit stamps are set to now(). Returns
-    // the persisted copy with its freshly minted id.
-    CardCopy create(PokemonDexNum pokemonDexNum, CardReference cardRef,
+    // the reference fields are trimmed. `pokemonDexNum` is optional: pass nullopt
+    // for a card that depicts no species (a Trainer or Energy card). Both audit
+    // stamps are set to now(). Returns the persisted copy with its freshly minted id.
+    CardCopy create(std::optional<PokemonDexNum> pokemonDexNum, CardReference cardRef,
                     CardOwnership ownership, std::optional<CardCondition> condition,
                     std::optional<CardBinderId> binderId, std::string comments);
 
