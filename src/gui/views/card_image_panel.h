@@ -15,19 +15,20 @@ namespace pokedex {
 // the image (a synchronous local disk read via CardImageStore) and hands it in, so
 // this panel neither fetches nor knows where images live.
 //
-// showImage() displays the title and, if the pixmap is non-null, the scaled image;
-// a null pixmap shows a muted "no image saved" placeholder (an older copy, or one
-// added without a preview selected). clear() is the no-selection empty state. The
-// image rescales to the pane on resize.
+// showImage() displays the title, the scaled image (or a muted "no image saved"
+// placeholder when the pixmap is null — an older copy, or one added without a preview
+// selected), and the copy's comments beneath it (hidden when blank). clear() is the
+// no-selection empty state. The image rescales to the pane on resize.
 class CardImagePanel : public QWidget {
     Q_OBJECT
 
 public:
     explicit CardImagePanel(QWidget* parent = nullptr);
 
-    // Show `title` and `image`. A null `image` renders the "no image saved"
-    // placeholder in its place. Not named show() so it doesn't hide QWidget::show().
-    void showImage(const QString& title, const QPixmap& image);
+    // Show `title`, `image`, and `comments`. A null `image` renders the "no image
+    // saved" placeholder in its place; blank `comments` hides the comments area. Not
+    // named show() so it doesn't hide QWidget::show().
+    void showImage(const QString& title, const QPixmap& image, const QString& comments);
     // Empty state: no card selected.
     void clear();
 
@@ -41,6 +42,7 @@ private:
 
     QLabel* title_;
     QLabel* image_;
+    QLabel* comments_;        // the copy's comments, beneath the image (hidden when blank)
     QPixmap originalPixmap_;  // full-resolution card image; rescaled on resize
     QString placeholder_;     // text shown when there is no pixmap
 };

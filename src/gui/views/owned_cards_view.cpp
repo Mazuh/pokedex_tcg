@@ -96,9 +96,9 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
 
     // A read-only seven-column table: Pokémon, card ref, set, language,
     // condition, ownership, binder. Whole-row selection, no editing; the Pokémon
-    // column stretches to take up slack, while every data column sizes to its
-    // content. The Set column carries the human set name, which for code-less sets
-    // (McDonald's, POP…) is the only disambiguator.
+    // column sizes to its content (so the species name is never truncated) while the
+    // Set column takes up the slack. The Set column carries the human set name, which
+    // for code-less sets (McDonald's, POP…) is the only disambiguator.
     table_ = new QTableWidget(this);
     table_->setColumnCount(7);
     table_->setHorizontalHeaderLabels({tr("Pokémon"), tr("Card"), tr("Set"), tr("Lang"),
@@ -109,18 +109,18 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
     table_->verticalHeader()->setVisible(false);
     auto* header = table_->horizontalHeader();
-    // Pokémon (the primary, recognizable column) is the flexible one: it stretches
-    // to absorb slack and elides when space is tight. (Previously Binder was the
-    // Stretch column, so a narrow window shrank it to nothing *and* left no overflow
-    // to scroll to.) The short metadata columns size to their content. Set and
-    // Binder hold free text — a long set or user-named binder — so they are sized to
-    // content but capped in reload() (Interactive lets reload() set their width and
-    // keeps them user-draggable), so one long name can't crowd out Pokémon.
-    header->setSectionResizeMode(0, QHeaderView::Stretch);
-    for (const int col : {1, 3, 4, 5}) {  // Card, Lang, Cond., Ownership — short
+    // Pokémon (col 0) sizes to its content so the species name is never truncated —
+    // names are short and bounded, so this stays a modest, stable width even with the
+    // image panel narrowing the table. Set (col 2) is the flexible slack absorber
+    // instead: free text that grows when there's room and elides (full value on a
+    // tooltip) when space is tight, so Pokémon keeps its width and, when very narrow,
+    // there is still overflow to scroll to. Binder (col 6) is content-sized-then-capped
+    // in reload() so a long user-named binder can't crowd the table; the short
+    // metadata columns size to content.
+    for (const int col : {0, 1, 3, 4, 5}) {  // Pokémon, Card, Lang, Cond., Ownership
         header->setSectionResizeMode(col, QHeaderView::ResizeToContents);
     }
-    header->setSectionResizeMode(2, QHeaderView::Interactive);  // Set — free text, capped
+    header->setSectionResizeMode(2, QHeaderView::Stretch);      // Set — flexible slack absorber
     header->setSectionResizeMode(6, QHeaderView::Interactive);  // Binder — free text, capped
     table_->setStyleSheet("QTableView::item { padding-left: 8px; padding-right: 16px; }");
     connect(table_, &QTableWidget::itemSelectionChanged, this, [this]() {
@@ -281,17 +281,16 @@ void OwnedCardsView::reload() {
         }
         haystacks_[row] = hay.toLower();
     }
-    // Size the free-text columns (Set, Binder) to their content, then cap them: a
-    // long set or user-named binder elides (…) — with the full value on its tooltip
-    // and the column still draggable — rather than crowding out the flexible Pokémon
-    // column. The cap is a representative long set name, so ordinary names show whole.
+    // Cap the Binder column: size it to content, then clamp so a long user-named
+    // binder elides (…) — with the full value on its tooltip and the column still
+    // draggable — rather than crowding the table. (Set is the Stretch column now, so
+    // it manages its own width.) The cap is a representative long name, so ordinary
+    // names show whole.
     const int freeTextCap =
         table_->fontMetrics().horizontalAdvance(QStringLiteral("McDonald's Collection 2021")) + 32;
-    for (const int col : {2, 6}) {
-        table_->resizeColumnToContents(col);
-        if (table_->columnWidth(col) > freeTextCap) {
-            table_->setColumnWidth(col, freeTextCap);
-        }
+    table_->resizeColumnToContents(6);
+    if (table_->columnWidth(6) > freeTextCap) {
+        table_->setColumnWidth(6, freeTextCap);
     }
     // Empty state: swap the table + search + row actions (and the card-image panel)
     // for a friendly hint when nothing is stored — otherwise the "select a card"
@@ -356,7 +355,9 @@ void OwnedCardsView::showSelectedImage() {
     const CardCopy& copy = loaded_[row];
     // A synchronous local disk read (like MediaService's cache-hit path); a null
     // pixmap (older copy, or one added without a preview) shows the panel placeholder.
-    panel_->showImage(titleFor(copy), images_.load(copy.id));
+    // The copy's comments show beneath the image (hidden when blank).
+    panel_->showImage(titleFor(copy), images_.load(copy.id),
+                      QString::fromStdString(copy.comments));
 }
 
 void OwnedCardsView::assignSelected() {
@@ -412,16 +413,31 @@ void OwnedCardsView::editSelectedCard() {
         return;
     }
     const CardCopy& copy = loaded_[row];
-    auto* page = new EditCardCopyPage(cardSearch_, images_, copy.id, copy.pokemonDexNum,
+    const std::string copyId = copy.id;
+    auto* page = new EditCardCopyPage(cardSearch_, images_, copies_, copy, binders_.list(),
                                       titleFor(copy));
     stack_->addWidget(page);
-    // The panel refresh is driven by CardImageStore::imageChanged (connected in the
-    // ctor), which fires whether the save is synchronous or a deferred download — so
-    // the page only needs to ask to be popped when done.
-    connect(page, &EditCardCopyPage::backRequested, this, [this, page]() {
+    // The image refresh is driven by CardImageStore::imageChanged (connected in the
+    // ctor). On return, reload so an edited comment shows in the panel, and reselect
+    // the same copy so the panel stays on it (reload rebuilds the table, clearing the
+    // selection).
+    connect(page, &EditCardCopyPage::backRequested, this, [this, page, copyId]() {
         stack_->setCurrentIndex(0);   // back to the list ⇄ panel
         stack_->removeWidget(page);
         page->deleteLater();
+        reload();  // pick up an edited comment (and any image change)
+        for (int i = 0; i < static_cast<int>(loaded_.size()); ++i) {
+            if (loaded_[i].id == copyId) {
+                table_->selectRow(i);
+                break;
+            }
+        }
+        // Force a panel re-render: the copy id is unchanged and its row/selection can
+        // survive the reload, so showSelectedImage()'s shownCopyId_ dedup guard would
+        // otherwise skip re-showing an edited comment (a comment save fires no
+        // CardImageStore::imageChanged to clear the guard, unlike an image change).
+        shownCopyId_.clear();
+        showSelectedImage();
     });
     stack_->setCurrentWidget(page);
 }

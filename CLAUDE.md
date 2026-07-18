@@ -90,15 +90,22 @@ JSON note in the tech stack). `gui/views/` holds the
 the binders section (`BindersPage`, a table with its own list ⇄ binder-guide stack),
 the new-binder editor, the reusable `BinderPickerDialog`, the binder guide view, the
 Pokémon browser (`PokemonListView`, which hosts an inner stack for the add-copy
-page), the `AddCardCopyPage` (the "Add copy" form + the shared card finder), the
-reusable `CardFinderPanel` (the set-scoped search + infinite-scroll printings list +
-preview, extracted from `AddCardCopyPage` so both "Add copy" and "Edit card" drive
-the same finder — it reports picks via signals and knows nothing of forms/copies),
-the `OwnedCardsView` ("My Cards" inventory: browse/search/assign-to-binder/remove,
-plus an inner stack hosting the `EditCardCopyPage`), the `EditCardCopyPage` (a copy's
-first edit surface — change its image by re-searching the catalog or uploading a
-photo; image-only for now), the `CardImagePanel` (the "My Cards" right-hand
-card-image detail panel), the unscoped wishlist section (`WishlistView`), and the
+page), and two card-copy pages built from the same two shared blocks — the reusable
+`CardCopyForm` (the details pane: printed-identity/condition/ownership fields + binder
+picker + comments, with `setReferenceEditable()` toggling read-only and a host-filled
+action row) and the reusable `CardFinderPanel` (the set-scoped search + infinite-scroll
+printings list + preview; reports picks via signals, knows nothing of forms/copies,
+and exposes `setPreviewFooter()` for a host action under the picture). The
+`AddCardCopyPage` assembles them editable (finder pick autofills the form; submit
+creates a copy); the `EditCardCopyPage` assembles them read-only-but-comments (a
+copy's first edit surface — edit comments with an explicit "Save comments" via
+`CardCopyService::editDetails`, and change the image by re-searching the catalog
+["Use this card's image", centered under the preview] or uploading a photo, staying
+on the page after each save). `OwnedCardsView` ("My Cards" inventory:
+browse/search/assign-to-binder/remove) hosts the edit page on an inner stack and
+reloads on return so an edited comment shows. The `CardImagePanel` is the "My Cards"
+right-hand detail panel (title + image + the copy's comments beneath). The unscoped
+wishlist section (`WishlistView`), and the
 per-Pokémon wishlist editor (`WishlistSourcesEditor`) embedded below the artwork in
 `PokemonDetailPanel`. The shared `scaled_pixmap.h` helper (DPR-aware fit-scale) backs
 every image panel. Enum→label display helpers are header-only in `gui/views/`

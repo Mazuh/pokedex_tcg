@@ -7,9 +7,6 @@
 
 #include "core/domain/types.h"
 
-class QComboBox;
-class QLineEdit;
-class QPlainTextEdit;
 class QPushButton;
 
 namespace pokedex {
@@ -19,26 +16,28 @@ class CardCopyService;
 class BinderService;
 class CardImageStore;
 class CardFinderPanel;
+class CardCopyForm;
 struct CardCandidate;
 struct CardSetInfo;
 
-// GUI — the "add a copy" screen for one Pokémon: a manual entry form on the left
-// and the shared card finder (CardFinderPanel — search + preview) on the right.
-// Nothing is fetched on open — a species can have hundreds of printings, so the
-// user searches by set (code or name, 3+ chars, debounced) to pull just that set's
-// cards. Selecting a card in the finder autofills the form's card reference and
-// shows a larger image; the form stays usable by hand, and the page works even when
-// the card API is unreachable.
+// GUI — the "add a copy" screen for one Pokémon: the shared CardCopyForm (editable)
+// on the left and the shared CardFinderPanel (search + preview) on the right — the
+// same two building blocks the "Edit card" page uses, assembled for creation.
+// Nothing is fetched on open — a species can have hundreds of printings, so the user
+// searches by set (code or name, 3+ chars, debounced) to pull just that set's cards.
+// Selecting a card in the finder autofills the form's card reference and shows a
+// larger image; the form stays usable by hand, and the page works even when the card
+// API is unreachable.
 //
 // Submitting creates a copy via CardCopyService and, when a card was picked, saves
-// its preview image to the workspace (CardImageStore, keyed by the new copy's id)
-// so "My Cards" can show it; it then emits copyAdded() (so the host can refresh any
-// owned-copy counts) and backRequested() to return to the previous screen. The
-// form carries an optional binder picker: when opened unscoped (from the Pokémon
-// browser) it defaults to "— None —" and the user may file the copy in any binder;
-// when opened from within a binder it is pre-filled with that binder and locked, so
-// the copy lands where the user already is. (The remove-with-note flow lives
-// elsewhere, in OwnedCardsView, as does editing an existing copy's image.)
+// its preview image to the workspace (CardImageStore, keyed by the new copy's id) so
+// "My Cards" can show it; it then emits copyAdded() (so the host can refresh any
+// owned-copy counts) and backRequested() to return to the previous screen. The form
+// carries an optional binder picker: when opened unscoped (from the Pokémon browser)
+// it defaults to "— None —" and the user may file the copy in any binder; when opened
+// from within a binder it is pre-filled with that binder and locked, so the copy lands
+// where the user already is. (The remove-with-note flow, and editing an existing
+// copy, live elsewhere in OwnedCardsView.)
 //
 // It is an in-window page pushed onto a host's QStackedWidget (PokemonListView or
 // BinderView); a Back button emits backRequested() and the host pops + disposes
@@ -79,19 +78,9 @@ private:
     // binder is absent from the combo (e.g. removed after the guide was opened).
     std::optional<CardBinderId> lockedBinder_;
 
-    // Form
-    QLineEdit* expansionCode_;
-    QLineEdit* setName_;
-    QComboBox* language_;
-    QLineEdit* collectorNumber_;
-    QComboBox* condition_;
-    QComboBox* ownership_;
-    QComboBox* binder_;
-    QPlainTextEdit* comments_;
-    QPushButton* submit_;
-
-    // The shared card finder (search field + printings list + preview).
-    CardFinderPanel* finder_;
+    CardCopyForm* form_;      // the shared details pane (editable, with a submit action)
+    QPushButton* submit_;     // "Add copy" — lives in the form's action row
+    CardFinderPanel* finder_;  // the shared search field + printings list + preview
 };
 
 }  // namespace pokedex

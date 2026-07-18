@@ -154,6 +154,7 @@ qt_add_executable(pokedex_tcg
     src/gui/views/pokemon_list_view.cpp
     src/gui/views/pokemon_detail_panel.cpp
     src/gui/views/add_card_copy_page.cpp
+    src/gui/views/card_copy_form.cpp
     src/gui/views/card_finder_panel.cpp
     src/gui/views/edit_card_copy_page.cpp
     src/gui/views/owned_cards_view.cpp

@@ -22,15 +22,23 @@ CardImagePanel::CardImagePanel(QWidget* parent) : QWidget(parent) {
     image_->setMinimumSize(160, 160);
     image_->setEnabled(false);  // muted placeholder text until an image is shown
 
+    comments_ = new QLabel(this);
+    comments_->setWordWrap(true);
+    comments_->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    comments_->setTextInteractionFlags(Qt::TextSelectableByMouse);  // content: selectable
+    comments_->hide();
+
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(16, 16, 16, 16);
     layout->addWidget(title_);
     layout->addWidget(image_, /*stretch=*/1);
+    layout->addWidget(comments_);
 
     clear();
 }
 
-void CardImagePanel::showImage(const QString& title, const QPixmap& image) {
+void CardImagePanel::showImage(const QString& title, const QPixmap& image,
+                               const QString& comments) {
     title_->setText(title);
     originalPixmap_ = image;
     if (image.isNull()) {
@@ -39,6 +47,8 @@ void CardImagePanel::showImage(const QString& title, const QPixmap& image) {
     } else {
         image_->setEnabled(true);
     }
+    comments_->setText(comments);
+    comments_->setVisible(!comments.isEmpty());
     renderImage();
 }
 
@@ -47,6 +57,8 @@ void CardImagePanel::clear() {
     originalPixmap_ = QPixmap();
     image_->setEnabled(false);  // muted placeholder, even after a prior image
     placeholder_ = tr("Select a card to see its image.");
+    comments_->clear();
+    comments_->hide();
     renderImage();
 }
 

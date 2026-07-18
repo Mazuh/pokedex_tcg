@@ -9,19 +9,24 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
+#include <exception>
 #include <utility>
 
 #include "core/app/card_catalog_dto.h"
+#include "core/app/card_copy_service.h"
 #include "gui/services/card_image_store.h"
 #include "gui/views/back_button.h"
+#include "gui/views/card_copy_form.h"
+#include "gui/views/card_copy_splitter.h"
 #include "gui/views/card_finder_panel.h"
 
 namespace pokedex {
 
 EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardImageStore& images,
-                                   CardCopyId copyId, int dexNumber, const QString& title,
-                                   QWidget* parent)
-    : QWidget(parent), images_(images), copyId_(std::move(copyId)) {
+                                   CardCopyService& copies, CardCopy copy,
+                                   const std::vector<CardBinder>& binders,
+                                   const QString& title, QWidget* parent)
+    : QWidget(parent), images_(images), copies_(copies), copy_(std::move(copy)) {
     // --- Top bar: Back + heading -------------------------------------------
     auto* backButton = makeBackButton(this);
     connect(backButton, &QPushButton::clicked, this, &EditCardCopyPage::backRequested);
@@ -36,46 +41,77 @@ EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardImageStore& im
     topBar->addWidget(heading);
     topBar->addStretch();
 
-    // --- The shared card finder (search + preview) -------------------------
-    // Use the species name from the title's leading segment for the finder hint;
-    // the title is "Species · Card", so anything before " · " is the species.
+    // --- Form (left): the shared details pane, read-only but for comments --
+    form_ = new CardCopyForm(this);
+    form_->setMaximumWidth(560);
+    form_->loadCopy(copy_);
+    form_->setupBinderPicker(binders, copy_.binderId, /*enabled=*/false);
+    form_->setReferenceEditable(false);  // identity/condition/ownership are the record
+
+    saveComments_ = new QPushButton(tr("Save comments"), this);
+    saveComments_->setEnabled(false);  // enabled only once the comments diverge
+    connect(saveComments_, &QPushButton::clicked, this, &EditCardCopyPage::saveComments);
+    form_->addAction(saveComments_);
+
+    auto* uploadButton = new QPushButton(tr("Upload a photo…"), this);
+    connect(uploadButton, &QPushButton::clicked, this, &EditCardCopyPage::uploadPhoto);
+    form_->addAction(uploadButton);
+
+    // "Save comments" is live only while the text differs from the stored record.
+    connect(form_, &CardCopyForm::commentsChanged, this, [this]() {
+        saveComments_->setEnabled(form_->comments() != copy_.comments);
+    });
+
+    // --- Finder (right): the shared search + preview widget ----------------
     const QString species = title.section(QStringLiteral(" · "), 0, 0);
-    finder_ = new CardFinderPanel(search, dexNumber, species, this);
+    finder_ = new CardFinderPanel(search, copy_.pokemonDexNum, species, this);
     // When a set has no printings (e.g. a card too new for the catalog), point the
     // user at the upload path instead.
     finder_->setNoResultsHint(
         tr("the catalog may not list it yet — you can upload a photo instead."));
 
-    // --- Action bar: upload (left) + use-picked-card (right) ---------------
-    auto* uploadButton = new QPushButton(tr("Upload a photo…"), this);
-    connect(uploadButton, &QPushButton::clicked, this, &EditCardCopyPage::uploadPhoto);
-
+    // "Use this card's image" sits centered under the preview (where the picture it
+    // applies to is), enabled only once that card's large image has actually loaded —
+    // so the save is synchronous and the host's My Cards refresh shows it immediately.
     useButton_ = new QPushButton(tr("Use this card's image"), this);
-    useButton_->setEnabled(false);  // until a picked card's image has loaded
+    useButton_->setEnabled(false);
+    QFont useFont = useButton_->font();
+    useFont.setBold(true);
+    useButton_->setFont(useFont);
+    useButton_->setMinimumHeight(38);
     connect(useButton_, &QPushButton::clicked, this, &EditCardCopyPage::saveFromFinder);
-
-    // Enable only once the picked card's large image is in hand, so saveFromFinder()
-    // always has a real pixmap (a synchronous save, so the host's refresh is instant
-    // and never races an async download). A new pick (or a cleared one) disables it
-    // again until its image loads.
     connect(finder_, &CardFinderPanel::cardSelected, this,
             [this](const CardCandidate&) { useButton_->setEnabled(false); });
     connect(finder_, &CardFinderPanel::selectionCleared, this,
             [this]() { useButton_->setEnabled(false); });
     connect(finder_, &CardFinderPanel::previewReady, this,
             [this]() { useButton_->setEnabled(true); });
-
-    auto* actions = new QHBoxLayout;
-    actions->addWidget(uploadButton);
-    actions->addStretch();
-    actions->addWidget(useButton_);
+    finder_->setPreviewFooter(useButton_);
 
     // --- Assemble -----------------------------------------------------------
+    status_ = new QLabel(this);
+    status_->setEnabled(false);  // muted: a transient confirmation, not content
+
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(16, 12, 16, 12);
     layout->addLayout(topBar);
-    layout->addWidget(finder_, /*stretch=*/1);
-    layout->addLayout(actions);
+    layout->addWidget(makeCardCopySplitter(form_, finder_), /*stretch=*/1);
+    layout->addWidget(status_);
+}
+
+void EditCardCopyPage::saveComments() {
+    try {
+        // Condition is read-only here, so form_->condition() is the recorded value —
+        // editDetails only really changes the comments.
+        copies_.editDetails(copy_.id, form_->condition(), form_->comments());
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, tr("Pokedex TCG"),
+                             tr("Could not save comments:\n%1").arg(QString::fromUtf8(e.what())));
+        return;
+    }
+    copy_.comments = form_->comments();  // record it so the button disables until re-edited
+    saveComments_->setEnabled(false);
+    status_->setText(tr("Comments saved."));
 }
 
 void EditCardCopyPage::saveFromFinder() {
@@ -88,8 +124,8 @@ void EditCardCopyPage::saveFromFinder() {
     if (preview.isNull()) {
         return;  // defensive: nothing loaded to save
     }
-    images_.save(copyId_, preview);  // emits CardImageStore::imageChanged → host refresh
-    Q_EMIT backRequested();
+    images_.save(copy_.id, preview);  // emits CardImageStore::imageChanged → host refresh
+    status_->setText(tr("Image updated from the selected card."));
 }
 
 void EditCardCopyPage::uploadPhoto() {
@@ -106,12 +142,12 @@ void EditCardCopyPage::uploadPhoto() {
             tr("That file could not be read as an image. Try a PNG or JPEG."));
         return;
     }
-    if (!images_.save(copyId_, pixmap)) {  // emits imageChanged on success → host refresh
+    if (!images_.save(copy_.id, pixmap)) {  // emits imageChanged on success → host refresh
         QMessageBox::warning(this, tr("Pokedex TCG"),
                              tr("The image could not be saved to your workspace."));
         return;
     }
-    Q_EMIT backRequested();
+    status_->setText(tr("Image updated from the uploaded photo."));
 }
 
 }  // namespace pokedex

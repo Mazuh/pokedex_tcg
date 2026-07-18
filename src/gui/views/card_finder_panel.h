@@ -15,6 +15,7 @@ class QLabel;
 class QLineEdit;
 class QListWidget;
 class QListWidgetItem;
+class QVBoxLayout;
 
 namespace pokedex {
 
@@ -57,6 +58,11 @@ public:
     // uploading a photo when editing). The shared "No printings found for that set —"
     // lead-in stays fixed.
     void setNoResultsHint(const QString& hint);
+
+    // Place `widget` centered directly beneath the preview image (e.g. an "apply this
+    // card" action, so it sits under the picture it acts on). Takes ownership. Used by
+    // the Edit-card host; the Add-copy host leaves the preview footer empty.
+    void setPreviewFooter(QWidget* widget);
 
 public Q_SLOTS:
     // Drop the current selection + preview — e.g. a host's form was edited so it no
@@ -122,6 +128,7 @@ private:
     QHash<QString, QListWidgetItem*> itemById_;  // card id → row, for late-arriving thumbnails
 
     // Preview of the currently-selected card.
+    QVBoxLayout* previewLayout_;  // holds preview_; a host may append a footer action
     QLabel* preview_;
     QPixmap previewPixmap_;      // full-res selected-card image; rescaled on resize
     QString previewCardId_;      // the thumbnail key we're awaiting for the preview

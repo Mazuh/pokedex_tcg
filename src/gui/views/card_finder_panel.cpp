@@ -97,9 +97,9 @@ CardFinderPanel::CardFinderPanel(CardSearchService& search, int dexNumber,
     preview_->setMinimumWidth(180);
     preview_->setWordWrap(true);
     preview_->installEventFilter(this);  // rescale the image when the pane resizes
-    auto* previewLayout = new QVBoxLayout(previewPane);
-    previewLayout->setContentsMargins(0, 0, 0, 0);
-    previewLayout->addWidget(preview_);
+    previewLayout_ = new QVBoxLayout(previewPane);
+    previewLayout_->setContentsMargins(0, 0, 0, 0);
+    previewLayout_->addWidget(preview_, /*stretch=*/1);  // footer (if any) sits below
 
     // --- Assemble: list ⇄ preview, both draggable --------------------------
     auto* splitter = new QSplitter(Qt::Horizontal, this);
@@ -399,6 +399,10 @@ QPixmap CardFinderPanel::selectedPreview() const { return previewPixmap_; }
 void CardFinderPanel::setNoResultsHint(const QString& hint) {
     noResultsHint_ = hint;
     updateStatus();  // reflect it now if the "no results" message is already showing
+}
+
+void CardFinderPanel::setPreviewFooter(QWidget* widget) {
+    previewLayout_->addWidget(widget, /*stretch=*/0, Qt::AlignHCenter);
 }
 
 }  // namespace pokedex
