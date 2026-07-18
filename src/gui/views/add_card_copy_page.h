@@ -41,7 +41,9 @@ struct CardSetInfo;
 //
 // It is an in-window page pushed onto a host's QStackedWidget (PokemonListView or
 // BinderView); a Back button emits backRequested() and the host pops + disposes
-// of it, so each open starts fresh.
+// of it, so each open starts fresh. Leaving with a partly-filled form (the user
+// started composing a copy but never pressed "Add copy") prompts to discard rather
+// than dropping the work silently — the same courtesy the Edit page gives comments.
 class AddCardCopyPage : public QWidget {
     Q_OBJECT
 
@@ -69,6 +71,8 @@ private:
     void checkUnmatch();                       // drop the finder selection once the form diverges
     void updateSubmitEnabled();                // enable submit once the form is valid
     void submitCopy();                         // create the copy from the form fields
+    void handleBack();                         // guard Back on a partly-filled form, then leave
+    bool isDirty() const;                      // has the user entered anything worth confirming?
 
     CardCopyService& copies_;
     CardImageStore& cardImages_;

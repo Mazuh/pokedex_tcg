@@ -37,7 +37,7 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
       lockedBinder_(std::move(lockedBinder)) {
     // --- Top bar: Back + heading -------------------------------------------
     auto* backButton = makeBackButton(this);
-    connect(backButton, &QPushButton::clicked, this, &AddCardCopyPage::backRequested);
+    connect(backButton, &QPushButton::clicked, this, &AddCardCopyPage::handleBack);
 
     auto* heading = new QLabel(tr("Add a copy — %1").arg(speciesName), this);
     QFont headingFont = heading->font();
@@ -123,6 +123,46 @@ void AddCardCopyPage::checkUnmatch() {
 
 void AddCardCopyPage::updateSubmitEnabled() {
     submit_->setEnabled(!form_->cardReference().collectorNumber.empty());
+}
+
+bool AddCardCopyPage::isDirty() const {
+    // "Dirty" = the user has entered something that would be lost. Every field starts
+    // pristine (empty identity, unspecified language/condition, Owned, empty comments),
+    // so any departure from that is worth confirming. A picked finder card is covered
+    // by the identity check: it autofills those fields (and checkUnmatch drops the pick
+    // once they're edited away), so it never needs a separate term here.
+    const CardReference ref = form_->cardReference();
+    if (!ref.expansionCode.empty() || !ref.setName.empty() || !ref.collectorNumber.empty() ||
+        !ref.language.empty()) {
+        return true;
+    }
+    if (!form_->comments().empty() || form_->condition().has_value() ||
+        form_->ownership() != CardOwnership::Owned) {
+        return true;
+    }
+    // The binder combo only counts when unscoped (scoped is pre-filled and locked, so
+    // it isn't the user's doing).
+    return !lockedBinder_ && form_->binderId().has_value();
+}
+
+void AddCardCopyPage::handleBack() {
+    // Don't drop a partly-composed copy on Back without a word — offer to discard it or
+    // stay. (A successful "Add copy" emits backRequested() directly, bypassing this,
+    // since the form was consumed.) An explicit "Discard" button reads clearer than the
+    // stock Discard role, which macOS labels "Don't Save" (there is no save here).
+    if (isDirty()) {
+        QMessageBox box(QMessageBox::Question, tr("Discard new card?"),
+                        tr("You haven't added this card yet. Leave and discard it?"),
+                        QMessageBox::NoButton, this);
+        QPushButton* discard = box.addButton(tr("Discard"), QMessageBox::DestructiveRole);
+        box.addButton(QMessageBox::Cancel);
+        box.setDefaultButton(QMessageBox::Cancel);  // safe default: stay
+        box.exec();
+        if (box.clickedButton() != discard) {
+            return;  // Cancel (or closed) → stay on the page
+        }
+    }
+    Q_EMIT backRequested();
 }
 
 void AddCardCopyPage::submitCopy() {
