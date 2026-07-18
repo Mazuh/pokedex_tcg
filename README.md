@@ -3,6 +3,16 @@
 Just another Pokédex, but specifically designed to
 manage my physical card collection using local files.
 
+![Pokédex TCG](screenshot.png)
+
+## Features
+
+- Browse the National Pokédex and see each species' collection status.
+- Organize your physical cards into binders.
+- Record card copies with printing details, condition and ownership.
+- Search the pokemontcg.io catalog to autofill a card and its image.
+- Keep a wishlist of the cards and sources you're still after.
+
 ## Instructions
 
 ### OS Requirements
@@ -50,6 +60,20 @@ ctest --test-dir build --output-on-failure
 ./dev.sh build    # build only
 ./dev.sh clean    # delete the build dir (forces a fresh configure)
 ```
+
+## Acknowledgments
+
+Huge thanks to these projects for making their data freely available — this
+app would not exist without them:
+
+- [**Pokémon TCG API**](https://github.com/PokemonTCG/pokemon-tcg-api)
+  ([pokemontcg.io](https://pokemontcg.io)) — card catalog, printings, and images.
+- [**PokeAPI/sprites**](https://github.com/PokeAPI/sprites) — the official
+  Pokémon artwork (fetched directly from the sprites repo).
+- [**lgreski/pokemonData**](https://github.com/lgreski/pokemonData) — the
+  National Pokédex species list the built-in catalog was derived from.
+
+Please consider supporting them.
 
 ## License and Legal Disclaimer
 
