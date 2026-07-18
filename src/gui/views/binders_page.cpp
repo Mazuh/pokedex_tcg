@@ -155,7 +155,8 @@ void BindersPage::createBinder() {
     }
     try {
         service_.create(dialog.name(), dialog.region());
-        showToast(this, tr("Binder “%1” created.").arg(dialog.name()));
+        showToast(this, tr("Binder “%1” created.")
+                            .arg(QString::fromStdString(dialog.name())));
     } catch (const std::exception& e) {
         QMessageBox::critical(this, tr("Pokedex TCG"),
                               tr("Could not create the binder:\n%1")
