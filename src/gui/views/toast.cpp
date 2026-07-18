@@ -36,17 +36,28 @@ void showToast(QWidget* anchor, const QString& message) {
         existing->deleteLater();
     }
 
-    auto* toast = new QLabel(message, window);
+    auto* toast = new QLabel(window);
     toast->setObjectName(kToastName);
     toast->setAttribute(Qt::WA_TransparentForMouseEvents);  // never intercept clicks
     toast->setAttribute(Qt::WA_DeleteOnClose);
     toast->setAlignment(Qt::AlignCenter);
-    // A dark translucent HUD pill (macOS-style) — legible over either theme.
+    // Lead with a green check so a successful write reads as a positive cue at a
+    // glance, not just another line of text. showToast is the "it worked" channel
+    // only (failures use a modal), so the success styling is baked in here. The
+    // message is escaped since it now rides in rich text.
+    toast->setTextFormat(Qt::RichText);
+    toast->setText(
+        QStringLiteral(
+            "<span style=\"color:#30d158; font-weight:700;\">&#10003;</span>&nbsp;&nbsp;%1")
+            .arg(message.toHtmlEscaped()));
+    // A dark translucent HUD pill (macOS-style) — legible over either theme — with a
+    // faint green hairline so the whole pill, not only the check, signals success.
     toast->setStyleSheet(
         "QLabel {"
         " background: rgba(28, 28, 30, 0.92);"
         " color: white;"
         " padding: 10px 20px;"
+        " border: 1px solid rgba(48, 209, 88, 0.55);"
         " border-radius: 11px;"
         " font-size: 13px;"
         "}");
