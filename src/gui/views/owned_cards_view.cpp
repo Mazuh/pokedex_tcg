@@ -35,6 +35,7 @@
 #include "gui/views/region_labels.h"
 #include "gui/views/splitter_style.h"
 #include "gui/views/table_cell.h"
+#include "gui/views/toast.h"
 
 namespace pokedex {
 
@@ -371,7 +372,9 @@ void OwnedCardsView::assignSelected() {
         return;
     }
     try {
-        copies_.assignToBinder(copy.id, dialog.selectedBinderId());
+        const std::optional<CardBinderId> target = dialog.selectedBinderId();
+        copies_.assignToBinder(copy.id, target);
+        showToast(this, target ? tr("Card filed in its binder.") : tr("Card removed from its binder."));
     } catch (const std::exception& e) {
         QMessageBox::critical(this, tr("Pokedex TCG"),
                               tr("Could not file the card:\n%1").arg(QString::fromUtf8(e.what())));
@@ -399,6 +402,7 @@ void OwnedCardsView::removeSelected() {
     }
     try {
         copies_.remove(copy.id, note.toStdString());
+        showToast(this, tr("Card removed, kept in your history."));
     } catch (const std::exception& e) {
         QMessageBox::critical(
             this, tr("Pokedex TCG"),

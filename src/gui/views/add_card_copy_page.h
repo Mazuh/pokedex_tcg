@@ -73,6 +73,7 @@ private:
     CardCopyService& copies_;
     CardImageStore& cardImages_;
     int dexNumber_;
+    QString speciesName_;  // for the success toast, which shows after the page is gone
     // Set when the page is scoped to a binder: the copy is filed here regardless of
     // the (disabled) combo's display state, so it never lands unfiled even if the
     // binder is absent from the combo (e.g. removed after the guide was opened).

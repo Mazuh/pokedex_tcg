@@ -31,6 +31,7 @@
 #include "gui/views/datetime_label.h"
 #include "gui/views/source_label.h"
 #include "gui/views/table_cell.h"
+#include "gui/views/toast.h"
 #include "gui/views/wishlist_edit.h"
 
 namespace pokedex {
@@ -225,6 +226,7 @@ void WishlistView::addEntry() {
     }
     try {
         wishlist_.addSource(chosen->first, chosen->second.toStdString());
+        showToast(this, tr("Added to your wishlist."));
     } catch (const std::exception& e) {
         QMessageBox::warning(this, tr("Pokedex TCG"), QString::fromUtf8(e.what()));
     }
@@ -261,6 +263,7 @@ void WishlistView::removeSelected() {
     const std::string source = item->data(kSourceRole).toString().toStdString();
     try {
         wishlist_.removeSource(dex, source);
+        showToast(this, tr("Wishlist source removed."));
     } catch (const std::exception& e) {
         QMessageBox::warning(this, tr("Pokedex TCG"), QString::fromUtf8(e.what()));
     }

@@ -10,6 +10,7 @@
 #include <exception>
 
 #include "core/app/wishlist_service.h"
+#include "gui/views/toast.h"
 
 namespace pokedex {
 
@@ -35,6 +36,7 @@ inline bool promptEditWishlistSource(QWidget* parent, WishlistService& wishlist,
     }
     try {
         wishlist.editSource(dexNumber, oldSource.toStdString(), entered.toStdString());
+        showToast(parent, QObject::tr("Wishlist source updated."));
     } catch (const std::exception& e) {
         QMessageBox::warning(parent, QObject::tr("Pokedex TCG"),
                              QString::fromUtf8(e.what()));

@@ -19,6 +19,7 @@
 #include "gui/views/card_copy_form.h"
 #include "gui/views/card_copy_splitter.h"
 #include "gui/views/card_finder_panel.h"
+#include "gui/views/toast.h"
 
 namespace pokedex {
 
@@ -89,14 +90,10 @@ EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardImageStore& im
     finder_->setPreviewFooter(useButton_);
 
     // --- Assemble -----------------------------------------------------------
-    status_ = new QLabel(this);
-    status_->setEnabled(false);  // muted: a transient confirmation, not content
-
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(16, 12, 16, 12);
     layout->addLayout(topBar);
     layout->addWidget(makeCardCopySplitter(form_, finder_), /*stretch=*/1);
-    layout->addWidget(status_);
 }
 
 void EditCardCopyPage::saveComments() {
@@ -111,7 +108,7 @@ void EditCardCopyPage::saveComments() {
     }
     copy_.comments = form_->comments();  // record it so the button disables until re-edited
     saveComments_->setEnabled(false);
-    status_->setText(tr("Comments saved."));
+    showToast(this, tr("Comments saved."));
 }
 
 void EditCardCopyPage::saveFromFinder() {
@@ -125,7 +122,7 @@ void EditCardCopyPage::saveFromFinder() {
         return;  // defensive: nothing loaded to save
     }
     images_.save(copy_.id, preview);  // emits CardImageStore::imageChanged → host refresh
-    status_->setText(tr("Image updated from the selected card."));
+    showToast(this, tr("Image updated from the selected card."));
 }
 
 void EditCardCopyPage::uploadPhoto() {
@@ -147,7 +144,7 @@ void EditCardCopyPage::uploadPhoto() {
                              tr("The image could not be saved to your workspace."));
         return;
     }
-    status_->setText(tr("Image updated from the uploaded photo."));
+    showToast(this, tr("Image updated from the uploaded photo."));
 }
 
 }  // namespace pokedex

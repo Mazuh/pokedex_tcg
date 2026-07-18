@@ -21,6 +21,7 @@
 #include "gui/views/card_copy_form.h"
 #include "gui/views/card_copy_splitter.h"
 #include "gui/views/card_finder_panel.h"
+#include "gui/views/toast.h"
 
 namespace pokedex {
 
@@ -32,6 +33,7 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
       copies_(copies),
       cardImages_(cardImages),
       dexNumber_(dexNumber),
+      speciesName_(speciesName),
       lockedBinder_(std::move(lockedBinder)) {
     // --- Top bar: Back + heading -------------------------------------------
     auto* backButton = makeBackButton(this);
@@ -155,6 +157,9 @@ void AddCardCopyPage::submitCopy() {
             cardImages_.fetchAndSave(created.id, url);  // no-ops on a blank url
         }
     }
+    // Confirm before navigating away: the toast is parented to the window, so it
+    // outlives this page once backRequested() disposes of it.
+    showToast(this, tr("Copy of %1 added.").arg(speciesName_));
     Q_EMIT copyAdded();
     // Return to the previous screen after a successful add — the host's
     // backRequested handler pops this page. (Emit last: the handler schedules the

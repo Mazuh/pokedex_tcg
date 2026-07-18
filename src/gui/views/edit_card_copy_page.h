@@ -7,7 +7,6 @@
 
 #include "core/domain/card_copy.h"
 
-class QLabel;
 class QPushButton;
 
 namespace pokedex {
@@ -32,8 +31,8 @@ struct CardBinder;
 // under the preview, where the picture it applies to is), or "Upload a photo…" (a
 // local file, for a card the catalog doesn't list yet). Setting the image keeps the
 // user on the page (the preview shows the picked art) so they can keep editing; a
-// small status line confirms each save. CardImageStore::imageChanged drives the host
-// to refresh its My Cards preview.
+// toast confirms each save. CardImageStore::imageChanged drives the host to refresh
+// its My Cards preview.
 //
 // It is an in-window page pushed onto OwnedCardsView's inner QStackedWidget; Back
 // emits backRequested() and the host pops + disposes of it. (Explicit save: leaving
@@ -67,7 +66,6 @@ private:
     CardFinderPanel* finder_;
     QPushButton* useButton_;   // "Use this card's image" — enabled once the preview loads
     QPushButton* saveComments_;  // enabled only while the comments differ from the record
-    QLabel* status_;   // muted confirmation of the last save ("Comments saved.", …)
 };
 
 }  // namespace pokedex

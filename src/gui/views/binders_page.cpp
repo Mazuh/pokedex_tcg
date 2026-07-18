@@ -26,6 +26,7 @@
 #include "gui/views/datetime_label.h"
 #include "gui/views/region_labels.h"
 #include "gui/views/table_cell.h"
+#include "gui/views/toast.h"
 
 namespace pokedex {
 
@@ -154,6 +155,7 @@ void BindersPage::createBinder() {
     }
     try {
         service_.create(dialog.name(), dialog.region());
+        showToast(this, tr("Binder “%1” created.").arg(dialog.name()));
     } catch (const std::exception& e) {
         QMessageBox::critical(this, tr("Pokedex TCG"),
                               tr("Could not create the binder:\n%1")
@@ -179,6 +181,7 @@ void BindersPage::renameSelected() {
     }
     try {
         service_.rename(id, entered.toStdString());
+        showToast(this, tr("Binder renamed to “%1”.").arg(entered));
     } catch (const std::exception& e) {
         QMessageBox::critical(this, tr("Pokedex TCG"),
                               tr("Could not rename the binder:\n%1")
@@ -202,6 +205,7 @@ void BindersPage::removeSelected() {
     }
     try {
         service_.remove(id);
+        showToast(this, tr("Binder removed."));
     } catch (const std::exception& e) {
         QMessageBox::critical(this, tr("Pokedex TCG"),
                               tr("Could not remove the binder:\n%1")

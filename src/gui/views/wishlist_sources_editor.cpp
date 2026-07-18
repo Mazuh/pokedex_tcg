@@ -14,6 +14,7 @@
 
 #include "core/app/wishlist_service.h"
 #include "gui/views/source_label.h"
+#include "gui/views/toast.h"
 #include "gui/views/wishlist_edit.h"
 
 namespace pokedex {
@@ -126,6 +127,7 @@ void WishlistSourcesEditor::reload() {
         connect(removeButton, &QToolButton::clicked, this, [this, dex, source] {
             try {
                 wishlist_.removeSource(dex, source);
+                showToast(this, tr("Wishlist source removed."));
             } catch (const std::exception& e) {
                 QMessageBox::warning(this, tr("Pokedex TCG"), QString::fromUtf8(e.what()));
             }
@@ -155,6 +157,7 @@ void WishlistSourcesEditor::addFromInput() {
         return;
     }
     input_->clear();
+    showToast(this, tr("Added to your wishlist."));
     reload();
 }
 

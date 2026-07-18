@@ -161,6 +161,7 @@ qt_add_executable(pokedex_tcg
     src/gui/views/card_image_panel.cpp
     src/gui/views/wishlist_sources_editor.cpp
     src/gui/views/wishlist_view.cpp
+    src/gui/views/toast.cpp
     src/gui/services/media_service.cpp
     src/gui/services/card_image_store.cpp
     src/gui/services/card_search_service.cpp
