@@ -67,3 +67,8 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# user workspace / collection data (never commit personal collection data)
+*.db
+*.sqlite
+*.sqlite3
