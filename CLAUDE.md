@@ -90,14 +90,24 @@ JSON note in the tech stack). `gui/views/` holds the
 the binders section (`BindersPage`, a table with its own list ⇄ binder-guide stack),
 the new-binder editor, the reusable `BinderPickerDialog`, the binder guide view, the
 Pokémon browser (`PokemonListView`, which hosts an inner stack for the add-copy
-page), the `AddCardCopyPage` (the "Add copy" form + infinite-scroll printings list),
-the `OwnedCardsView` ("My Cards" inventory: browse/search/assign-to-binder/remove),
-the unscoped wishlist section (`WishlistView`), and the per-Pokémon wishlist editor
-(`WishlistSourcesEditor`) embedded below the artwork in `PokemonDetailPanel`.
-Enum→label display helpers are header-only in `gui/views/` (`region_labels.h`,
-`status_labels.h`, `condition_labels.h`, `ownership_labels.h`). `gui/services/`
-holds `MediaService` (Pokémon artwork fetch+cache) and `CardSearchService` (card
-search transport — **no disk cache**: search results are display/memory-only).
+page), the `AddCardCopyPage` (the "Add copy" form + the shared card finder), the
+reusable `CardFinderPanel` (the set-scoped search + infinite-scroll printings list +
+preview, extracted from `AddCardCopyPage` so both "Add copy" and "Edit card" drive
+the same finder — it reports picks via signals and knows nothing of forms/copies),
+the `OwnedCardsView` ("My Cards" inventory: browse/search/assign-to-binder/remove,
+plus an inner stack hosting the `EditCardCopyPage`), the `EditCardCopyPage` (a copy's
+first edit surface — change its image by re-searching the catalog or uploading a
+photo; image-only for now), the `CardImagePanel` (the "My Cards" right-hand
+card-image detail panel), the unscoped wishlist section (`WishlistView`), and the
+per-Pokémon wishlist editor (`WishlistSourcesEditor`) embedded below the artwork in
+`PokemonDetailPanel`. The shared `scaled_pixmap.h` helper (DPR-aware fit-scale) backs
+every image panel. Enum→label display helpers are header-only in `gui/views/`
+(`region_labels.h`, `status_labels.h`, `condition_labels.h`, `ownership_labels.h`).
+`gui/services/` holds `MediaService` (Pokémon artwork fetch+cache), `CardSearchService`
+(card search transport — **no disk cache**: search results are display/memory-only),
+and `CardImageStore` (the on-disk store for the one image a committed copy keeps,
+`cards/<copyId>.png`; `save`/`fetchAndSave`/`load`, and an `imageChanged(copyId)`
+signal so a view re-reads the file after a deferred download or an override lands).
 `gui/models/` is still empty — no Qt item models yet; views adapt core →
 widgets inline.
 

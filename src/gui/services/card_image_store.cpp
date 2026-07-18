@@ -44,9 +44,16 @@ QString CardImageStore::pathFor(const std::string& copyId) const {
     return QDir(mediaDir_).filePath(QString::fromStdString(cardImageCacheRelPath(copyId)));
 }
 
-bool CardImageStore::save(const std::string& copyId, const QPixmap& pixmap) const {
+bool CardImageStore::save(const std::string& copyId, const QPixmap& pixmap) {
     if (pixmap.isNull()) {
         return false;
+    }
+    const QString path = pathFor(copyId);
+    // A user's explicit save supersedes any still-in-flight download for this copy:
+    // abort it so its late completion can't overwrite the image just chosen. abort()
+    // makes the reply's finished handler run (with an error), which cleans it up.
+    if (QNetworkReply* reply = inFlight_.take(path)) {
+        reply->abort();
     }
     // Encode to PNG in memory, then commit the bytes atomically.
     QByteArray bytes;
@@ -56,7 +63,11 @@ bool CardImageStore::save(const std::string& copyId, const QPixmap& pixmap) cons
                    << QString::fromStdString(copyId);
         return false;
     }
-    return writeAtomically(pathFor(copyId), bytes);
+    if (!writeAtomically(path, bytes)) {
+        return false;
+    }
+    Q_EMIT imageChanged(QString::fromStdString(copyId));
+    return true;
 }
 
 void CardImageStore::fetchAndSave(const std::string& copyId, const QString& url) {
@@ -77,11 +88,12 @@ void CardImageStore::fetchAndSave(const std::string& copyId, const QString& url)
     QNetworkReply* reply = nam_->get(request);
     inFlight_.insert(path, reply);
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply, path]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, path, copyId]() {
         inFlight_.remove(path);
         reply->deleteLater();
 
         if (reply->error() != QNetworkReply::NoError) {
+            // Includes the deliberate abort() a save() fires to supersede this fetch.
             qWarning() << "CardImageStore: fetch failed for" << path << ":"
                        << reply->errorString();
             return;
@@ -95,7 +107,9 @@ void CardImageStore::fetchAndSave(const std::string& copyId, const QString& url)
                        << bytes.size() << "bytes )";
             return;
         }
-        writeAtomically(path, bytes);
+        if (writeAtomically(path, bytes)) {
+            Q_EMIT imageChanged(QString::fromStdString(copyId));
+        }
     });
 }
 

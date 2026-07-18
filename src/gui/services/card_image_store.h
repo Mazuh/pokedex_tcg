@@ -43,19 +43,29 @@ public:
 
     // Persist `pixmap` as this copy's image, creating cards/ as needed and writing
     // atomically (temp-write-then-rename) so a crash mid-write leaves no partial
-    // file. Returns false (and leaves any prior file intact) on a null pixmap or a
-    // write/encode failure; callers treat the image as best-effort.
-    bool save(const std::string& copyId, const QPixmap& pixmap) const;
+    // file. First aborts any still-in-flight fetchAndSave() for this copy, so a
+    // deferred download can never clobber the image the user just chose. Emits
+    // imageChanged() on success. Returns false (and leaves any prior file intact) on
+    // a null pixmap or a write/encode failure; callers treat the image as best-effort.
+    bool save(const std::string& copyId, const QPixmap& pixmap);
 
     // Download the image at `url` and persist it as this copy's image (same atomic
-    // write as save()). Best-effort and fire-and-forget: a blank url, a failed
-    // fetch, or invalid image bytes simply leaves no file (logged, never thrown).
-    // Concurrent fetches for the same copy are de-duplicated.
+    // write as save(), and emits imageChanged() on success). Best-effort and
+    // fire-and-forget: a blank url, a failed fetch, or invalid image bytes simply
+    // leaves no file (logged, never thrown). Concurrent fetches for the same copy are
+    // de-duplicated; a save() for the same copy supersedes an in-flight fetch.
     void fetchAndSave(const std::string& copyId, const QString& url);
 
     // Load a copy's image from disk, or a null QPixmap when none is stored (or the
     // file is unreadable/undecodable — e.g. a hand-placed file that isn't an image).
     QPixmap load(const std::string& copyId) const;
+
+Q_SIGNALS:
+    // This copy's stored image changed on disk — synchronously from save(), or later
+    // when a fetchAndSave() download lands. Lets a view showing that copy re-read the
+    // file (a deferred download would otherwise never appear, since the copy id, and
+    // thus a view's dedup key, is unchanged).
+    void imageChanged(const QString& copyId);
 
 private:
     QString mediaDir_;

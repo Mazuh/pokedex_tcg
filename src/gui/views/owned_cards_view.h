@@ -12,6 +12,7 @@ class QLabel;
 class QLineEdit;
 class QPushButton;
 class QShowEvent;
+class QStackedWidget;
 class QTableWidget;
 
 namespace pokedex {
@@ -19,7 +20,9 @@ namespace pokedex {
 class CardCopyService;
 class BinderService;
 class CardImageStore;
+class CardSearchService;
 class CardImagePanel;
+class EditCardCopyPage;
 
 // GUI — the "My Cards" section: a flat, read-only inventory of every card copy the
 // user has recorded (Owned, Incoming, or soft-Removed), so they can keep track of
@@ -32,13 +35,15 @@ class CardImagePanel;
 // (from a Pokémon's "Add copy" page) appears the moment the user switches here,
 // without any cross-section signalling. A live search box filters the rows on any
 // visible field, and a selected card can be filed into / out of a binder via a
-// picker. It is a section embedded in MainWindow's stack, not a separate window.
+// picker, or opened in an in-window "Edit card" page to change its image. It is a
+// section embedded in MainWindow's stack, not a separate window; the edit page is
+// pushed onto its own inner QStackedWidget (the PokemonListView list⇄page idiom).
 class OwnedCardsView : public QWidget {
     Q_OBJECT
 
 public:
     OwnedCardsView(CardCopyService& copies, BinderService& binders, CardImageStore& images,
-                   QWidget* parent = nullptr);
+                   CardSearchService& cardSearch, QWidget* parent = nullptr);
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -59,16 +64,21 @@ private:
     void assignSelected();
     // Soft-remove the selected copy, prompting for an optional note to append.
     void removeSelected();
+    // Push the in-window "Edit card" page for the selected copy (to change its image).
+    void editSelectedCard();
 
     CardCopyService& copies_;
     BinderService& binders_;
     CardImageStore& images_;
+    CardSearchService& cardSearch_;   // transport for the edit page's card finder
+    QStackedWidget* stack_;   // page 0 = list ⇄ image panel; page 1 = the edit page
     CardImagePanel* panel_;   // right-hand card-image detail panel
     QLineEdit* search_;
     QTableWidget* table_;
     QLabel* emptyLabel_;   // shown in place of the table when no cards are recorded yet
     QPushButton* assignButton_;
     QPushButton* removeButton_;
+    QPushButton* editButton_;
     QLabel* countLabel_;
     // The copies backing the current rows, in display order (row i ⇄ loaded_[i]);
     // filtering only hides rows, so this stays aligned with the table.

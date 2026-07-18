@@ -9,6 +9,7 @@
 #include <QPushButton>
 #include <QShowEvent>
 #include <QSplitter>
+#include <QStackedWidget>
 #include <QString>
 #include <QStyle>
 #include <QTableWidget>
@@ -28,6 +29,7 @@
 #include "gui/services/card_image_store.h"
 #include "gui/views/binder_picker_dialog.h"
 #include "gui/views/card_image_panel.h"
+#include "gui/views/edit_card_copy_page.h"
 #include "gui/views/condition_labels.h"
 #include "gui/views/ownership_labels.h"
 #include "gui/views/region_labels.h"
@@ -67,11 +69,25 @@ QString cardText(const CardReference& ref) {
     return expansion.isEmpty() ? number : expansion + QStringLiteral(" ") + number;
 }
 
+// A copy's display title: species name plus its printed identity ("Pikachu · BS
+// 44/102"), or just the printed identity when the species is unknown. Shared by the
+// image panel and the Edit-card heading so the two never diverge.
+QString titleFor(const CardCopy& copy) {
+    const QString species = speciesName(copy.pokemonDexNum);
+    const QString card = cardText(copy.cardRef);
+    return species.isEmpty() ? card : species + QStringLiteral(" · ") + card;
+}
+
 }  // namespace
 
 OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
-                               CardImageStore& images, QWidget* parent)
-    : QWidget(parent), copies_(copies), binders_(binders), images_(images) {
+                               CardImageStore& images, CardSearchService& cardSearch,
+                               QWidget* parent)
+    : QWidget(parent),
+      copies_(copies),
+      binders_(binders),
+      images_(images),
+      cardSearch_(cardSearch) {
     search_ = new QLineEdit(this);
     search_->setPlaceholderText(
         tr("Search copy by Pokémon, collector number, set or binder…"));
@@ -120,6 +136,10 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     removeButton_->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
     connect(removeButton_, &QPushButton::clicked, this, &OwnedCardsView::removeSelected);
 
+    editButton_ = new QPushButton(tr("Edit card…"), this);
+    editButton_->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
+    connect(editButton_, &QPushButton::clicked, this, &OwnedCardsView::editSelectedCard);
+
     // Shown in place of the table (and search) when the collection is empty.
     emptyLabel_ = new QLabel(
         tr("No cards yet. Open a Pokémon in “All Pokémon” and use “Add copy…” to "
@@ -135,6 +155,7 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     auto* buttons = new QHBoxLayout;
     buttons->addWidget(assignButton_);
     buttons->addWidget(removeButton_);
+    buttons->addWidget(editButton_);
     buttons->addStretch();
 
     // The list pane (left) holds everything the section had before; the card-image
@@ -149,9 +170,20 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     listLayout->addLayout(buttons);
     listLayout->addWidget(countLabel_);
 
-    panel_ = new CardImagePanel(this);
+    panel_ = new CardImagePanel;
 
-    auto* splitter = new QSplitter(Qt::Horizontal, this);
+    // A deferred fetchAndSave() download (or any image write) for the copy currently
+    // shown must re-render the panel: the copy id is unchanged, so showSelectedImage's
+    // shownCopyId_ dedup guard would otherwise suppress the reload and the new art
+    // would never appear. Reset the guard and re-show when the shown copy changes.
+    connect(&images_, &CardImageStore::imageChanged, this, [this](const QString& copyId) {
+        if (copyId.toStdString() == shownCopyId_) {
+            shownCopyId_.clear();
+            showSelectedImage();
+        }
+    });
+
+    auto* splitter = new QSplitter(Qt::Horizontal);
     splitter->addWidget(listPane);
     splitter->addWidget(panel_);
     splitter->setStretchFactor(0, 1);
@@ -159,9 +191,15 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     splitter->setSizes({560, 240});
     thinDivider(splitter);
 
+    // An inner stack so an in-window "Edit card" page can be pushed over the list,
+    // then popped back — the PokemonListView list⇄page idiom, so My Cards navigates
+    // within the section rather than opening a separate window.
+    stack_ = new QStackedWidget(this);
+    stack_->addWidget(splitter);  // page 0: the list ⇄ image panel
+
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->addWidget(splitter);
+    layout->addWidget(stack_);
 
     updateButtonState();
 }
@@ -264,6 +302,7 @@ void OwnedCardsView::reload() {
     countLabel_->setVisible(!empty);
     assignButton_->setVisible(!empty);
     removeButton_->setVisible(!empty);
+    editButton_->setVisible(!empty);
     emptyLabel_->setVisible(empty);
     panel_->setVisible(!empty);
 
@@ -295,6 +334,7 @@ void OwnedCardsView::updateButtonState() {
     const bool hasSelection = table_->currentRow() >= 0 && !table_->selectedItems().isEmpty();
     assignButton_->setEnabled(hasSelection);
     removeButton_->setEnabled(hasSelection);
+    editButton_->setEnabled(hasSelection);
 }
 
 void OwnedCardsView::showSelectedImage() {
@@ -314,13 +354,9 @@ void OwnedCardsView::showSelectedImage() {
         return;
     }
     const CardCopy& copy = loaded_[row];
-    // Title mirrors the table: species name plus the printed identity ("BS 44/102").
-    const QString species = speciesName(copy.pokemonDexNum);
-    const QString card = cardText(copy.cardRef);
-    const QString title = species.isEmpty() ? card : species + QStringLiteral(" · ") + card;
     // A synchronous local disk read (like MediaService's cache-hit path); a null
     // pixmap (older copy, or one added without a preview) shows the panel placeholder.
-    panel_->showImage(title, images_.load(copy.id));
+    panel_->showImage(titleFor(copy), images_.load(copy.id));
 }
 
 void OwnedCardsView::assignSelected() {
@@ -368,6 +404,26 @@ void OwnedCardsView::removeSelected() {
             tr("Could not remove the card:\n%1").arg(QString::fromUtf8(e.what())));
     }
     reload();
+}
+
+void OwnedCardsView::editSelectedCard() {
+    const int row = table_->currentRow();
+    if (row < 0 || row >= static_cast<int>(loaded_.size())) {
+        return;
+    }
+    const CardCopy& copy = loaded_[row];
+    auto* page = new EditCardCopyPage(cardSearch_, images_, copy.id, copy.pokemonDexNum,
+                                      titleFor(copy));
+    stack_->addWidget(page);
+    // The panel refresh is driven by CardImageStore::imageChanged (connected in the
+    // ctor), which fires whether the save is synchronous or a deferred download — so
+    // the page only needs to ask to be popped when done.
+    connect(page, &EditCardCopyPage::backRequested, this, [this, page]() {
+        stack_->setCurrentIndex(0);   // back to the list ⇄ panel
+        stack_->removeWidget(page);
+        page->deleteLater();
+    });
+    stack_->setCurrentWidget(page);
 }
 
 }  // namespace pokedex
