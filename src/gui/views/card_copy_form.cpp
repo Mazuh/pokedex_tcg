@@ -1,9 +1,11 @@
 #include "gui/views/card_copy_form.h"
 
+#include <QColor>
 #include <QComboBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLineEdit>
+#include <QPalette>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QStringList>
@@ -74,7 +76,11 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     ownership_->setCurrentIndex(ownership_->findData(static_cast<int>(CardOwnership::Owned)));
 
     // The binder the copy is filed in — populated + enabled via setupBinderPicker().
+    // activated() fires only on a USER pick (not the programmatic setCurrentIndex in
+    // setupBinderPicker), so a host can persist a reassignment without echoing loads.
     binder_ = new QComboBox(this);
+    connect(binder_, &QComboBox::activated, this,
+            [this](int) { Q_EMIT binderChanged(); });
 
     comments_ = new QPlainTextEdit(this);
     comments_->setPlaceholderText(
@@ -107,9 +113,25 @@ void CardCopyForm::setupBinderPicker(const std::vector<CardBinder>& binders,
 }
 
 void CardCopyForm::setReferenceEditable(bool editable) {
-    expansionCode_->setReadOnly(!editable);
-    setName_->setReadOnly(!editable);
-    collectorNumber_->setReadOnly(!editable);
+    // Lock the identity line edits with setReadOnly (not setEnabled) so their text
+    // stays selectable/copyable — a user may want to copy a set name or collector
+    // number out. A plain read-only QLineEdit renders as bright, editable-looking
+    // text though, which read as confusing next to the disabled combos; so when
+    // locked we also mute the text to the theme's disabled colour, matching the
+    // greyed-out look of the other read-only fields while keeping copy-out.
+    for (QLineEdit* field : {expansionCode_, setName_, collectorNumber_}) {
+        field->setReadOnly(!editable);
+        if (editable) {
+            field->setPalette(QPalette());  // inherit defaults (normal, bright text)
+        } else {
+            QPalette pal = field->palette();
+            const QColor muted = pal.color(QPalette::Disabled, QPalette::Text);
+            pal.setColor(QPalette::Active, QPalette::Text, muted);
+            pal.setColor(QPalette::Inactive, QPalette::Text, muted);
+            field->setPalette(pal);
+        }
+    }
+    // Combos can't be shown read-only-but-selectable, so these stay disabled.
     language_->setEnabled(editable);
     condition_->setEnabled(editable);
     ownership_->setEnabled(editable);

@@ -19,6 +19,7 @@
 #include "gui/views/card_copy_form.h"
 #include "gui/views/card_copy_splitter.h"
 #include "gui/views/card_finder_panel.h"
+#include "gui/views/scaled_pixmap.h"
 #include "gui/views/toast.h"
 
 namespace pokedex {
@@ -27,8 +28,12 @@ EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardImageStore& im
                                    CardCopyService& copies, CardCopy copy,
                                    const std::vector<CardBinder>& binders,
                                    const QString& title, QWidget* parent)
-    : QWidget(parent), images_(images), copies_(copies), copy_(std::move(copy)) {
-    // --- Top bar: Back + heading -------------------------------------------
+    : QWidget(parent),
+      images_(images),
+      copies_(copies),
+      copy_(std::move(copy)),
+      binders_(binders) {
+    // --- Top bar: Back + heading + current-image thumbnail -----------------
     auto* backButton = makeBackButton(this);
     connect(backButton, &QPushButton::clicked, this, &EditCardCopyPage::handleBack);
 
@@ -37,16 +42,36 @@ EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardImageStore& im
     headingFont.setBold(true);
     heading->setFont(headingFont);
 
+    // The copy's current stored image, small, on the right of the top bar so it stays
+    // visible while editing (the finder preview to the right shows a *candidate*, not
+    // the card's actual picture). refreshCurrentImage() fills it now and again whenever
+    // an image save lands (Use this card's image / Upload a photo).
+    currentImage_ = new QLabel(this);
+    currentImage_->setAlignment(Qt::AlignCenter);
+    // A fixed box so the thumbnail can't widen the top bar — a portrait card fills
+    // it; a landscape upload fit-scales down and centers inside it.
+    currentImage_->setFixedSize(54, 72);
+    currentImage_->setEnabled(false);  // muted: it's context, not an action
+    connect(&images_, &CardImageStore::imageChanged, this, [this](const QString& copyId) {
+        if (copyId.toStdString() == copy_.id) {
+            refreshCurrentImage();
+        }
+    });
+
     auto* topBar = new QHBoxLayout;
     topBar->addWidget(backButton);
     topBar->addWidget(heading);
     topBar->addStretch();
+    topBar->addWidget(new QLabel(tr("Current image:"), this));
+    topBar->addWidget(currentImage_);
 
     // --- Form (left): the shared details pane, read-only but for comments --
     form_ = new CardCopyForm(this);
     form_->setMaximumWidth(560);
     form_->loadCopy(copy_);
-    form_->setupBinderPicker(binders, copy_.binderId, /*enabled=*/false);
+    // Binder is editable — reassignment is supported here as it is elsewhere.
+    form_->setupBinderPicker(binders, copy_.binderId, /*enabled=*/true);
+    connect(form_, &CardCopyForm::binderChanged, this, &EditCardCopyPage::saveBinder);
     form_->setReferenceEditable(false);  // identity/condition/ownership are the record
 
     saveComments_ = new QPushButton(tr("Save comments"), this);
@@ -94,6 +119,20 @@ EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardImageStore& im
     layout->setContentsMargins(16, 12, 16, 12);
     layout->addLayout(topBar);
     layout->addWidget(makeCardCopySplitter(form_, finder_), /*stretch=*/1);
+
+    refreshCurrentImage();  // show whatever picture the copy currently has
+}
+
+void EditCardCopyPage::refreshCurrentImage() {
+    const QPixmap current = images_.load(copy_.id);
+    if (current.isNull()) {
+        currentImage_->setPixmap(QPixmap());
+        currentImage_->setText(tr("(none)"));
+        return;
+    }
+    // Fit-scale within the fixed box (DPR-aware) via the shared helper, so the
+    // thumbnail never exceeds its bounds regardless of the image's aspect ratio.
+    setScaledPixmap(currentImage_, current);
 }
 
 bool EditCardCopyPage::saveComments() {
@@ -110,6 +149,26 @@ bool EditCardCopyPage::saveComments() {
     saveComments_->setEnabled(false);
     showToast(this, tr("Comments saved."));
     return true;
+}
+
+void EditCardCopyPage::saveBinder() {
+    const std::optional<CardBinderId> target = form_->binderId();
+    if (target == copy_.binderId) {
+        return;  // no change (e.g. the user reselected the same entry)
+    }
+    try {
+        copies_.assignToBinder(copy_.id, target);
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, tr("Pokedex TCG"),
+                             tr("Could not file the card:\n%1").arg(QString::fromUtf8(e.what())));
+        // The write failed, so the combo now shows a binder the record doesn't have —
+        // restore it to the stored value.
+        form_->setupBinderPicker(binders_, copy_.binderId, /*enabled=*/true);
+        return;
+    }
+    copy_.binderId = target;
+    showToast(this, target ? tr("Card filed in its binder.")
+                           : tr("Card removed from its binder."));
 }
 
 void EditCardCopyPage::handleBack() {

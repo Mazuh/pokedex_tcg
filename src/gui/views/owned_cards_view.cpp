@@ -128,6 +128,10 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
         updateButtonState();
         showSelectedImage();
     });
+    // Double-clicking a row opens that copy's Edit page — the double-click selects the
+    // row first, so editSelectedCard() reads the intended row.
+    connect(table_, &QTableWidget::cellDoubleClicked, this,
+            [this](int, int) { editSelectedCard(); });
 
     assignButton_ = new QPushButton(tr("Assign to binder…"), this);
     assignButton_->setIcon(style()->standardIcon(QStyle::SP_DirOpenIcon));

@@ -77,6 +77,9 @@ Q_SIGNALS:
     void referenceEdited();
     // The comments text changed (any source). Lets a host enable its Save button.
     void commentsChanged();
+    // The user picked a different binder in the combo (not a programmatic load). Lets
+    // an edit host persist the reassignment immediately.
+    void binderChanged();
 
 private:
     QLineEdit* expansionCode_;
