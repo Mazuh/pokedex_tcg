@@ -271,6 +271,25 @@ the data (Wishlist: one row per source within a per-species entry), flatten to a
 one-record-per-row vector first so every column — including the per-row one — is
 sortable.
 
+Two rules keep a header-click cheap and correct. **A sort is a pure in-memory
+reorder — it must not re-hit storage.** Split each view's "load data" from its
+"sort + rebuild rows": the data load (`reload()`/`refresh()`) queries and then
+delegates to a `repopulate()` that sorts the cached vector and rebuilds the table;
+the `installHeaderSort` callback calls only `repopulate()`. Cache whatever the
+rebuild needs (`OwnedCardsView` holds `binderList_`, `WishlistView` its flattened
+`rows_`) so reordering never re-queries — a header click on the binder guide must
+not recompute every species' `CollectionStatus`. **Restore the selection by
+identity in `repopulate()`, never by row index** (copy id, binder id, `(dex,
+source)`): a sort moves the highlighted record to a new row, so a row-index
+selection would leave row actions (Remove/Assign/Edit) silently targeting the
+wrong record, and the binder guide's copy-mode panel would re-roll a random copy —
+capture the shown copy id (`PokemonDetailPanel::shownCopyId()`) and re-show it.
+**Precompute sort keys once per row**, not per comparison: decorate the rows into a
+struct carrying the derived keys (a species/catalog lookup, a `QString`
+allocation), sort that, then reorder the backing vector — the pattern
+`WishlistView`'s `SourceRow` uses; a comparator that recomputes both operands' keys
+does it `O(n log n)` times.
+
 **Storage writes that span statements go in a transaction.** A repository `add`
 that writes more than one row (e.g. `Wishlist` — a parent row plus its source
 rows) must wrap them in `BEGIN` / `COMMIT` with a best-effort `ROLLBACK` on
