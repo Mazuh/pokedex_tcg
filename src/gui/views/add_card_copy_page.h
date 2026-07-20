@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QPixmap>
 #include <QString>
 #include <QWidget>
 
@@ -7,7 +8,11 @@
 
 #include "core/domain/types.h"
 
+class QEvent;
+class QLabel;
+class QObject;
 class QPushButton;
+class QStackedWidget;
 
 namespace pokedex {
 
@@ -33,10 +38,17 @@ struct CardSetInfo;
 // larger image; the form stays usable by hand, and the page works even when the card
 // API is unreachable.
 //
-// Submitting creates a copy via CardCopyService and, when a card was picked, saves
-// its preview image to the workspace (CardImageStore, keyed by the new copy's id) so
-// "My Cards" can show it; it then emits copyAdded() (so the host can refresh any
-// owned-copy counts) and backRequested() to return to the previous screen. The form
+// Instead of the catalog image, the user may upload a photo of the card in hand
+// ("Upload a photo…"): the chosen image replaces the search pane entirely (a preview
+// with a "Remove photo" button that swaps the finder back) and is held in memory —
+// unlike the Edit page, which writes to disk immediately, nothing is persisted until
+// "Add copy", so an abandoned add leaves no file. An uploaded photo takes precedence
+// over any finder pick when the copy is saved.
+//
+// Submitting creates a copy via CardCopyService and, when a card was picked (or a
+// photo uploaded), saves its image to the workspace (CardImageStore, keyed by the new
+// copy's id) so "My Cards" can show it; it then emits copyAdded() (so the host can
+// refresh any owned-copy counts) and backRequested() to return to the previous screen. The form
 // carries an optional binder picker: when opened unscoped (from the Pokémon browser)
 // it defaults to "— None —" and the user may file the copy in any binder; when opened
 // from within a binder it is pre-filled with that binder and locked, so the copy lands
@@ -71,12 +83,20 @@ Q_SIGNALS:
     // A copy was persisted; the host should refresh any owned-copy counts it shows.
     void copyAdded();
 
+protected:
+    // Rescales the uploaded-photo preview when its label resizes (window/splitter
+    // drag, or the photo page first becoming current) — same idiom as CardFinderPanel.
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
 private:
     void autofillFrom(const CardCandidate& candidate);  // finder pick → the form's card ref
     void chooseSet(const CardSetInfo& set);   // finder set pick → the form's set fields
     void checkUnmatch();                       // drop the finder selection once the form diverges
     void updateSubmitEnabled();                // enable submit once the form is valid
     void submitCopy();                         // create the copy from the form fields
+    void uploadPhoto();                        // pick a local image → hold it, replace the search
+    void removeUploadedPhoto();                // drop the held photo → the finder returns
+    void refreshUploadedPreview();             // render the held photo into the preview pane
     void handleBack();                         // guard Back on a partly-filled form, then leave
     bool isDirty() const;                      // has the user entered anything worth confirming?
 
@@ -91,7 +111,16 @@ private:
 
     CardCopyForm* form_;      // the shared details pane (editable, with a submit action)
     QPushButton* submit_;     // "Add copy" — lives in the form's action row
+    QPushButton* uploadButton_;  // "Upload a photo…" — also in the form's action row
     CardFinderPanel* finder_;  // the shared search field + printings list + preview
+
+    // The right side of the split is a stack: the finder (search + preview) on index 0,
+    // and the uploaded-photo preview on index 1. Uploading a photo swaps to index 1
+    // ("replaces the search"); "Remove photo" swaps back. The photo is held here and
+    // only written to CardImageStore at submit — null means "no upload, use the finder".
+    QStackedWidget* rightStack_;
+    QLabel* uploadedPreview_;  // renders uploadedImage_ on the stack's photo page
+    QPixmap uploadedImage_;    // the held upload (null = none); wins over the finder on submit
 };
 
 }  // namespace pokedex

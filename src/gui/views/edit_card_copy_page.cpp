@@ -1,6 +1,5 @@
 #include "gui/views/edit_card_copy_page.h"
 
-#include <QFileDialog>
 #include <QFont>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -10,6 +9,7 @@
 #include <QVBoxLayout>
 
 #include <exception>
+#include <optional>
 #include <utility>
 
 #include "core/app/card_catalog_dto.h"
@@ -19,6 +19,7 @@
 #include "gui/views/card_copy_form.h"
 #include "gui/views/card_copy_splitter.h"
 #include "gui/views/card_finder_panel.h"
+#include "gui/views/photo_upload.h"
 #include "gui/views/scaled_pixmap.h"
 #include "gui/views/toast.h"
 
@@ -215,20 +216,11 @@ void EditCardCopyPage::saveFromFinder() {
 }
 
 void EditCardCopyPage::uploadPhoto() {
-    const QString path = QFileDialog::getOpenFileName(
-        this, tr("Choose a card photo"), QString(),
-        tr("Images (*.png *.jpg *.jpeg *.webp *.bmp)"));
-    if (path.isEmpty()) {
-        return;  // cancelled
+    const std::optional<QPixmap> pixmap = pickCardPhoto(this);
+    if (!pixmap) {
+        return;  // cancelled, or unreadable (pickCardPhoto already warned)
     }
-    const QPixmap pixmap(path);
-    if (pixmap.isNull()) {
-        QMessageBox::warning(
-            this, tr("Pokedex TCG"),
-            tr("That file could not be read as an image. Try a PNG or JPEG."));
-        return;
-    }
-    if (!images_.save(copy_.id, pixmap)) {  // emits imageChanged on success → host refresh
+    if (!images_.save(copy_.id, *pixmap)) {  // emits imageChanged on success → host refresh
         QMessageBox::warning(this, tr("Pokedex TCG"),
                              tr("The image could not be saved to your workspace."));
         return;

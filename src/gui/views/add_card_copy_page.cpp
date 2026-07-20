@@ -1,11 +1,13 @@
 #include "gui/views/add_card_copy_page.h"
 
+#include <QEvent>
 #include <QFont>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMessageBox>
 #include <QPixmap>
 #include <QPushButton>
+#include <QStackedWidget>
 #include <QVBoxLayout>
 
 #include <exception>
@@ -21,6 +23,8 @@
 #include "gui/views/card_copy_form.h"
 #include "gui/views/card_copy_splitter.h"
 #include "gui/views/card_finder_panel.h"
+#include "gui/views/photo_upload.h"
+#include "gui/views/scaled_pixmap.h"
 #include "gui/views/toast.h"
 
 namespace pokedex {
@@ -68,6 +72,13 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
     connect(submit_, &QPushButton::clicked, this, &AddCardCopyPage::submitCopy);
     form_->addAction(submit_);
 
+    // Attach a photo of the card in hand instead of a catalog image. Held in memory
+    // and only written at submit (see uploadPhoto) — unlike the Edit page's immediate
+    // write, since a new copy has no id to key the image by until it is created.
+    uploadButton_ = new QPushButton(tr("Upload a photo…"), this);
+    connect(uploadButton_, &QPushButton::clicked, this, &AddCardCopyPage::uploadPhoto);
+    form_->addAction(uploadButton_);
+
     // --- Finder (right): the shared search + preview widget ----------------
     // Scoped: search the species' printings by set. Species-free: search by card name
     // (there is no dex number to scope by).
@@ -82,11 +93,32 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
     connect(finder_, &CardFinderPanel::cardSelected, this, &AddCardCopyPage::autofillFrom);
     connect(finder_, &CardFinderPanel::setChosen, this, &AddCardCopyPage::chooseSet);
 
+    // --- Uploaded-photo page: shown in place of the finder once a photo is uploaded -
+    auto* photoPage = new QWidget(this);
+    auto* photoLayout = new QVBoxLayout(photoPage);
+    auto* photoCaption = new QLabel(tr("Uploaded photo — saved when you add the copy"), photoPage);
+    photoCaption->setEnabled(false);  // muted, like the Edit page's current-image label
+    photoCaption->setAlignment(Qt::AlignHCenter);
+    uploadedPreview_ = new QLabel(photoPage);
+    uploadedPreview_->setMinimumSize(240, 320);
+    uploadedPreview_->setAlignment(Qt::AlignCenter);
+    uploadedPreview_->installEventFilter(this);  // rescale the photo when the pane resizes
+    auto* removeButton = new QPushButton(tr("Remove photo"), photoPage);
+    connect(removeButton, &QPushButton::clicked, this, &AddCardCopyPage::removeUploadedPhoto);
+    photoLayout->addWidget(photoCaption, /*stretch=*/0);
+    photoLayout->addWidget(uploadedPreview_, /*stretch=*/1);
+    photoLayout->addWidget(removeButton, /*stretch=*/0, Qt::AlignHCenter);
+
     // --- Assemble -----------------------------------------------------------
+    // The right side is a stack: the finder normally, the uploaded photo when set.
+    rightStack_ = new QStackedWidget(this);
+    rightStack_->addWidget(finder_);     // index 0
+    rightStack_->addWidget(photoPage);   // index 1
+
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(16, 12, 16, 12);
     layout->addLayout(topBar);
-    layout->addWidget(makeCardCopySplitter(form_, finder_));
+    layout->addWidget(makeCardCopySplitter(form_, rightStack_));
 
     updateSubmitEnabled();
 }
@@ -133,6 +165,44 @@ void AddCardCopyPage::updateSubmitEnabled() {
     submit_->setEnabled(!form_->cardReference().collectorNumber.empty());
 }
 
+void AddCardCopyPage::uploadPhoto() {
+    // Unlike the Edit page (which writes the pixmap straight to the store), hold it in
+    // memory: the new copy has no id to key the image by yet, and an abandoned add
+    // should leave no file. It is persisted in submitCopy() once the copy exists.
+    const std::optional<QPixmap> pixmap = pickCardPhoto(this);
+    if (!pixmap) {
+        return;  // cancelled, or unreadable (pickCardPhoto already warned)
+    }
+    uploadedImage_ = *pixmap;      // held, not saved
+    refreshUploadedPreview();
+    rightStack_->setCurrentIndex(1);  // replace the search with the uploaded photo
+}
+
+void AddCardCopyPage::removeUploadedPhoto() {
+    uploadedImage_ = QPixmap();       // drop the held photo
+    refreshUploadedPreview();         // clears the label (its single source of truth)
+    rightStack_->setCurrentIndex(0);  // the finder returns with whatever state it had
+}
+
+void AddCardCopyPage::refreshUploadedPreview() {
+    if (uploadedImage_.isNull()) {
+        uploadedPreview_->clear();
+        return;
+    }
+    setScaledPixmap(uploadedPreview_, uploadedImage_);
+}
+
+bool AddCardCopyPage::eventFilter(QObject* watched, QEvent* event) {
+    // The held photo is scaled from its full-res original on every resize (matching
+    // CardFinderPanel's preview), so it fills the pane instead of freezing at the size
+    // it had when first uploaded — and the first render, once the page becomes current
+    // and the label takes its real size, comes through here too.
+    if (event->type() == QEvent::Resize && watched == uploadedPreview_) {
+        refreshUploadedPreview();
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
 bool AddCardCopyPage::isDirty() const {
     // "Dirty" = the user has entered something that would be lost. Every field starts
     // pristine (empty identity, unspecified language/condition, Owned, empty comments),
@@ -146,6 +216,10 @@ bool AddCardCopyPage::isDirty() const {
     }
     if (!form_->comments().empty() || form_->condition().has_value() ||
         form_->ownership() != CardOwnership::Owned) {
+        return true;
+    }
+    // An uploaded-but-unsaved photo would be lost on Back — worth confirming.
+    if (!uploadedImage_.isNull()) {
         return true;
     }
     // The binder combo only counts when unscoped (scoped is pre-filled and locked, so
@@ -188,13 +262,16 @@ void AddCardCopyPage::submitCopy() {
                              tr("Could not add the copy:\n%1").arg(QString::fromUtf8(e.what())));
         return;
     }
-    // Persist the picked card's image for "My Cards" to show. A finder selection means
-    // a real printing is picked (checkUnmatch drops it once the form is edited
-    // off-card). If its preview already loaded, save that pixmap outright (no
-    // re-download); otherwise the user submitted before it finished, so fetch it by
-    // URL — the store outlives this page, so the download still lands. Both are
-    // best-effort: a failure never blocks the copy.
-    if (finder_->hasSelection()) {
+    // Persist the copy's image for "My Cards" to show. An uploaded photo wins: it was
+    // held in memory precisely so it could be written here, keyed by the new copy's id.
+    // Otherwise fall back to the finder — a selection means a real printing is picked
+    // (checkUnmatch drops it once the form is edited off-card). If its preview already
+    // loaded, save that pixmap outright (no re-download); otherwise the user submitted
+    // before it finished, so fetch it by URL — the store outlives this page, so the
+    // download still lands. All best-effort: a failure never blocks the copy.
+    if (!uploadedImage_.isNull()) {
+        cardImages_.save(created.id, uploadedImage_);
+    } else if (finder_->hasSelection()) {
         const QPixmap preview = finder_->selectedPreview();
         if (!preview.isNull()) {
             cardImages_.save(created.id, preview);
