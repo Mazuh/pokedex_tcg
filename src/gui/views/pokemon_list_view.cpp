@@ -15,7 +15,6 @@
 
 #include <algorithm>
 #include <exception>
-#include <string>
 
 #include "core/app/binder_service.h"
 #include "core/app/card_copy_service.h"
@@ -165,6 +164,13 @@ bool PokemonListView::eventFilter(QObject* watched, QEvent* event) {
 
 void PokemonListView::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);
+    // First show: the constructor already loaded fresh data (and nothing could have
+    // changed since), so skip the refresh() and its full re-query. The resize/fill
+    // machinery grows the viewport from here. There's also no prior place to restore.
+    if (firstShow_) {
+        firstShow_ = false;
+        return;
+    }
     // Reflect copies added/edited in another section since this was last shown — but
     // WITHOUT throwing away the user's place. refresh() re-renders from the top and
     // clears the selection, so first capture the scroll offset, how far the list was
@@ -329,17 +335,11 @@ void PokemonListView::openAddCopy(int dexNumber, const QString& name) {
 
 void PokemonListView::openEditCopy(const QString& copyId) {
     // Find the copy the detail panel is showing among this species' owned copies.
-    const auto it = owned_.find(shownDex_);
-    if (it == owned_.end()) {
+    const CardCopy* copy = findOwnedCopy(owned_, shownDex_, copyId);
+    if (!copy) {
         return;
     }
-    const std::string id = copyId.toStdString();
-    const auto copyIt = std::find_if(it->second.begin(), it->second.end(),
-                                     [&](const CardCopy& c) { return c.id == id; });
-    if (copyIt == it->second.end()) {
-        return;
-    }
-    pushEditCopyPage(stack_, cardSearch_, cardImages_, cardCopies_, *copyIt, binders_.list(),
+    pushEditCopyPage(stack_, cardSearch_, cardImages_, cardCopies_, *copy, binders_.list(),
                      [this, copyId]() {
                          // Capture the shown species before refresh(), which re-renders
                          // from the top. An edit can change owned data (a comment, a new

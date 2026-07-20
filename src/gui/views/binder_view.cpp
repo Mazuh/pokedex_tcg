@@ -14,9 +14,7 @@
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
 
-#include <algorithm>
 #include <exception>
-#include <string>
 
 #include "core/app/binder_guide_service.h"
 #include "core/app/binder_service.h"
@@ -228,46 +226,33 @@ void BinderView::repopulate() {
 }
 
 void BinderView::sortEntries() {
-    if (sortColumn_ < 0) {
-        return;  // unsorted: keep the guide's natural (dex) order
-    }
-    // Decorate each entry with its precomputed sort keys (the name column allocates a
-    // QString) so a key is built once per row rather than recomputed for both operands
-    // on every comparison. Sort the decorated vector, then reorder entries_ to match.
-    struct Keyed {
+    // The name column allocates a QString, so precompute each row's keys once (via
+    // sortByKeys) rather than rebuilding them for both operands on every comparison.
+    // A sortColumn_ < 0 keeps the guide's natural (dex) order.
+    struct Key {
         int dexNumber;
         QString name;
         int statusRank;
-        std::size_t index;
     };
-    std::vector<Keyed> keyed;
-    keyed.reserve(entries_.size());
-    for (std::size_t i = 0; i < entries_.size(); ++i) {
-        const CardBinderEntry& e = entries_[i];
-        keyed.push_back({e.pokemon.dexNumber, QString::fromStdString(e.pokemon.name),
-                         static_cast<int>(e.status), i});
-    }
-    applyColumnSort(keyed, sortColumn_, sortOrder_,
-                    [](const Keyed& a, const Keyed& b, int column) -> int {
-                        switch (column) {
-                            case 0:
-                                return compareValues(a.dexNumber, b.dexNumber);
-                            case 1:
-                                return a.name.localeAwareCompare(b.name);
-                            case 2:
-                                // CollectionStatus enum values are the documented
-                                // precedence order — a more meaningful grouping than the
-                                // status labels' alphabetical order.
-                                return compareValues(a.statusRank, b.statusRank);
-                        }
-                        return 0;
-                    });
-    std::vector<CardBinderEntry> sorted;
-    sorted.reserve(entries_.size());
-    for (const Keyed& k : keyed) {
-        sorted.push_back(std::move(entries_[k.index]));
-    }
-    entries_ = std::move(sorted);
+    sortByKeys(
+        entries_, sortColumn_, sortOrder_,
+        [](const CardBinderEntry& e) {
+            return Key{e.pokemon.dexNumber, QString::fromStdString(e.pokemon.name),
+                       static_cast<int>(e.status)};
+        },
+        [](const Key& a, const Key& b, int column) -> int {
+            switch (column) {
+                case 0:
+                    return compareValues(a.dexNumber, b.dexNumber);
+                case 1:
+                    return a.name.localeAwareCompare(b.name);
+                case 2:
+                    // CollectionStatus enum values are the documented precedence order —
+                    // a more meaningful grouping than the status labels' alphabetical order.
+                    return compareValues(a.statusRank, b.statusRank);
+            }
+            return 0;
+        });
 }
 
 void BinderView::applyFilter(const QString& filter) {
@@ -349,17 +334,11 @@ void BinderView::openAddCopy(int dexNumber, const QString& name) {
 
 void BinderView::openEditCopy(const QString& copyId) {
     // Find the copy the detail panel is showing among this species' owned copies.
-    const auto it = ownedHere_.find(shownDex_);
-    if (it == ownedHere_.end()) {
+    const CardCopy* copy = findOwnedCopy(ownedHere_, shownDex_, copyId);
+    if (!copy) {
         return;
     }
-    const std::string id = copyId.toStdString();
-    const auto copyIt = std::find_if(it->second.begin(), it->second.end(),
-                                     [&](const CardCopy& c) { return c.id == id; });
-    if (copyIt == it->second.end()) {
-        return;
-    }
-    pushEditCopyPage(stack_, cardSearch_, cardImages_, cardCopies_, *copyIt, binders_.list(),
+    pushEditCopyPage(stack_, cardSearch_, cardImages_, cardCopies_, *copy, binders_.list(),
                      [this, copyId]() {
                          // Capture the shown species before refresh(), which may clear
                          // shownDex_. An edit can change the guide (a comment, a binder

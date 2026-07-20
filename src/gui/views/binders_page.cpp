@@ -178,48 +178,35 @@ void BindersPage::repopulate() {
 }
 
 void BindersPage::sortBinders() {
-    if (sortColumn_ < 0) {
-        return;  // unsorted: keep the natural load order
-    }
-    // Decorate each binder with its precomputed sort keys (the name and region columns
-    // each allocate a QString) so a key is built once per row rather than recomputed for
-    // both operands on every comparison. Sort the decorated vector, then reorder binders_
-    // to match — the decorate-sort-reorder pattern the other sortable views use.
-    struct Keyed {
+    // The name and region columns each allocate a QString, so precompute each row's keys
+    // once (via sortByKeys) rather than rebuilding them for both operands on every
+    // comparison. A sortColumn_ < 0 keeps the natural load order.
+    struct Key {
         QString name;
         QString region;
         Timestamp insertedAt;
         Timestamp updatedAt;
-        std::size_t index;
     };
-    std::vector<Keyed> keyed;
-    keyed.reserve(binders_.size());
-    for (std::size_t i = 0; i < binders_.size(); ++i) {
-        const CardBinder& b = binders_[i];
-        keyed.push_back({QString::fromStdString(b.name),
-                         b.pokemonRegion ? regionLabel(*b.pokemonRegion) : QString(),
-                         b.insertedAt, b.updatedAt, i});
-    }
-    applyColumnSort(keyed, sortColumn_, sortOrder_,
-                    [](const Keyed& a, const Keyed& b, int column) -> int {
-                        switch (column) {
-                            case 0:
-                                return a.name.localeAwareCompare(b.name);
-                            case 1:
-                                return a.region.localeAwareCompare(b.region);
-                            case 2:
-                                return compareValues(a.insertedAt, b.insertedAt);
-                            case 3:
-                                return compareValues(a.updatedAt, b.updatedAt);
-                        }
-                        return 0;
-                    });
-    std::vector<CardBinder> sorted;
-    sorted.reserve(binders_.size());
-    for (const Keyed& k : keyed) {
-        sorted.push_back(std::move(binders_[k.index]));
-    }
-    binders_ = std::move(sorted);
+    sortByKeys(
+        binders_, sortColumn_, sortOrder_,
+        [](const CardBinder& b) {
+            return Key{QString::fromStdString(b.name),
+                       b.pokemonRegion ? regionLabel(*b.pokemonRegion) : QString(),
+                       b.insertedAt, b.updatedAt};
+        },
+        [](const Key& a, const Key& b, int column) -> int {
+            switch (column) {
+                case 0:
+                    return a.name.localeAwareCompare(b.name);
+                case 1:
+                    return a.region.localeAwareCompare(b.region);
+                case 2:
+                    return compareValues(a.insertedAt, b.insertedAt);
+                case 3:
+                    return compareValues(a.updatedAt, b.updatedAt);
+            }
+            return 0;
+        });
 }
 
 void BindersPage::createBinder() {

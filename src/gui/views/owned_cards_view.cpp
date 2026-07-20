@@ -278,46 +278,36 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
             return a.insertedAt < b.insertedAt;
         });
     } else {
-        // Decorate each copy with its precomputed sort keys (column 0's
-        // speciesOrCardName does a catalog lookup + allocation; the text columns
-        // allocate) so a key is built once per row rather than recomputed for both
-        // operands on every comparison. Sort the decorated vector, then reorder loaded_.
-        struct Keyed {
+        // Precompute each copy's sort keys once (via sortByKeys) rather than rebuilding
+        // them for both operands on every comparison — column 0's speciesOrCardName does
+        // a catalog lookup + allocation, and the text columns allocate.
+        struct Key {
             QString species, card, setName, language, ownership, binderName;
             int conditionRank;
-            std::size_t index;
         };
-        std::vector<Keyed> keyed;
-        keyed.reserve(loaded_.size());
-        for (std::size_t i = 0; i < loaded_.size(); ++i) {
-            const CardCopy& c = loaded_[i];
-            keyed.push_back({speciesOrCardName(c), cardText(c.cardRef),
-                             QString::fromStdString(c.cardRef.setName),
-                             QString::fromStdString(c.cardRef.language),
-                             ownershipLabel(c.ownership), binderName(c),
-                             // Condition ranks best-to-worst by enum value; an ungraded
-                             // copy (INT_MAX) sorts after every graded one.
-                             c.condition ? static_cast<int>(*c.condition) : INT_MAX, i});
-        }
-        applyColumnSort(keyed, sortColumn_, sortOrder_,
-                        [](const Keyed& a, const Keyed& b, int column) -> int {
-                            switch (column) {
-                                case 0: return a.species.localeAwareCompare(b.species);
-                                case 1: return a.card.localeAwareCompare(b.card);
-                                case 2: return a.setName.localeAwareCompare(b.setName);
-                                case 3: return a.language.localeAwareCompare(b.language);
-                                case 4: return compareValues(a.conditionRank, b.conditionRank);
-                                case 5: return a.ownership.localeAwareCompare(b.ownership);
-                                case 6: return a.binderName.localeAwareCompare(b.binderName);
-                            }
-                            return 0;
-                        });
-        std::vector<CardCopy> sorted;
-        sorted.reserve(loaded_.size());
-        for (const Keyed& k : keyed) {
-            sorted.push_back(std::move(loaded_[k.index]));
-        }
-        loaded_ = std::move(sorted);
+        sortByKeys(
+            loaded_, sortColumn_, sortOrder_,
+            [&](const CardCopy& c) {
+                return Key{speciesOrCardName(c), cardText(c.cardRef),
+                           QString::fromStdString(c.cardRef.setName),
+                           QString::fromStdString(c.cardRef.language),
+                           ownershipLabel(c.ownership), binderName(c),
+                           // Condition ranks best-to-worst by enum value; an ungraded
+                           // copy (INT_MAX) sorts after every graded one.
+                           c.condition ? static_cast<int>(*c.condition) : INT_MAX};
+            },
+            [](const Key& a, const Key& b, int column) -> int {
+                switch (column) {
+                    case 0: return a.species.localeAwareCompare(b.species);
+                    case 1: return a.card.localeAwareCompare(b.card);
+                    case 2: return a.setName.localeAwareCompare(b.setName);
+                    case 3: return a.language.localeAwareCompare(b.language);
+                    case 4: return compareValues(a.conditionRank, b.conditionRank);
+                    case 5: return a.ownership.localeAwareCompare(b.ownership);
+                    case 6: return a.binderName.localeAwareCompare(b.binderName);
+                }
+                return 0;
+            });
     }
 
     // Soft-Removed copies always sink to the bottom, regardless of the active sort:

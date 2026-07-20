@@ -135,6 +135,10 @@ private:
     // scrollbar appear, which resizes the viewport and re-fires the resize
     // event mid-fill — without this it would overshoot the rows actually needed.
     bool filling_ = false;
+    // The constructor already loads the catalog + owned copies, so the first showEvent
+    // must not re-query them (a doubled first-paint of ~1000 species + the whole
+    // inventory). Later shows do refresh() to pick up changes from other sections.
+    bool firstShow_ = true;
 };
 
 }  // namespace pokedex

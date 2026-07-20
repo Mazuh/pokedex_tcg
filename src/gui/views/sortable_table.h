@@ -4,8 +4,10 @@
 #include <QTableWidget>
 
 #include <algorithm>
+#include <cstddef>
 #include <functional>
 #include <memory>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -96,6 +98,45 @@ void applyColumnSort(std::vector<T>& items, int column, Qt::SortOrder order,
         const int cmp = columnCompare(a, b, column);
         return ascending ? cmp < 0 : cmp > 0;
     });
+}
+
+// GUI — the decorate-sort-reorder shell in one call: sort `items` by the active
+// header column/order without recomputing sort keys per comparison. `keyFn(item)`
+// returns a small key struct built ONCE per row (a catalog lookup, a QString
+// allocation); `keyCompare(a, b, column)` three-way-compares two keys for a column
+// (the compareValues shape). Internally it decorates each item's key with the item's
+// index, sorts the decorated vector via applyColumnSort, then gathers `items` into
+// key order by index — so it's O(n) key construction plus O(n log n) comparisons on
+// cheap keys, not O(n log n) key rebuilds. A `column < 0` leaves `items` in its
+// natural load order. This is the single home of the pattern BinderView, BindersPage,
+// and OwnedCardsView previously spelled out by hand; WishlistView, whose row struct
+// already carries its keys, sorts in place with applyColumnSort directly.
+template <class T, class KeyFn, class KeyCompare>
+void sortByKeys(std::vector<T>& items, int column, Qt::SortOrder order, KeyFn keyFn,
+                KeyCompare keyCompare) {
+    if (column < 0) {
+        return;  // unsorted: keep the natural load order
+    }
+    using Key = std::decay_t<decltype(keyFn(std::declval<const T&>()))>;
+    struct Decorated {
+        Key key;
+        std::size_t index;
+    };
+    std::vector<Decorated> decorated;
+    decorated.reserve(items.size());
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        decorated.push_back({keyFn(items[i]), i});
+    }
+    applyColumnSort(decorated, column, order,
+                    [&](const Decorated& a, const Decorated& b, int col) {
+                        return keyCompare(a.key, b.key, col);
+                    });
+    std::vector<T> sorted;
+    sorted.reserve(items.size());
+    for (const Decorated& d : decorated) {
+        sorted.push_back(std::move(items[d.index]));
+    }
+    items = std::move(sorted);
 }
 
 }  // namespace pokedex

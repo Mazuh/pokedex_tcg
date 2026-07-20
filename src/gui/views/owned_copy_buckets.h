@@ -1,5 +1,9 @@
 #pragma once
 
+#include <QString>
+
+#include <algorithm>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -26,6 +30,25 @@ inline std::unordered_map<PokemonDexNum, std::vector<CardCopy>> bucketOwnedCopie
         }
     }
     return byDex;
+}
+
+// GUI — locate the copy the detail panel is showing within a bucketed-by-dex map:
+// the copy with id `copyId` filed under species `dex`, or nullptr if the species has
+// no bucket or no copy with that id. Both copy-mode hosts (the Pokémon browser over
+// `owned_`, a binder guide over `ownedHere_`) run this identical guard before opening
+// the edit page, so it lives here rather than duplicated in each openEditCopy. The
+// returned pointer is valid only until the map is next rebuilt.
+inline const CardCopy* findOwnedCopy(
+    const std::unordered_map<PokemonDexNum, std::vector<CardCopy>>& byDex, int dex,
+    const QString& copyId) {
+    const auto it = byDex.find(dex);
+    if (it == byDex.end()) {
+        return nullptr;
+    }
+    const std::string id = copyId.toStdString();
+    const auto copyIt = std::find_if(it->second.begin(), it->second.end(),
+                                     [&](const CardCopy& c) { return c.id == id; });
+    return copyIt == it->second.end() ? nullptr : &*copyIt;
 }
 
 }  // namespace pokedex
