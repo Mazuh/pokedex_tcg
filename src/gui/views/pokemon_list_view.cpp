@@ -77,7 +77,9 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService&
     countLabel_ = new QLabel(this);
     countLabel_->setEnabled(false);  // muted: a status detail, not an action
 
-    detail_ = new PokemonDetailPanel(media, wishlist, this);
+    // No CardImageStore here: the unscoped Pokémon browser shows artwork only, never
+    // a specific owned copy (that is the binder guide's copy mode).
+    detail_ = new PokemonDetailPanel(media, wishlist, /*images=*/nullptr, this);
 
     connect(search_, &QLineEdit::textChanged, this, &PokemonListView::applyFilter);
     // Show the current row's Pokémon in the detail panel. currentCellChanged

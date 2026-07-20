@@ -4,13 +4,17 @@
 #include <QString>
 #include <QWidget>
 
+#include <vector>
+
 #include "core/app/pokemon_external_api.h"
+#include "core/domain/card_copy.h"
 
 class QLabel;
 class QPushButton;
 
 namespace pokedex {
 
+class CardImageStore;
 class MediaService;
 class WishlistService;
 class WishlistSourcesEditor;
@@ -27,16 +31,33 @@ class WishlistSourcesEditor;
 // the dex it currently wants and ignores any ready()/failed() for a different
 // one (the stale-guard). On failure it shows a "no image" placeholder — the name
 // still stands and nothing crashes.
+//
+// Opt-in copy mode (binder guide only): the 3-arg showPokemon() overload takes the
+// species' owned copies filed in the current binder. When non-empty, the panel picks
+// one at random, shows its printed identity / condition / ownership / comments plus a
+// counter, replaces the artwork with that copy's card image (falling back to the
+// artwork when the copy has no saved image), and offers an "Edit card" button
+// (editCopyRequested). It needs a CardImageStore for the copy image; when constructed
+// without one (the Pokémon browser), the copy widgets never appear and the plain
+// 2-arg showPokemon() behaves exactly as before.
 class PokemonDetailPanel : public QWidget {
     Q_OBJECT
 
 public:
     PokemonDetailPanel(MediaService& media, WishlistService& wishlist,
-                       QWidget* parent = nullptr);
+                       CardImageStore* images = nullptr, QWidget* parent = nullptr);
 
     // Show `name` now and request its artwork. Not named show() so it doesn't
     // hide QWidget::show().
     void showPokemon(int dexNumber, const QString& name);
+    // As above, but with the species' owned copies filed in the current binder.
+    // Non-empty enters copy mode (see the class docstring); empty is identical to
+    // the 2-arg overload. `preferCopyId` names the copy to show — used to keep the
+    // just-edited copy on screen when returning from the edit page; when empty (a
+    // fresh row selection) one is picked at random.
+    void showPokemon(int dexNumber, const QString& name,
+                     const std::vector<CardCopy>& ownedCopiesHere,
+                     const QString& preferCopyId = QString());
     // Empty state: no selection.
     void clear();
 
@@ -45,6 +66,9 @@ Q_SIGNALS:
     // embedded (in a splitter), so it can't host a full page itself — the owning
     // view turns this into a stack push to the AddCardCopyPage.
     void addCopyRequested(int dexNumber, const QString& name);
+    // The user asked to edit the copy currently shown in copy mode. Carries the
+    // copy's id; the owning view opens the EditCardCopyPage for it.
+    void editCopyRequested(const QString& copyId);
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
@@ -52,15 +76,34 @@ protected:
 private:
     void onReady(int dexNumber, MediaKind kind, const QPixmap& pixmap);
     void onFailed(int dexNumber, MediaKind kind);
+    void onCardImageChanged(const QString& copyId);  // re-read the shown copy's image
+    // Populate (and show) the copy-detail block for `copy`, out of `total` copies
+    // filed here, and load its card image (fallback to artwork on a null pixmap).
+    void showCopy(const CardCopy& copy, int total);
+    // Hide the copy block, counter and edit button (plain / empty-state).
+    void hideCopy();
+    // Reset the image to the loading placeholder and (re)request the current
+    // species' official artwork — the shared fallback when no copy scan is shown.
+    void requestArtworkFallback();
     // Scale originalPixmap_ to fit the image label, or show placeholder_ text
     // when there is no pixmap (empty/loading/failed states).
     void renderImage();
 
     MediaService& media_;
     WishlistService& wishlist_;
+    CardImageStore* images_;  // null in the Pokémon browser → copy mode disabled
     int currentDex_ = -1;  // the dex we currently want shown; guards stale results
+    QString shownCopyId_;  // id of the copy shown in copy mode ("" = not in copy mode)
+    bool showingCopyImage_ = false;  // the image is a copy scan, not artwork → keep
     QLabel* name_;
     QLabel* image_;
+    QLabel* copyIdentity_;  // set/number line
+    QLabel* copyCondition_;
+    QLabel* copyOwnership_;
+    QLabel* copyCounter_;  // "N copies filed here"
+    QLabel* copyComments_;
+    QWidget* copyDetail_;  // container for the copy labels; hidden outside copy mode
+    QPushButton* editButton_;
     QPushButton* addCopyButton_;
     WishlistSourcesEditor* wishlistEditor_;
     QPixmap originalPixmap_;  // full-resolution artwork; rescaled on resize

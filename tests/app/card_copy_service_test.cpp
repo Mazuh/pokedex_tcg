@@ -190,4 +190,21 @@ TEST(CardCopyServiceTest, ListAllReturnsEveryCopy) {
     EXPECT_EQ(f.service.listAll().size(), 2u);
 }
 
+TEST(CardCopyServiceTest, ListByBinderReturnsOnlyThatBindersCopies) {
+    Fixture f;
+    // The storage FK requires real binder rows to file into.
+    f.db.exec(
+        "INSERT INTO card_binder(id,name,region,inserted_at,updated_at)"
+        " VALUES('b1','Kanto',NULL,'2026-07-16T10:00:00Z','2026-07-16T10:00:00Z'),"
+        "('b2','Johto',NULL,'2026-07-16T10:00:00Z','2026-07-16T10:00:00Z');");
+    f.service.create(1, ref(), CardOwnership::Owned, CardCondition::NearMint,
+                     std::string("b1"), "");
+    f.service.create(4, ref(), CardOwnership::Owned, CardCondition::NearMint,
+                     std::string("b2"), "");
+    f.service.create(7, ref(), CardOwnership::Owned, CardCondition::NearMint, std::nullopt, "");
+    const auto inB1 = f.service.listByBinder("b1");
+    ASSERT_EQ(inB1.size(), 1u);
+    EXPECT_EQ(inB1.front().pokemonDexNum, 1);
+}
+
 }  // namespace

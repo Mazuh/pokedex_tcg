@@ -79,8 +79,8 @@ service), `BinderService` (binder CRUD verbs), `BinderGuideService`
 (`listAll` → every catalog species paired with its owned-copy count, the unscoped
 Pokédex browser's data), `CardCopyService` (the copy verbs —
 `create`/`editDetails`/`assignToBinder`/`remove`[soft, with an optional
-note-append]/`hardDelete`/`listAll` — with an injectable clock and id generator
-like `BinderService`), `WishlistService` (the manage-sources verbs), and the
+note-append]/`hardDelete`/`listAll`/`listByBinder` — with an injectable clock and
+id generator like `BinderService`), `WishlistService` (the manage-sources verbs), and the
 **card-catalog seam** — `CardCatalogApi` (Qt-free interface, parallel to
 `PokemonExternalApi` but for *cards*), its concrete `PokemonTcgIoApi` (pokemontcg.io
 URL/Lucene query building), the DTOs (`card_catalog_dto.h`: `CardSetInfo`,
@@ -118,8 +118,19 @@ reloads on return so an edited comment shows. The `CardImagePanel` is the "My Ca
 right-hand detail panel (title + image + the copy's comments beneath). The unscoped
 wishlist section (`WishlistView`), and the
 per-Pokémon wishlist editor (`WishlistSourcesEditor`) embedded below the artwork in
-`PokemonDetailPanel`. The shared `scaled_pixmap.h` helper (DPR-aware fit-scale) backs
-every image panel. Enum→label display helpers are header-only in `gui/views/`
+`PokemonDetailPanel`. `PokemonDetailPanel` is shared by the Pokémon browser and the
+binder guide and has an **opt-in copy mode** (3-arg `showPokemon` + a `CardImageStore*`
+ctor arg): when the binder guide hands it the species' owned copies filed in that
+binder, it shows one copy's data (printed identity/condition/ownership/comments) plus a
+counter and an "Edit card…" button (`editCopyRequested`), and swaps the picture to the
+copy's card scan with a fallback to the Pokémon artwork. One copy is picked at random on
+each row selection; returning from the edit page re-shows the just-edited copy
+(`preferCopyId`) rather than re-rolling. Passing no copies (the Pokémon browser, which
+passes no store) is the unchanged artwork-only path. The shared `scaled_pixmap.h` helper
+(DPR-aware fit-scale) backs every image panel. Copy-label helpers (`speciesName`,
+`cardText`, `speciesOrCardName`, `titleFor`) are header-only in `card_copy_labels.h`,
+shared by My Cards and the binder guide's panel. Other enum→label display helpers are
+header-only in `gui/views/`
 (`region_labels.h`, `status_labels.h`, `condition_labels.h`, `ownership_labels.h`).
 `gui/services/` holds `MediaService` (Pokémon artwork fetch+cache), `CardSearchService`
 (card search transport — **no disk cache**: search results are display/memory-only),

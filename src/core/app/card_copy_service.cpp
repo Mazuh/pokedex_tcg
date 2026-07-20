@@ -89,4 +89,8 @@ void CardCopyService::hardDelete(const CardCopyId& id) {
 
 std::vector<CardCopy> CardCopyService::listAll() { return repo_.listAll(); }
 
+std::vector<CardCopy> CardCopyService::listByBinder(const CardBinderId& binderId) {
+    return repo_.listByBinder(binderId);
+}
+
 }  // namespace pokedex

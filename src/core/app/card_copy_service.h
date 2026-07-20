@@ -68,6 +68,11 @@ public:
     // Every copy, oldest first — the owned-cards browser filters this itself.
     std::vector<CardCopy> listAll();
 
+    // Every copy filed in `binderId`, in insertion order — the binder-scoped read
+    // behind the binder guide's detail panel (which owned copy to show for a row).
+    // Avoids scanning the whole inventory just to find one binder's copies.
+    std::vector<CardCopy> listByBinder(const CardBinderId& binderId);
+
     // The defaults, exposed so callers can wrap/compose them if needed.
     static Clock systemClock();
     static IdGenerator uuidGenerator();

@@ -14,12 +14,19 @@
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <exception>
+#include <string>
 
 #include "core/app/binder_guide_service.h"
+#include "core/app/binder_service.h"
+#include "core/app/card_copy_service.h"
+#include "gui/services/card_image_store.h"
 #include "gui/views/add_card_copy_page.h"
 #include "gui/views/back_button.h"
 #include "gui/views/binder_combo.h"
+#include "gui/views/card_copy_labels.h"
+#include "gui/views/edit_card_copy_page.h"
 #include "gui/views/pokemon_detail_panel.h"
 #include "gui/views/splitter_style.h"
 #include "gui/views/status_labels.h"
@@ -71,7 +78,7 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     // Cell padding so content clears the edges and the overlay scrollbar.
     table_->setStyleSheet("QTableView::item { padding-left: 8px; padding-right: 16px; }");
 
-    detail_ = new PokemonDetailPanel(media, wishlist, this);
+    detail_ = new PokemonDetailPanel(media, wishlist, &cardImages_, this);
 
     connect(search_, &QLineEdit::textChanged, this, &BinderView::applyFilter);
     // Show the current row's Pokémon in the detail panel. currentCellChanged
@@ -82,6 +89,8 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     connect(table_, &QTableWidget::currentCellChanged, this, &BinderView::showRow);
     // The detail panel's "Add copy" relays up to an in-place page push.
     connect(detail_, &PokemonDetailPanel::addCopyRequested, this, &BinderView::openAddCopy);
+    // In copy mode, "Edit card" relays up to an in-place edit-page push.
+    connect(detail_, &PokemonDetailPanel::editCopyRequested, this, &BinderView::openEditCopy);
 
     // The list (top bar + search + table) on the left, the detail panel on the
     // right, in a draggable horizontal split. The list takes the slack.
@@ -122,6 +131,21 @@ void BinderView::refresh() {
         QMessageBox::critical(this, tr("Pokedex TCG"),
                               tr("Could not open this binder:\n%1")
                                   .arg(QString::fromUtf8(e.what())));
+    }
+
+    // Bucket the binder's owned copies by species so showRow() can hand the detail
+    // panel the copies to display (copy mode). Only owned copies tied to a species
+    // qualify — that mirrors the "Completed" status. Scoped read (listByBinder), not a
+    // whole-inventory scan.
+    ownedHere_.clear();
+    try {
+        for (const CardCopy& copy : cardCopies_.listByBinder(binder_.id)) {
+            if (copy.pokemonDexNum && copy.ownership == CardOwnership::Owned) {
+                ownedHere_[*copy.pokemonDexNum].push_back(copy);
+            }
+        }
+    } catch (const std::exception&) {
+        ownedHere_.clear();  // best-effort: fall back to artwork-only if the read fails
     }
 
     // Rebuild every row from the freshly computed entries; entries_ and table rows
@@ -168,7 +192,12 @@ void BinderView::showRow(int row) {
         return;
     }
     shownDex_ = number->text().toInt();
-    detail_->showPokemon(shownDex_, name->text());
+    const auto it = ownedHere_.find(shownDex_);
+    if (it != ownedHere_.end()) {
+        detail_->showPokemon(shownDex_, name->text(), it->second);
+    } else {
+        detail_->showPokemon(shownDex_, name->text());
+    }
 }
 
 void BinderView::openAddCopy(int dexNumber, const QString& name) {
@@ -184,6 +213,54 @@ void BinderView::openAddCopy(int dexNumber, const QString& name) {
         stack_->setCurrentIndex(0);
         stack_->removeWidget(page);
         page->deleteLater();
+    });
+    stack_->addWidget(page);
+    stack_->setCurrentWidget(page);
+}
+
+void BinderView::openEditCopy(const QString& copyId) {
+    // Find the copy the detail panel is showing among this species' owned copies.
+    const auto it = ownedHere_.find(shownDex_);
+    if (it == ownedHere_.end()) {
+        return;
+    }
+    const std::string id = copyId.toStdString();
+    const auto copyIt = std::find_if(it->second.begin(), it->second.end(),
+                                     [&](const CardCopy& c) { return c.id == id; });
+    if (copyIt == it->second.end()) {
+        return;
+    }
+    auto* page = new EditCardCopyPage(cardSearch_, cardImages_, cardCopies_, *copyIt,
+                                      binders_.list(), titleFor(*copyIt));
+    connect(page, &EditCardCopyPage::backRequested, this, [this, page, copyId]() {
+        // Capture the shown species before refresh(), which may clear shownDex_.
+        const int dex = shownDex_;
+        stack_->setCurrentIndex(0);
+        stack_->removeWidget(page);
+        page->deleteLater();
+        // An edit can change the guide (a comment, a binder move that removes the copy
+        // from here, a new image). Recompute, then re-show the SAME copy that was just
+        // edited — not a fresh random pick — so the user sees their change land.
+        refresh();
+        for (int i = 0; i < static_cast<int>(entries_.size()); ++i) {
+            if (entries_[i].pokemon.dexNumber == dex) {
+                table_->blockSignals(true);  // setCurrentCell would re-fire showRow (random)
+                table_->setCurrentCell(i, 1);
+                table_->blockSignals(false);
+                shownDex_ = dex;
+                const QString name = QString::fromStdString(entries_[i].pokemon.name);
+                const auto it = ownedHere_.find(dex);
+                if (it != ownedHere_.end()) {
+                    detail_->showPokemon(dex, name, it->second, copyId);
+                } else {  // the copy left the binder (moved/removed) → plain artwork
+                    detail_->showPokemon(dex, name);
+                }
+                return;
+            }
+        }
+        // The species left the guide entirely (its only copy moved away).
+        detail_->clear();
+        shownDex_ = -1;
     });
     stack_->addWidget(page);
     stack_->setCurrentWidget(page);

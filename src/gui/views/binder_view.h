@@ -2,10 +2,13 @@
 
 #include <QWidget>
 
+#include <unordered_map>
 #include <vector>
 
 #include "core/domain/card_binder.h"
 #include "core/domain/card_binder_entry.h"
+#include "core/domain/card_copy.h"
+#include "core/domain/types.h"
 
 class QLineEdit;
 class QStackedWidget;
@@ -60,6 +63,10 @@ private:
     // Push an AddCardCopyPage for `dexNumber` onto the inner stack; its Back pops
     // and disposes it, returning to the binder guide.
     void openAddCopy(int dexNumber, const QString& name);
+    // Push an EditCardCopyPage for the owned copy `copyId` (the one the detail panel
+    // is showing) onto the inner stack; Back pops it, then refreshes the guide and
+    // re-shows the current row so an edit (comment, binder move, image) is reflected.
+    void openEditCopy(const QString& copyId);
 
     BinderGuideService& guide_;
     CardBinder binder_;
@@ -72,6 +79,10 @@ private:
     QLineEdit* search_;
     PokemonDetailPanel* detail_;
     std::vector<CardBinderEntry> entries_;
+    // Owned copies filed in this binder, bucketed by species dex, rebuilt on every
+    // refresh(). Drives copy mode in the detail panel: a species present here has at
+    // least one owned copy filed in this binder to show.
+    std::unordered_map<PokemonDexNum, std::vector<CardCopy>> ownedHere_;
     // Dex number currently shown in the detail panel (-1 = none), so a filter that
     // hides its row can clear the panel rather than leave stale artwork on screen.
     int shownDex_ = -1;
