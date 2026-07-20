@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "core/domain/card_binder.h"
 #include "core/domain/card_copy.h"
 
 class QLabel;
@@ -50,9 +51,15 @@ protected:
     void showEvent(QShowEvent* event) override;
 
 private:
-    // Re-query all copies and rebuild the table (sorted by dex number, then age),
-    // then reapply the current search filter.
+    // Re-query all copies (and the binders), then rebuild the table (via repopulate()).
+    // Run when the underlying data may have changed (edit/assign/remove/add, first show).
     void reload();
+    // Sort the already-loaded copies and rebuild the rows/haystacks from the cached
+    // data, re-selecting `keepSelectedId` at its new row. This is the pure in-memory
+    // path a header-sort click takes — it never re-hits storage just to reorder rows.
+    void repopulate(const std::string& keepSelectedId);
+    // The copy id of the current selection, or empty when nothing is selected.
+    std::string selectedCopyId() const;
     // Hide rows that don't match the search text (case-insensitive substring over
     // every visible column), and refresh the "Showing N of M" count.
     void applyFilter();
@@ -93,6 +100,9 @@ private:
     // The copies backing the current rows, in display order (row i ⇄ loaded_[i]);
     // filtering only hides rows, so this stays aligned with the table.
     std::vector<CardCopy> loaded_;
+    // The binders, cached from the last reload() so a header-sort repopulate() can
+    // resolve/sort the Binder column (name + region) without a second query.
+    std::vector<CardBinder> binderList_;
     // Per-row lowercased search text, precomputed in reload() so filtering is a
     // plain substring compare with no per-keystroke allocation (row i ⇄ haystacks_[i]).
     std::vector<QString> haystacks_;

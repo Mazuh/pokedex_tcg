@@ -1,6 +1,11 @@
 #pragma once
 
+#include <QString>
 #include <QWidget>
+
+#include <vector>
+
+#include "core/domain/types.h"
 
 class QLabel;
 class QPushButton;
@@ -39,8 +44,25 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
-    // Rebuild the table from WishlistService::listAll(), one row per source.
+    // One flat table row: a (Pokémon, source) pair, so a header click can sort by any
+    // column — including Source, which varies within a species and so can't be captured
+    // by sorting the per-species entries alone. Display strings are precomputed here
+    // (not recomputed per comparison) so the sort keys on cheap field accesses.
+    struct SourceRow {
+        int dexNumber;
+        QString name;
+        QString source;
+        Timestamp insertedAt;
+        Timestamp updatedAt;
+    };
+
+    // Re-read the wishlist from storage into rows_, then rebuild the table (via
+    // repopulate()). Run when the data may have changed (add/edit/remove, first show).
     void refresh();
+    // Sort the already-cached rows_ and rebuild the table, preserving the selection by
+    // (dex, source). This is the pure in-memory path a header-sort click takes — it
+    // never re-reads the wishlist just to reorder rows.
+    void repopulate();
     // Add…: prompt for a species and a source, then add it.
     void addEntry();
     // Edit… / Delete on the selected row (a no-op when nothing is selected).
@@ -50,6 +72,9 @@ private:
 
     WishlistService& wishlist_;
     QTableWidget* table_;
+    // The flattened source rows backing the current table, cached from the last
+    // refresh() so a header-sort repopulate() can reorder without a re-read.
+    std::vector<SourceRow> rows_;
     // Header-driven sort state, re-applied on every refresh so it survives a reload.
     // -1 = unsorted (keep the service's order); see refresh().
     int sortColumn_ = -1;

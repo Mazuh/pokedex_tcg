@@ -89,11 +89,12 @@ BindersPage::BindersPage(BinderService& service, BinderGuideService& guide,
     connect(table_, &QTableWidget::itemSelectionChanged, this, &BindersPage::updateButtonState);
     // Double-clicking a binder opens it, the usual list-activation gesture.
     connect(table_, &QTableWidget::cellActivated, this, &BindersPage::openSelected);
-    // Clicking a header sorts by that column; store the choice and rebuild.
+    // Clicking a header sorts by that column; store the choice and repopulate from the
+    // cached binders_ — a pure reorder, no re-query.
     installHeaderSort(table_, [this](int column, Qt::SortOrder order) {
         sortColumn_ = column;
         sortOrder_ = order;
-        refresh();
+        repopulate();
     });
 
     auto* buttons = new QHBoxLayout;
@@ -128,44 +129,50 @@ BindersPage::BindersPage(BinderService& service, BinderGuideService& guide,
 }
 
 void BindersPage::refresh() {
+    // (Re)load the binders from storage, then rebuild the table. A header-sort goes
+    // through repopulate() directly, so reordering never re-hits storage.
+    try {
+        binders_ = service_.list();
+    } catch (const std::exception& e) {
+        binders_.clear();
+        QMessageBox::critical(this, tr("Pokedex TCG"),
+                              tr("Could not load your binders:\n%1")
+                                  .arg(QString::fromUtf8(e.what())));
+    }
+    repopulate();
+}
+
+void BindersPage::repopulate() {
     // Remember the selected binder by identity, not row index: a header-sort
     // reorders the rows, so the same index would afterwards point at a different
     // binder — and Rename/Remove act on the current row. Re-selecting it below at
     // its new row keeps a destructive action from silently targeting the wrong one.
     const std::string previouslySelected = selectedId();
     table_->setRowCount(0);
-    binders_.clear();
-    try {
-        binders_ = service_.list();
-        sortBinders();
-        table_->setRowCount(static_cast<int>(binders_.size()));
+    sortBinders();
+    table_->setRowCount(static_cast<int>(binders_.size()));
+    for (int i = 0; i < static_cast<int>(binders_.size()); ++i) {
+        const CardBinder& binder = binders_[i];
+        auto* nameCell = cell(QString::fromStdString(binder.name));
+        nameCell->setData(kIdRole, QString::fromStdString(binder.id));
+        nameCell->setData(kNameRole, QString::fromStdString(binder.name));
+        table_->setItem(i, 0, nameCell);
+        // A region-less binder passes an empty string; cell() renders it as
+        // an em-dash.
+        const QString region =
+            binder.pokemonRegion ? regionLabel(*binder.pokemonRegion) : QString();
+        table_->setItem(i, 1, cell(region));
+        table_->setItem(i, 2, cell(dateTimeLabel(binder.insertedAt)));
+        table_->setItem(i, 3, cell(dateTimeLabel(binder.updatedAt)));
+    }
+    // Restore the selection at its new row (a no-op if it was removed).
+    if (!previouslySelected.empty()) {
         for (int i = 0; i < static_cast<int>(binders_.size()); ++i) {
-            const CardBinder& binder = binders_[i];
-            auto* nameCell = cell(QString::fromStdString(binder.name));
-            nameCell->setData(kIdRole, QString::fromStdString(binder.id));
-            nameCell->setData(kNameRole, QString::fromStdString(binder.name));
-            table_->setItem(i, 0, nameCell);
-            // A region-less binder passes an empty string; cell() renders it as
-            // an em-dash.
-            const QString region =
-                binder.pokemonRegion ? regionLabel(*binder.pokemonRegion) : QString();
-            table_->setItem(i, 1, cell(region));
-            table_->setItem(i, 2, cell(dateTimeLabel(binder.insertedAt)));
-            table_->setItem(i, 3, cell(dateTimeLabel(binder.updatedAt)));
-        }
-        // Restore the selection at its new row (a no-op if it was removed).
-        if (!previouslySelected.empty()) {
-            for (int i = 0; i < static_cast<int>(binders_.size()); ++i) {
-                if (binders_[i].id == previouslySelected) {
-                    table_->setCurrentCell(i, 0);
-                    break;
-                }
+            if (binders_[i].id == previouslySelected) {
+                table_->setCurrentCell(i, 0);
+                break;
             }
         }
-    } catch (const std::exception& e) {
-        QMessageBox::critical(this, tr("Pokedex TCG"),
-                              tr("Could not load your binders:\n%1")
-                                  .arg(QString::fromUtf8(e.what())));
     }
     updateButtonState();
 }

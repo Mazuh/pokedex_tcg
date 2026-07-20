@@ -109,12 +109,13 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     // row first, so editSelectedCard() reads the intended row.
     connect(table_, &QTableWidget::cellDoubleClicked, this,
             [this](int, int) { editSelectedCard(); });
-    // Clicking a header sorts by that column; store the choice and rebuild (which
-    // keeps loaded_/haystacks_ aligned with the reordered rows).
+    // Clicking a header sorts by that column; store the choice and repopulate from the
+    // cached data (a pure reorder, no re-query) — keeping loaded_/haystacks_ aligned
+    // with the reordered rows and the selection on the same copy.
     installHeaderSort(table_, [this](int column, Qt::SortOrder order) {
         sortColumn_ = column;
         sortOrder_ = order;
-        reload();
+        repopulate(selectedCopyId());
     });
 
     assignButton_ = new QPushButton(tr("Assign to binder…"), this);
@@ -206,31 +207,40 @@ void OwnedCardsView::showEvent(QShowEvent* event) {
     reload();  // reflect any copies added since this section was last visible
 }
 
-void OwnedCardsView::reload() {
-    // Remember the selected copy by id, not row index: a header-sort reorders
-    // loaded_, so the same index would afterwards point at a different copy — and
-    // Remove/Assign act on the current row. Re-select it at its new row below so a
-    // destructive action never silently targets the wrong card. Captured before
-    // loaded_ is replaced, while the current row still indexes the old vector.
-    std::string previouslySelected;
-    if (const int sel = table_->currentRow();
-        sel >= 0 && sel < static_cast<int>(loaded_.size()) &&
-        !table_->selectedItems().isEmpty()) {
-        previouslySelected = loaded_[sel].id;
+std::string OwnedCardsView::selectedCopyId() const {
+    const int sel = table_->currentRow();
+    if (sel < 0 || sel >= static_cast<int>(loaded_.size()) ||
+        table_->selectedItems().isEmpty()) {
+        return {};
     }
+    return loaded_[sel].id;
+}
 
+void OwnedCardsView::reload() {
+    // Capture the selection by copy id before loaded_ is replaced (the current row
+    // still indexes the old vector), so repopulate() can re-select it at its new row —
+    // otherwise a header-sort would leave the highlight on a different copy and
+    // Remove/Assign would silently act on the wrong card.
+    const std::string keepSelected = selectedCopyId();
+    // (Re)load the inventory and the binders once; a header-sort re-sort goes through
+    // repopulate() directly, so reordering never re-hits storage.
     loaded_ = copies_.listAll();
+    binderList_ = binders_.list();
+    repopulate(keepSelected);
+}
 
+void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
     // Resolve a binder id to its display name (shown in the Binder column) and its
-    // region (search-only) in one lookup — re-fetched each reload, so a binder
-    // renamed/removed in the Binders section shows correctly here. Built before the
-    // sort below so sorting by the Binder column can key on the display name.
+    // region (search-only) from the cached binder list — rebuilt each repopulate but
+    // never re-queried. A binder renamed/removed in the Binders section is picked up on
+    // the next reload(). Built before the sort below so sorting by the Binder column
+    // can key on the display name.
     struct BinderInfo {
         QString name;
         QString region;  // empty when the binder wasn't scoped to a region
     };
     std::unordered_map<std::string, BinderInfo> binderInfo;
-    for (const CardBinder& binder : binders_.list()) {
+    for (const CardBinder& binder : binderList_) {
         binderInfo.emplace(binder.id,
                            BinderInfo{QString::fromStdString(binder.name),
                                       binder.pokemonRegion ? regionLabel(*binder.pokemonRegion)
@@ -253,37 +263,46 @@ void OwnedCardsView::reload() {
             return a.insertedAt < b.insertedAt;
         });
     } else {
-        applyColumnSort(loaded_, sortColumn_, sortOrder_,
-                        [&](const CardCopy& a, const CardCopy& b, int column) -> int {
+        // Decorate each copy with its precomputed sort keys (column 0's
+        // speciesOrCardName does a catalog lookup + allocation; the text columns
+        // allocate) so a key is built once per row rather than recomputed for both
+        // operands on every comparison. Sort the decorated vector, then reorder loaded_.
+        struct Keyed {
+            QString species, card, setName, language, ownership, binderName;
+            int conditionRank;
+            std::size_t index;
+        };
+        std::vector<Keyed> keyed;
+        keyed.reserve(loaded_.size());
+        for (std::size_t i = 0; i < loaded_.size(); ++i) {
+            const CardCopy& c = loaded_[i];
+            keyed.push_back({speciesOrCardName(c), cardText(c.cardRef),
+                             QString::fromStdString(c.cardRef.setName),
+                             QString::fromStdString(c.cardRef.language),
+                             ownershipLabel(c.ownership), binderName(c),
+                             // Condition ranks best-to-worst by enum value; an ungraded
+                             // copy (INT_MAX) sorts after every graded one.
+                             c.condition ? static_cast<int>(*c.condition) : INT_MAX, i});
+        }
+        applyColumnSort(keyed, sortColumn_, sortOrder_,
+                        [](const Keyed& a, const Keyed& b, int column) -> int {
                             switch (column) {
-                                case 0:
-                                    return speciesOrCardName(a).localeAwareCompare(
-                                        speciesOrCardName(b));
-                                case 1:
-                                    return cardText(a.cardRef).localeAwareCompare(
-                                        cardText(b.cardRef));
-                                case 2:
-                                    return QString::fromStdString(a.cardRef.setName)
-                                        .localeAwareCompare(
-                                            QString::fromStdString(b.cardRef.setName));
-                                case 3:
-                                    return QString::fromStdString(a.cardRef.language)
-                                        .localeAwareCompare(
-                                            QString::fromStdString(b.cardRef.language));
-                                case 4:
-                                    // Condition ranks best-to-worst by enum value; an
-                                    // ungraded copy (nullopt) sorts after every graded one.
-                                    return compareValues(
-                                        a.condition ? static_cast<int>(*a.condition) : INT_MAX,
-                                        b.condition ? static_cast<int>(*b.condition) : INT_MAX);
-                                case 5:
-                                    return ownershipLabel(a.ownership)
-                                        .localeAwareCompare(ownershipLabel(b.ownership));
-                                case 6:
-                                    return binderName(a).localeAwareCompare(binderName(b));
+                                case 0: return a.species.localeAwareCompare(b.species);
+                                case 1: return a.card.localeAwareCompare(b.card);
+                                case 2: return a.setName.localeAwareCompare(b.setName);
+                                case 3: return a.language.localeAwareCompare(b.language);
+                                case 4: return compareValues(a.conditionRank, b.conditionRank);
+                                case 5: return a.ownership.localeAwareCompare(b.ownership);
+                                case 6: return a.binderName.localeAwareCompare(b.binderName);
                             }
                             return 0;
                         });
+        std::vector<CardCopy> sorted;
+        sorted.reserve(loaded_.size());
+        for (const Keyed& k : keyed) {
+            sorted.push_back(std::move(loaded_[k.index]));
+        }
+        loaded_ = std::move(sorted);
     }
 
     table_->setRowCount(static_cast<int>(loaded_.size()));
@@ -365,9 +384,9 @@ void OwnedCardsView::reload() {
     panel_->setVisible(!empty);
 
     // Restore the selection at its new row (a no-op if the copy is gone).
-    if (!previouslySelected.empty()) {
+    if (!keepSelectedId.empty()) {
         for (int row = 0; row < static_cast<int>(loaded_.size()); ++row) {
-            if (loaded_[row].id == previouslySelected) {
+            if (loaded_[row].id == keepSelectedId) {
                 table_->selectRow(row);
                 break;
             }

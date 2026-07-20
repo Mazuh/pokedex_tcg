@@ -50,11 +50,15 @@ Q_SIGNALS:
     void backRequested();
 
 private:
-    // (Re)compute the guide's entries from the source of truth and (re)build the
-    // table rows, then re-apply the current search filter. Run once on construction
-    // and again after a copy is added from this page (statuses may have changed).
+    // (Re)compute the guide's entries from the source of truth and rebuild the table
+    // (via repopulate()). Run once on construction and again after a copy is added
+    // from this page (statuses may have changed).
     void refresh();
-    // Sort entries_ in place by the active header column/order before refresh()
+    // Sort the already-computed entries_ and rebuild the table rows, re-applying the
+    // filter and re-showing the current copy. This is the pure in-memory path a
+    // header-sort click takes — it never recomputes the guide or re-reads the copies.
+    void repopulate();
+    // Sort entries_ in place by the active header column/order before repopulate()
     // populates the rows. A negative sortColumn_ keeps the guide's natural (dex)
     // order (the initial, unsorted state).
     void sortEntries();

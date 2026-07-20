@@ -90,11 +90,12 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     // — the wrong gesture.)
     connect(table_, &QTableWidget::currentCellChanged, this, &BinderView::showRow);
     // Clicking a header sorts the guide by that column; store the choice and
-    // rebuild the rows (entries_ is re-sorted so it stays 1:1 with the rows).
+    // repopulate from the cached entries_ (re-sorted so they stay 1:1 with the rows).
+    // A pure reorder — it never recomputes the guide or re-reads the binder's copies.
     installHeaderSort(table_, [this](int column, Qt::SortOrder order) {
         sortColumn_ = column;
         sortOrder_ = order;
-        refresh();
+        repopulate();
     });
     // The detail panel's "Add copy" relays up to an in-place page push.
     connect(detail_, &PokemonDetailPanel::addCopyRequested, this, &BinderView::openAddCopy);
@@ -131,11 +132,6 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
 }
 
 void BinderView::refresh() {
-    // Remember which copy the detail panel is showing before the rebuild, so the
-    // tail below can re-show that exact copy rather than let showPokemon re-roll a
-    // random one. "" when not in copy mode.
-    const QString shownCopyBefore = detail_->shownCopyId();
-
     // (Re)compute the guide's entries. A failure here (e.g. the workspace went
     // away) is reported and leaves an empty table rather than crashing.
     try {
@@ -161,6 +157,15 @@ void BinderView::refresh() {
     } catch (const std::exception&) {
         ownedHere_.clear();  // best-effort: fall back to artwork-only if the read fails
     }
+
+    repopulate();
+}
+
+void BinderView::repopulate() {
+    // Remember which copy the detail panel is showing before the rebuild, so the
+    // tail below can re-show that exact copy rather than let showPokemon re-roll a
+    // random one. "" when not in copy mode.
+    const QString shownCopyBefore = detail_->shownCopyId();
 
     sortEntries();
 
@@ -203,23 +208,46 @@ void BinderView::refresh() {
 }
 
 void BinderView::sortEntries() {
-    applyColumnSort(entries_, sortColumn_, sortOrder_,
-                    [](const CardBinderEntry& a, const CardBinderEntry& b, int column) -> int {
+    if (sortColumn_ < 0) {
+        return;  // unsorted: keep the guide's natural (dex) order
+    }
+    // Decorate each entry with its precomputed sort keys (the name column allocates a
+    // QString) so a key is built once per row rather than recomputed for both operands
+    // on every comparison. Sort the decorated vector, then reorder entries_ to match.
+    struct Keyed {
+        int dexNumber;
+        QString name;
+        int statusRank;
+        std::size_t index;
+    };
+    std::vector<Keyed> keyed;
+    keyed.reserve(entries_.size());
+    for (std::size_t i = 0; i < entries_.size(); ++i) {
+        const CardBinderEntry& e = entries_[i];
+        keyed.push_back({e.pokemon.dexNumber, QString::fromStdString(e.pokemon.name),
+                         static_cast<int>(e.status), i});
+    }
+    applyColumnSort(keyed, sortColumn_, sortOrder_,
+                    [](const Keyed& a, const Keyed& b, int column) -> int {
                         switch (column) {
                             case 0:
-                                return compareValues(a.pokemon.dexNumber, b.pokemon.dexNumber);
+                                return compareValues(a.dexNumber, b.dexNumber);
                             case 1:
-                                return QString::fromStdString(a.pokemon.name)
-                                    .localeAwareCompare(QString::fromStdString(b.pokemon.name));
+                                return a.name.localeAwareCompare(b.name);
                             case 2:
-                                // Sort by the CollectionStatus enum, whose values are the
-                                // documented precedence order — a more meaningful grouping
-                                // than the status labels' alphabetical order.
-                                return compareValues(static_cast<int>(a.status),
-                                                     static_cast<int>(b.status));
+                                // CollectionStatus enum values are the documented
+                                // precedence order — a more meaningful grouping than the
+                                // status labels' alphabetical order.
+                                return compareValues(a.statusRank, b.statusRank);
                         }
                         return 0;
                     });
+    std::vector<CardBinderEntry> sorted;
+    sorted.reserve(entries_.size());
+    for (const Keyed& k : keyed) {
+        sorted.push_back(std::move(entries_[k.index]));
+    }
+    entries_ = std::move(sorted);
 }
 
 void BinderView::applyFilter(const QString& filter) {

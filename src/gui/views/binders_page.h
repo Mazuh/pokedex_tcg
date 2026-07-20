@@ -46,9 +46,15 @@ public:
                 QWidget* parent = nullptr);
 
 private:
+    // Re-query the binders from storage, then rebuild the table (via repopulate()).
+    // Run when the underlying data may have changed (create/rename/remove, first show).
     void refresh();
-    // Sort the cached binders_ in place by the active header column/order before a
-    // refresh() populates the table. A negative sortColumn_ keeps the service's
+    // Sort the already-cached binders_ and rebuild the table rows, preserving the
+    // selection by identity. This is the pure in-memory path a header-sort click takes
+    // — it never re-hits storage just to reorder rows (refresh() calls it after a query).
+    void repopulate();
+    // Sort the cached binders_ in place by the active header column/order before
+    // repopulate() populates the table. A negative sortColumn_ keeps the service's
     // natural order (the initial, unsorted state).
     void sortBinders();
     void createBinder();

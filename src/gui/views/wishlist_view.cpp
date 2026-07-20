@@ -138,11 +138,11 @@ WishlistView::WishlistView(WishlistService& wishlist, QWidget* parent)
     // Double-click a row to edit it, the usual list-activation gesture.
     connect(table_, &QTableWidget::cellActivated, this, &WishlistView::editSelected);
     // Clicking a header sorts the flat source list by that column; store the choice
-    // and rebuild.
+    // and repopulate from the cached rows_ (a pure reorder, no re-read).
     installHeaderSort(table_, [this](int column, Qt::SortOrder order) {
         sortColumn_ = column;
         sortOrder_ = order;
-        refresh();
+        repopulate();
     });
 
     auto* buttons = new QHBoxLayout;
@@ -184,6 +184,28 @@ bool WishlistView::eventFilter(QObject* watched, QEvent* event) {
 }
 
 void WishlistView::refresh() {
+    // Flatten the wishlist to one record per (Pokémon, source) so a header click can
+    // sort by any column — including Source, which varies within a species' rows and so
+    // can't be captured by sorting the per-species entries alone. Cached in rows_ so a
+    // header-sort repopulate() reorders without a re-read.
+    rows_.clear();
+    try {
+        for (const WishlistEntry& entry : wishlist_.listAll()) {
+            const QString name = QString::fromStdString(entry.pokemon.name);
+            for (const std::string& source : entry.sources) {
+                rows_.push_back({entry.pokemon.dexNumber, name, QString::fromStdString(source),
+                                 entry.insertedAt, entry.updatedAt});
+            }
+        }
+    } catch (const std::exception& e) {
+        QMessageBox::critical(this, tr("Pokedex TCG"),
+                              tr("Could not load your wishlist:\n%1")
+                                  .arg(QString::fromUtf8(e.what())));
+    }
+    repopulate();
+}
+
+void WishlistView::repopulate() {
     // Remember the selected source by identity (Pokémon + source text), not row
     // index: a header-sort reorders the rows, so restoring by index would land on a
     // different source — and Edit/Delete act on the current row. Re-select it at its
@@ -199,32 +221,7 @@ void WishlistView::refresh() {
 
     table_->setRowCount(0);
 
-    // Flatten the wishlist to one record per (Pokémon, source) so a header click can
-    // sort by any column — including Source, which varies within a species' rows and
-    // so can't be captured by sorting the per-species entries alone.
-    struct SourceRow {
-        int dexNumber;
-        QString name;
-        QString source;
-        Timestamp insertedAt;
-        Timestamp updatedAt;
-    };
-    std::vector<SourceRow> rows;
-    try {
-        for (const WishlistEntry& entry : wishlist_.listAll()) {
-            const QString name = QString::fromStdString(entry.pokemon.name);
-            for (const std::string& source : entry.sources) {
-                rows.push_back({entry.pokemon.dexNumber, name, QString::fromStdString(source),
-                                entry.insertedAt, entry.updatedAt});
-            }
-        }
-    } catch (const std::exception& e) {
-        QMessageBox::critical(this, tr("Pokedex TCG"),
-                              tr("Could not load your wishlist:\n%1")
-                                  .arg(QString::fromUtf8(e.what())));
-    }
-
-    applyColumnSort(rows, sortColumn_, sortOrder_,
+    applyColumnSort(rows_, sortColumn_, sortOrder_,
                     [](const SourceRow& a, const SourceRow& b, int column) -> int {
                         switch (column) {
                             case 0: return compareValues(a.dexNumber, b.dexNumber);
@@ -236,8 +233,8 @@ void WishlistView::refresh() {
                         return 0;
                     });
 
-    for (int row = 0; row < static_cast<int>(rows.size()); ++row) {
-        const SourceRow& r = rows[row];
+    for (int row = 0; row < static_cast<int>(rows_.size()); ++row) {
+        const SourceRow& r = rows_[row];
         table_->insertRow(row);
 
         auto* number = cell(QString::number(r.dexNumber));
@@ -264,15 +261,15 @@ void WishlistView::refresh() {
 
     // Restore the selection at its new row (a no-op if the source is gone).
     if (selectedDex >= 0) {
-        for (int row = 0; row < static_cast<int>(rows.size()); ++row) {
-            if (rows[row].dexNumber == selectedDex && rows[row].source == selectedSource) {
+        for (int row = 0; row < static_cast<int>(rows_.size()); ++row) {
+            if (rows_[row].dexNumber == selectedDex && rows_[row].source == selectedSource) {
                 table_->setCurrentCell(row, 0);
                 break;
             }
         }
     }
 
-    const bool empty = rows.empty();
+    const bool empty = rows_.empty();
     table_->setVisible(!empty);
     emptyLabel_->setVisible(empty);
     updateButtonState();
