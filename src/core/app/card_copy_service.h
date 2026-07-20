@@ -45,10 +45,14 @@ public:
                     CardOwnership ownership, std::optional<CardCondition> condition,
                     std::optional<CardBinderId> binderId, std::string comments);
 
-    // Edit a copy's condition (optional) and free-text comments, bumping updatedAt.
+    // Edit a copy's mutable details — its printed reference (the copy's language is
+    // the field the edit surface actually changes; the printing identity is otherwise
+    // shown read-only), ownership, condition (optional), and free-text comments —
+    // bumping updatedAt. The reference is trimmed and a blank collector number is
+    // rejected, mirroring create(). Binder filing is a separate verb (assignToBinder).
     // Throws CardCopyError if no copy has that id.
-    void editDetails(const CardCopyId& id, std::optional<CardCondition> condition,
-                     std::string comments);
+    void editDetails(const CardCopyId& id, CardReference cardRef, CardOwnership ownership,
+                     std::optional<CardCondition> condition, std::string comments);
 
     // File the copy in a binder, or clear its binder when nullopt — bumping
     // updatedAt. Filing never touches the copy's ownership. Throws CardCopyError if

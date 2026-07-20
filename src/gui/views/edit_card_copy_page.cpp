@@ -73,21 +73,22 @@ EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardImageStore& im
     // Binder is editable — reassignment is supported here as it is elsewhere.
     form_->setupBinderPicker(binders, copy_.binderId, /*enabled=*/true);
     connect(form_, &CardCopyForm::binderChanged, this, &EditCardCopyPage::saveBinder);
-    form_->setReferenceEditable(false);  // identity/condition/ownership are the record
+    // Only the printed identity is locked; language/condition/ownership stay editable.
+    form_->setReferenceEditable(false);
 
-    saveComments_ = new QPushButton(tr("Save comments"), this);
-    saveComments_->setEnabled(false);  // enabled only once the comments diverge
-    connect(saveComments_, &QPushButton::clicked, this, &EditCardCopyPage::saveComments);
-    form_->addAction(saveComments_);
+    saveButton_ = new QPushButton(tr("Save changes"), this);
+    saveButton_->setEnabled(false);  // enabled only once an editable field diverges
+    connect(saveButton_, &QPushButton::clicked, this, &EditCardCopyPage::saveDetails);
+    form_->addAction(saveButton_);
 
     auto* uploadButton = new QPushButton(tr("Upload a photo…"), this);
     connect(uploadButton, &QPushButton::clicked, this, &EditCardCopyPage::uploadPhoto);
     form_->addAction(uploadButton);
 
-    // "Save comments" is live only while the text differs from the stored record.
-    connect(form_, &CardCopyForm::commentsChanged, this, [this]() {
-        saveComments_->setEnabled(form_->comments() != copy_.comments);
-    });
+    // "Save changes" is live only while an editable field (comments, or a
+    // language/condition/ownership pick) differs from the stored record.
+    connect(form_, &CardCopyForm::commentsChanged, this, &EditCardCopyPage::updateSaveEnabled);
+    connect(form_, &CardCopyForm::detailsChanged, this, &EditCardCopyPage::updateSaveEnabled);
 
     // --- Finder (right): the shared search + preview widget ----------------
     // A species copy scopes the finder to that species (its name is the title's lead
@@ -144,19 +145,36 @@ void EditCardCopyPage::refreshCurrentImage() {
     setScaledPixmap(currentImage_, current);
 }
 
-bool EditCardCopyPage::saveComments() {
+bool EditCardCopyPage::isDirty() const {
+    // The printed identity is read-only, so form_->cardReference() equals the record
+    // except for language (the one reference field that stays editable). Compare the
+    // editable fields against the stored copy.
+    return form_->comments() != copy_.comments || form_->condition() != copy_.condition ||
+           form_->ownership() != copy_.ownership ||
+           form_->cardReference().language != copy_.cardRef.language;
+}
+
+void EditCardCopyPage::updateSaveEnabled() { saveButton_->setEnabled(isDirty()); }
+
+bool EditCardCopyPage::saveDetails() {
+    // The identity fields are read-only, so form_->cardReference() carries the recorded
+    // printing plus whatever language the user picked — editDetails persists that along
+    // with ownership, condition, and comments in one write.
     try {
-        // Condition is read-only here, so form_->condition() is the recorded value —
-        // editDetails only really changes the comments.
-        copies_.editDetails(copy_.id, form_->condition(), form_->comments());
+        copies_.editDetails(copy_.id, form_->cardReference(), form_->ownership(),
+                            form_->condition(), form_->comments());
     } catch (const std::exception& e) {
         QMessageBox::warning(this, tr("Pokedex TCG"),
-                             tr("Could not save comments:\n%1").arg(QString::fromUtf8(e.what())));
+                             tr("Could not save changes:\n%1").arg(QString::fromUtf8(e.what())));
         return false;
     }
-    copy_.comments = form_->comments();  // record it so the button disables until re-edited
-    saveComments_->setEnabled(false);
-    showToast(this, tr("Comments saved."));
+    // Mirror the write into the record so the button disables until re-edited.
+    copy_.cardRef = form_->cardReference();
+    copy_.ownership = form_->ownership();
+    copy_.condition = form_->condition();
+    copy_.comments = form_->comments();
+    saveButton_->setEnabled(false);
+    showToast(this, tr("Changes saved."));
     return true;
 }
 
@@ -181,20 +199,20 @@ void EditCardCopyPage::saveBinder() {
 }
 
 void EditCardCopyPage::handleBack() {
-    // Comments are the only editable field that lives unsaved on this page (image
-    // changes save immediately). If the box diverges from the record, don't drop the
-    // typing silently on Back — offer to save it, discard it, or stay. (Save failing
-    // keeps the user here so nothing is lost.)
-    if (form_->comments() != copy_.comments) {
+    // The editable details (language/condition/ownership/comments) live unsaved on this
+    // page until "Save changes" (image and binder changes persist immediately). If any
+    // diverges from the record, don't drop the edit silently on Back — offer to save it,
+    // discard it, or stay. (Save failing keeps the user here so nothing is lost.)
+    if (isDirty()) {
         const auto choice = QMessageBox::question(
-            this, tr("Unsaved comments"),
-            tr("You have unsaved changes to this card's comments."),
+            this, tr("Unsaved changes"),
+            tr("You have unsaved changes to this card."),
             QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
             QMessageBox::Save);
         if (choice == QMessageBox::Cancel) {
             return;  // stay on the page
         }
-        if (choice == QMessageBox::Save && !saveComments()) {
+        if (choice == QMessageBox::Save && !saveDetails()) {
             return;  // the save failed (already reported) — don't leave and lose it
         }
     }

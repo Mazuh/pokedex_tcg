@@ -92,17 +92,34 @@ TEST(CardCopyServiceTest, CreateTrimsReferenceAndRequiresACollectorNumber) {
                  CardCopyError);
 }
 
-TEST(CardCopyServiceTest, EditDetailsChangesConditionCommentsAndBumpsUpdatedAt) {
+TEST(CardCopyServiceTest, EditDetailsChangesReferenceOwnershipConditionCommentsAndBumpsUpdatedAt) {
     Fixture f;
     f.service.create(6, ref(), CardOwnership::Owned, CardCondition::NearMint, std::nullopt, "");
     f.now = at("2026-07-17T08:00:00Z");
-    f.service.editDetails("copy-1", CardCondition::LightlyPlayed, "small edge whitening");
+    // The copy's language is corrected (a reference field) alongside ownership,
+    // condition, and comments; the rest of the printed identity is left as-is.
+    f.service.editDetails("copy-1", CardReference{"OBF", "FR", "125/197"}, CardOwnership::Incoming,
+                          CardCondition::LightlyPlayed, "small edge whitening");
 
     const CardCopy stored = *f.repo.find("copy-1");
+    EXPECT_EQ(stored.cardRef, (CardReference{"OBF", "FR", "125/197"}));
+    EXPECT_EQ(stored.ownership, CardOwnership::Incoming);
     EXPECT_EQ(stored.condition, CardCondition::LightlyPlayed);
     EXPECT_EQ(stored.comments, "small edge whitening");
     EXPECT_EQ(stored.updatedAt, at("2026-07-17T08:00:00Z"));
     EXPECT_EQ(stored.insertedAt, at("2026-07-16T10:00:00Z"));
+}
+
+TEST(CardCopyServiceTest, EditDetailsTrimsReferenceAndRequiresACollectorNumber) {
+    Fixture f;
+    f.service.create(6, ref(), CardOwnership::Owned, CardCondition::NearMint, std::nullopt, "");
+    f.service.editDetails("copy-1", CardReference{" OBF ", " EN", " 125/197 "},
+                          CardOwnership::Owned, CardCondition::NearMint, "");
+    EXPECT_EQ(f.repo.find("copy-1")->cardRef, (CardReference{"OBF", "EN", "125/197"}));
+
+    EXPECT_THROW(f.service.editDetails("copy-1", CardReference{"OBF", "EN", "   "},
+                                       CardOwnership::Owned, CardCondition::NearMint, ""),
+                 CardCopyError);
 }
 
 TEST(CardCopyServiceTest, AssignToBinderFilesAndClearsWithoutTouchingOwnership) {
@@ -177,7 +194,9 @@ TEST(CardCopyServiceTest, HardDeleteDropsTheRow) {
 
 TEST(CardCopyServiceTest, EditRemoveAndHardDeleteThrowForMissingId) {
     Fixture f;
-    EXPECT_THROW(f.service.editDetails("ghost", CardCondition::NearMint, ""), CardCopyError);
+    EXPECT_THROW(f.service.editDetails("ghost", ref(), CardOwnership::Owned,
+                                       CardCondition::NearMint, ""),
+                 CardCopyError);
     EXPECT_THROW(f.service.assignToBinder("ghost", std::nullopt), CardCopyError);
     EXPECT_THROW(f.service.remove("ghost"), CardCopyError);
     EXPECT_THROW(f.service.hardDelete("ghost"), CardCopyError);

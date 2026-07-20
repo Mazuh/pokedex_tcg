@@ -30,8 +30,10 @@ struct CardBinder;
 // CardFinderPanel (the two together are what made the pages look alike).
 //
 // The one axis the two hosts differ on is editability, so it is a parameter:
-// setReferenceEditable(false) turns the identity/condition/ownership fields read-only
-// for the "view an existing copy" (edit) case, while comments stay editable in both.
+// setReferenceEditable(false) turns the printed-identity fields read-only for the
+// "view an existing copy" (edit) case. The physical-copy attributes (language,
+// condition, ownership), the comments, and the binder pick all stay editable in both
+// cases — a recorded copy's grade/state/language can be corrected on the edit page.
 // The binder combo's editability is set with the picker (locked for the scoped-add
 // and edit cases). The form is pure fields — it holds no service, reads no clock, and
 // creates/saves nothing; the host reads the values back (cardReference(), ownership(),
@@ -42,13 +44,22 @@ class CardCopyForm : public QWidget {
 public:
     explicit CardCopyForm(QWidget* parent = nullptr);
 
+protected:
+    // Swallow wheel events on the combos unless one is focused (see the .cpp), so
+    // scrolling the form never silently changes a copy's language / condition /
+    // ownership / binder — a footgun now that these fields are editable on the edit page.
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
+public:
     // Populate the binder combo and select `selected` (nullopt → "— None —"). When
     // `enabled` is false the combo is shown but locked (scoped-add and edit cases).
     void setupBinderPicker(const std::vector<CardBinder>& binders,
                            std::optional<CardBinderId> selected, bool enabled);
 
-    // Toggle whether the printed-identity / language / condition / ownership fields
-    // can be edited. Comments are always editable. Read-only is the edit case.
+    // Toggle whether the printed-identity fields (card name, expansion, set, collector
+    // number) can be edited. The physical-copy attributes (language, condition,
+    // ownership), comments, and binder pick are always editable. Read-only is the edit
+    // case, where the printing identity is the record but the copy's own fields aren't.
     void setReferenceEditable(bool editable);
 
     // Fill the printed-identity fields from a picked card (leaves language / condition
@@ -77,6 +88,9 @@ Q_SIGNALS:
     void referenceEdited();
     // The comments text changed (any source). Lets a host enable its Save button.
     void commentsChanged();
+    // A physical-copy attribute (language / condition / ownership) was changed by the
+    // USER (activated, not a programmatic load). Lets an edit host enable its Save button.
+    void detailsChanged();
     // The user picked a different binder in the combo (not a programmatic load). Lets
     // an edit host persist the reassignment immediately.
     void binderChanged();

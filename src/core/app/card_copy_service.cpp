@@ -54,9 +54,21 @@ CardCopy CardCopyService::require(const CardCopyId& id) {
     return *copy;
 }
 
-void CardCopyService::editDetails(const CardCopyId& id, std::optional<CardCondition> condition,
+void CardCopyService::editDetails(const CardCopyId& id, CardReference cardRef,
+                                  CardOwnership ownership, std::optional<CardCondition> condition,
                                   std::string comments) {
+    cardRef.expansionCode = trim(cardRef.expansionCode);
+    cardRef.language = trim(cardRef.language);
+    cardRef.collectorNumber = trim(cardRef.collectorNumber);
+    cardRef.setName = trim(cardRef.setName);
+    cardRef.name = trim(cardRef.name);
+    if (cardRef.collectorNumber.empty()) {
+        throw CardCopyError("A card needs a collector number.");
+    }
+
     CardCopy copy = require(id);
+    copy.cardRef = std::move(cardRef);
+    copy.ownership = ownership;
     copy.condition = condition;
     copy.comments = std::move(comments);
     copy.updatedAt = clock_();

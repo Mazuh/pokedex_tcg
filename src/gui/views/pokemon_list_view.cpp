@@ -8,6 +8,7 @@
 #include <QScrollBar>
 #include <QSplitter>
 #include <QStackedWidget>
+#include <QShowEvent>
 #include <QString>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -161,6 +162,11 @@ bool PokemonListView::eventFilter(QObject* watched, QEvent* event) {
         fillViewport();
     }
     return QWidget::eventFilter(watched, event);
+}
+
+void PokemonListView::showEvent(QShowEvent* event) {
+    QWidget::showEvent(event);
+    refresh();  // reflect copies added/edited in another section since this was last shown
 }
 
 void PokemonListView::applyFilter() {

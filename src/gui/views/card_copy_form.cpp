@@ -2,6 +2,7 @@
 
 #include <QColor>
 #include <QComboBox>
+#include <QEvent>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLineEdit>
@@ -53,8 +54,14 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     connect(setName_, &QLineEdit::textEdited, this,
             [this](const QString&) { Q_EMIT referenceEdited(); });
 
+    // language / condition / ownership describe the physical copy (which language
+    // print you own, its grade, whether it's owned/incoming/removed) rather than the
+    // printing identity, so they stay editable even in the read-only "edit a copy"
+    // case. A USER pick (activated, not the programmatic setCurrentIndex in loadCopy)
+    // is reported so an edit host can enable its Save button.
     language_ = new QComboBox(this);
     language_->addItems(languageCodes());
+    connect(language_, &QComboBox::activated, this, [this](int) { Q_EMIT detailsChanged(); });
 
     collectorNumber_ = new QLineEdit(this);
     collectorNumber_->setPlaceholderText(tr("e.g. 125/197"));
@@ -72,6 +79,7 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
           CardCondition::HeavilyPlayed, CardCondition::Damaged}) {
         condition_->addItem(conditionLabel(c), static_cast<int>(c));
     }
+    connect(condition_, &QComboBox::activated, this, [this](int) { Q_EMIT detailsChanged(); });
 
     ownership_ = new QComboBox(this);
     for (const CardOwnership o :
@@ -79,6 +87,7 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
         ownership_->addItem(ownershipLabel(o), static_cast<int>(o));
     }
     ownership_->setCurrentIndex(ownership_->findData(static_cast<int>(CardOwnership::Owned)));
+    connect(ownership_, &QComboBox::activated, this, [this](int) { Q_EMIT detailsChanged(); });
 
     // The binder the copy is filed in — populated + enabled via setupBinderPicker().
     // activated() fires only on a USER pick (not the programmatic setCurrentIndex in
@@ -92,6 +101,15 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
         tr("Capture story, price, seller, imperfections, dates…"));
     connect(comments_, &QPlainTextEdit::textChanged, this,
             [this]() { Q_EMIT commentsChanged(); });
+
+    // Guard every combo against accidental wheel changes: give them StrongFocus (so a
+    // wheel-over doesn't focus them) and filter their wheel events (eventFilter eats an
+    // unfocused wheel). A stray scroll while scanning the form must not silently flip a
+    // recorded copy's language/condition/ownership or move it between binders.
+    for (QComboBox* combo : {language_, condition_, ownership_, binder_}) {
+        combo->setFocusPolicy(Qt::StrongFocus);
+        combo->installEventFilter(this);
+    }
 
     form->addRow(tr("Card name"), cardName_);
     form->addRow(tr("Expansion code"), expansionCode_);
@@ -112,6 +130,18 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     layout->addLayout(actions_);
 }
 
+bool CardCopyForm::eventFilter(QObject* watched, QEvent* event) {
+    // A QComboBox consumes wheel events and changes its selection on scroll — an easy
+    // way to silently mis-set a value while scrolling past the form. Swallow the wheel
+    // unless the combo is focused: an unfocused wheel is scrolling by, not a choice.
+    if (event->type() == QEvent::Wheel) {
+        if (auto* combo = qobject_cast<QComboBox*>(watched); combo && !combo->hasFocus()) {
+            return true;  // eat it — leave the selection untouched
+        }
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
 void CardCopyForm::setupBinderPicker(const std::vector<CardBinder>& binders,
                                      std::optional<CardBinderId> selected, bool enabled) {
     fillBinderCombo(*binder_, binders, selected);
@@ -119,12 +149,12 @@ void CardCopyForm::setupBinderPicker(const std::vector<CardBinder>& binders,
 }
 
 void CardCopyForm::setReferenceEditable(bool editable) {
-    // Lock the identity line edits with setReadOnly (not setEnabled) so their text
-    // stays selectable/copyable — a user may want to copy a set name or collector
+    // Lock the printed-identity line edits with setReadOnly (not setEnabled) so their
+    // text stays selectable/copyable — a user may want to copy a set name or collector
     // number out. A plain read-only QLineEdit renders as bright, editable-looking
-    // text though, which read as confusing next to the disabled combos; so when
-    // locked we also mute the text to the theme's disabled colour, matching the
-    // greyed-out look of the other read-only fields while keeping copy-out.
+    // text though, which reads as confusing; so when locked we also mute the text to
+    // the theme's disabled colour, matching a greyed-out read-only look while keeping
+    // copy-out.
     for (QLineEdit* field : {cardName_, expansionCode_, setName_, collectorNumber_}) {
         field->setReadOnly(!editable);
         if (editable) {
@@ -137,11 +167,10 @@ void CardCopyForm::setReferenceEditable(bool editable) {
             field->setPalette(pal);
         }
     }
-    // Combos can't be shown read-only-but-selectable, so these stay disabled.
-    language_->setEnabled(editable);
-    condition_->setEnabled(editable);
-    ownership_->setEnabled(editable);
-    // comments_ stays editable; binder_ is governed by setupBinderPicker().
+    // Only the printing identity locks here. language / condition / ownership describe
+    // the physical copy, so they stay editable in both cases — a recorded copy's grade,
+    // state, or language can be corrected without re-picking the printing. comments_
+    // stays editable too; binder_ is governed by setupBinderPicker().
 }
 
 void CardCopyForm::setCardReference(const CardReference& ref) {

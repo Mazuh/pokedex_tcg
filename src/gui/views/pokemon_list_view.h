@@ -55,6 +55,12 @@ protected:
     // that grew taller than the loaded rows (where no scrollbar exists yet, so
     // scrolling can't drive the next load).
     bool eventFilter(QObject* watched, QEvent* event) override;
+    // Re-read the catalog + owned copies each time this section becomes visible, so a
+    // copy added or edited in another section (e.g. My Cards) is reflected — and, so
+    // the cached owned_ that a browser-initiated edit saves back is never stale
+    // (mirrors OwnedCardsView / WishlistView). Inner add/edit page pops don't re-show
+    // this widget, so they don't trigger it (they refresh explicitly).
+    void showEvent(QShowEvent* event) override;
 
 private:
     // Rebuild the filtered index set from the search text, reset to the top, and
