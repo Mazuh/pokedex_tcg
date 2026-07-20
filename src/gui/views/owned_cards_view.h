@@ -80,6 +80,10 @@ private:
     CardImagePanel* panel_;   // right-hand card-image detail panel
     QLineEdit* search_;
     QTableWidget* table_;
+    // Header-driven sort state, re-applied on every reload so it survives a refresh.
+    // -1 = unsorted (group by dex then age); see reload().
+    int sortColumn_ = -1;
+    Qt::SortOrder sortOrder_ = Qt::AscendingOrder;
     QLabel* emptyLabel_;   // shown in place of the table when no cards are recorded yet
     QPushButton* addButton_;   // "Add a card…" — stays available even when empty
     QPushButton* assignButton_;

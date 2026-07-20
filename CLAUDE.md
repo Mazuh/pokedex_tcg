@@ -251,6 +251,26 @@ with a `maximum()==0` guard so a short first chunk still fills the viewport).
 Append rows — never rebuild what's on screen. Reach for explicit paging controls
 only when infinite scroll genuinely doesn't fit.
 
+**Table columns sort on a header click, via `installHeaderSort`.** Every table
+view (`BindersPage`, `OwnedCardsView`, `WishlistView`, `BinderView`) makes its
+column headers sortable through the shared `installHeaderSort` helper
+(`gui/views/sortable_table.h`) — do the same for any new table. Do **not** use
+Qt's `setSortingEnabled()`: it reorders the `QTableWidget`'s rows in place, which
+breaks these views because each maps a row index back to a parallel data vector
+(`loaded_[row]`, `entries_[row]`) and rebuilds per-row search haystacks — the rows
+would then point at the wrong records. Instead the helper reports the clicked
+column + order; the view stores that as its own state (`int sortColumn_ = -1;
+Qt::SortOrder sortOrder_`) and, in its existing `refresh()`/`reload()`, sorts its
+**own data vector** with a typed comparator (numeric dex #, chronological
+`Timestamp`, condition rank, `localeAwareCompare` for text — the `compareValues`
+helper gives the -1/0/+1 shape) before repopulating, so rows stay aligned with
+their backing data. `sortColumn_ < 0` means "unsorted — keep the natural load
+order"; the state is re-applied on every refresh so sorting survives a reload. Use
+`std::stable_sort` so equal keys keep their prior order. When rows are a fan-out of
+the data (Wishlist: one row per source within a per-species entry), flatten to a
+one-record-per-row vector first so every column — including the per-row one — is
+sortable.
+
 **Storage writes that span statements go in a transaction.** A repository `add`
 that writes more than one row (e.g. `Wishlist` — a parent row plus its source
 rows) must wrap them in `BEGIN` / `COMMIT` with a best-effort `ROLLBACK` on

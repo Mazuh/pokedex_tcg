@@ -24,11 +24,13 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "core/app/wishlist_service.h"
 #include "core/domain/pokemon.h"
 #include "core/domain/pokemon_catalog.h"
 #include "gui/views/datetime_label.h"
+#include "gui/views/sortable_table.h"
 #include "gui/views/source_label.h"
 #include "gui/views/table_cell.h"
 #include "gui/views/toast.h"
@@ -135,6 +137,13 @@ WishlistView::WishlistView(WishlistService& wishlist, QWidget* parent)
             &WishlistView::updateButtonState);
     // Double-click a row to edit it, the usual list-activation gesture.
     connect(table_, &QTableWidget::cellActivated, this, &WishlistView::editSelected);
+    // Clicking a header sorts the flat source list by that column; store the choice
+    // and rebuild.
+    installHeaderSort(table_, [this](int column, Qt::SortOrder order) {
+        sortColumn_ = column;
+        sortOrder_ = order;
+        refresh();
+    });
 
     auto* buttons = new QHBoxLayout;
     buttons->addWidget(addButton);
@@ -176,35 +185,24 @@ bool WishlistView::eventFilter(QObject* watched, QEvent* event) {
 
 void WishlistView::refresh() {
     table_->setRowCount(0);
-    int row = 0;
+
+    // Flatten the wishlist to one record per (Pokémon, source) so a header click can
+    // sort by any column — including Source, which varies within a species' rows and
+    // so can't be captured by sorting the per-species entries alone.
+    struct SourceRow {
+        int dexNumber;
+        QString name;
+        QString source;
+        Timestamp insertedAt;
+        Timestamp updatedAt;
+    };
+    std::vector<SourceRow> rows;
     try {
         for (const WishlistEntry& entry : wishlist_.listAll()) {
             const QString name = QString::fromStdString(entry.pokemon.name);
             for (const std::string& source : entry.sources) {
-                const QString text = QString::fromStdString(source);
-                table_->insertRow(row);
-
-                auto* number = cell(QString::number(entry.pokemon.dexNumber));
-                number->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-                number->setData(kDexRole, entry.pokemon.dexNumber);
-                number->setData(kSourceRole, text);
-                table_->setItem(row, 0, number);
-                table_->setItem(row, 1, cell(name));
-                // A link source gets a clickable label widget; a plain seller name
-                // is a normal (selectable) cell.
-                if (isLinkSource(text)) {
-                    QLabel* link = sourceLabel(text);
-                    // Watch for clicks so selecting a link row updates the table's
-                    // current row (the label otherwise consumes the press).
-                    link->installEventFilter(this);
-                    table_->setCellWidget(row, 2, link);
-                } else {
-                    table_->setItem(row, 2, cell(text));
-                }
-                // Per-species stamps, repeated on each of its source rows.
-                table_->setItem(row, 3, cell(dateTimeLabel(entry.insertedAt)));
-                table_->setItem(row, 4, cell(dateTimeLabel(entry.updatedAt)));
-                ++row;
+                rows.push_back({entry.pokemon.dexNumber, name, QString::fromStdString(source),
+                                entry.insertedAt, entry.updatedAt});
             }
         }
     } catch (const std::exception& e) {
@@ -213,7 +211,45 @@ void WishlistView::refresh() {
                                   .arg(QString::fromUtf8(e.what())));
     }
 
-    const bool empty = row == 0;
+    applyColumnSort(rows, sortColumn_, sortOrder_,
+                    [](const SourceRow& a, const SourceRow& b, int column) -> int {
+                        switch (column) {
+                            case 0: return compareValues(a.dexNumber, b.dexNumber);
+                            case 1: return a.name.localeAwareCompare(b.name);
+                            case 2: return a.source.localeAwareCompare(b.source);
+                            case 3: return compareValues(a.insertedAt, b.insertedAt);
+                            case 4: return compareValues(a.updatedAt, b.updatedAt);
+                        }
+                        return 0;
+                    });
+
+    for (int row = 0; row < static_cast<int>(rows.size()); ++row) {
+        const SourceRow& r = rows[row];
+        table_->insertRow(row);
+
+        auto* number = cell(QString::number(r.dexNumber));
+        number->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        number->setData(kDexRole, r.dexNumber);
+        number->setData(kSourceRole, r.source);
+        table_->setItem(row, 0, number);
+        table_->setItem(row, 1, cell(r.name));
+        // A link source gets a clickable label widget; a plain seller name
+        // is a normal (selectable) cell.
+        if (isLinkSource(r.source)) {
+            QLabel* link = sourceLabel(r.source);
+            // Watch for clicks so selecting a link row updates the table's
+            // current row (the label otherwise consumes the press).
+            link->installEventFilter(this);
+            table_->setCellWidget(row, 2, link);
+        } else {
+            table_->setItem(row, 2, cell(r.source));
+        }
+        // Per-species stamps, repeated on each of its source rows.
+        table_->setItem(row, 3, cell(dateTimeLabel(r.insertedAt)));
+        table_->setItem(row, 4, cell(dateTimeLabel(r.updatedAt)));
+    }
+
+    const bool empty = rows.empty();
     table_->setVisible(!empty);
     emptyLabel_->setVisible(empty);
     updateButtonState();

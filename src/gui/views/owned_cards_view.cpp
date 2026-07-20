@@ -16,6 +16,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <climits>
 #include <exception>
 #include <optional>
 #include <unordered_map>
@@ -36,6 +37,7 @@
 #include "gui/views/ownership_labels.h"
 #include "gui/views/region_labels.h"
 #include "gui/views/select_all_line_edit.h"
+#include "gui/views/sortable_table.h"
 #include "gui/views/splitter_style.h"
 #include "gui/views/table_cell.h"
 #include "gui/views/toast.h"
@@ -107,6 +109,13 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     // row first, so editSelectedCard() reads the intended row.
     connect(table_, &QTableWidget::cellDoubleClicked, this,
             [this](int, int) { editSelectedCard(); });
+    // Clicking a header sorts by that column; store the choice and rebuild (which
+    // keeps loaded_/haystacks_ aligned with the reordered rows).
+    installHeaderSort(table_, [this](int column, Qt::SortOrder order) {
+        sortColumn_ = column;
+        sortOrder_ = order;
+        reload();
+    });
 
     assignButton_ = new QPushButton(tr("Assign to binder…"), this);
     assignButton_->setIcon(style()->standardIcon(QStyle::SP_DirOpenIcon));
@@ -199,17 +208,11 @@ void OwnedCardsView::showEvent(QShowEvent* event) {
 
 void OwnedCardsView::reload() {
     loaded_ = copies_.listAll();
-    // Group a species' copies together, oldest first within a species.
-    std::sort(loaded_.begin(), loaded_.end(), [](const CardCopy& a, const CardCopy& b) {
-        if (a.pokemonDexNum != b.pokemonDexNum) {
-            return a.pokemonDexNum < b.pokemonDexNum;
-        }
-        return a.insertedAt < b.insertedAt;
-    });
 
     // Resolve a binder id to its display name (shown in the Binder column) and its
     // region (search-only) in one lookup — re-fetched each reload, so a binder
-    // renamed/removed in the Binders section shows correctly here.
+    // renamed/removed in the Binders section shows correctly here. Built before the
+    // sort below so sorting by the Binder column can key on the display name.
     struct BinderInfo {
         QString name;
         QString region;  // empty when the binder wasn't scoped to a region
@@ -220,6 +223,55 @@ void OwnedCardsView::reload() {
                            BinderInfo{QString::fromStdString(binder.name),
                                       binder.pokemonRegion ? regionLabel(*binder.pokemonRegion)
                                                            : QString()});
+    }
+    const auto binderName = [&](const CardCopy& c) -> QString {
+        if (!c.binderId) {
+            return QString();
+        }
+        const auto it = binderInfo.find(*c.binderId);
+        return it != binderInfo.end() ? it->second.name : QString();
+    };
+
+    if (sortColumn_ < 0) {
+        // Default (unsorted) order: group a species' copies together, oldest first.
+        std::sort(loaded_.begin(), loaded_.end(), [](const CardCopy& a, const CardCopy& b) {
+            if (a.pokemonDexNum != b.pokemonDexNum) {
+                return a.pokemonDexNum < b.pokemonDexNum;
+            }
+            return a.insertedAt < b.insertedAt;
+        });
+    } else {
+        applyColumnSort(loaded_, sortColumn_, sortOrder_,
+                        [&](const CardCopy& a, const CardCopy& b, int column) -> int {
+                            switch (column) {
+                                case 0:
+                                    return speciesOrCardName(a).localeAwareCompare(
+                                        speciesOrCardName(b));
+                                case 1:
+                                    return cardText(a.cardRef).localeAwareCompare(
+                                        cardText(b.cardRef));
+                                case 2:
+                                    return QString::fromStdString(a.cardRef.setName)
+                                        .localeAwareCompare(
+                                            QString::fromStdString(b.cardRef.setName));
+                                case 3:
+                                    return QString::fromStdString(a.cardRef.language)
+                                        .localeAwareCompare(
+                                            QString::fromStdString(b.cardRef.language));
+                                case 4:
+                                    // Condition ranks best-to-worst by enum value; an
+                                    // ungraded copy (nullopt) sorts after every graded one.
+                                    return compareValues(
+                                        a.condition ? static_cast<int>(*a.condition) : INT_MAX,
+                                        b.condition ? static_cast<int>(*b.condition) : INT_MAX);
+                                case 5:
+                                    return ownershipLabel(a.ownership)
+                                        .localeAwareCompare(ownershipLabel(b.ownership));
+                                case 6:
+                                    return binderName(a).localeAwareCompare(binderName(b));
+                            }
+                            return 0;
+                        });
     }
 
     table_->setRowCount(static_cast<int>(loaded_.size()));

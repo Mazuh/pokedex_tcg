@@ -54,6 +54,10 @@ private:
     // table rows, then re-apply the current search filter. Run once on construction
     // and again after a copy is added from this page (statuses may have changed).
     void refresh();
+    // Sort entries_ in place by the active header column/order before refresh()
+    // populates the rows. A negative sortColumn_ keeps the guide's natural (dex)
+    // order (the initial, unsorted state).
+    void sortEntries();
     // Show only the rows whose Pokémon name contains `filter` (case-insensitive);
     // an empty filter shows all. Rows are toggled, not rebuilt.
     void applyFilter(const QString& filter);
@@ -79,6 +83,10 @@ private:
     QLineEdit* search_;
     PokemonDetailPanel* detail_;
     std::vector<CardBinderEntry> entries_;
+    // Header-driven sort state, re-applied on every refresh so it survives a
+    // recompute. -1 = unsorted (keep the guide's dex order); see sortEntries().
+    int sortColumn_ = -1;
+    Qt::SortOrder sortOrder_ = Qt::AscendingOrder;
     // Owned copies filed in this binder, bucketed by species dex, rebuilt on every
     // refresh(). Drives copy mode in the detail panel: a species present here has at
     // least one owned copy filed in this binder to show.

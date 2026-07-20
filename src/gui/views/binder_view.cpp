@@ -29,6 +29,7 @@
 #include "gui/views/edit_card_copy_page.h"
 #include "gui/views/pokemon_detail_panel.h"
 #include "gui/views/select_all_line_edit.h"
+#include "gui/views/sortable_table.h"
 #include "gui/views/splitter_style.h"
 #include "gui/views/status_labels.h"
 #include "gui/views/table_cell.h"
@@ -88,6 +89,13 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     // just fire showRow twice per click. (cellActivated would be double-click/Enter
     // — the wrong gesture.)
     connect(table_, &QTableWidget::currentCellChanged, this, &BinderView::showRow);
+    // Clicking a header sorts the guide by that column; store the choice and
+    // rebuild the rows (entries_ is re-sorted so it stays 1:1 with the rows).
+    installHeaderSort(table_, [this](int column, Qt::SortOrder order) {
+        sortColumn_ = column;
+        sortOrder_ = order;
+        refresh();
+    });
     // The detail panel's "Add copy" relays up to an in-place page push.
     connect(detail_, &PokemonDetailPanel::addCopyRequested, this, &BinderView::openAddCopy);
     // In copy mode, "Edit card" relays up to an in-place edit-page push.
@@ -149,6 +157,8 @@ void BinderView::refresh() {
         ownedHere_.clear();  // best-effort: fall back to artwork-only if the read fails
     }
 
+    sortEntries();
+
     // Rebuild every row from the freshly computed entries; entries_ and table rows
     // stay 1:1 and aligned. Statuses are fixed until the next refresh, so filtering
     // then just toggles row visibility — no per-keystroke allocation.
@@ -162,6 +172,37 @@ void BinderView::refresh() {
         table_->setItem(i, 2, cell(statusLabel(entry.status)));
     }
     applyFilter(search_->text());  // preserve the current filter across a refresh
+
+    // A header-sort reorders the rows under a stationary highlight, so the selected
+    // row index now holds a different species than the detail panel shows. Re-drive
+    // the panel from the current row so the highlight and panel stay in agreement
+    // (and "Edit card…" targets the highlighted species), mirroring OwnedCardsView.
+    // openEditCopy re-selects the just-edited copy after its own refresh(), which
+    // overrides this.
+    const int current = table_->currentRow();
+    if (current >= 0 && !table_->isRowHidden(current) && !table_->selectedItems().isEmpty()) {
+        showRow(current);
+    }
+}
+
+void BinderView::sortEntries() {
+    applyColumnSort(entries_, sortColumn_, sortOrder_,
+                    [](const CardBinderEntry& a, const CardBinderEntry& b, int column) -> int {
+                        switch (column) {
+                            case 0:
+                                return compareValues(a.pokemon.dexNumber, b.pokemon.dexNumber);
+                            case 1:
+                                return QString::fromStdString(a.pokemon.name)
+                                    .localeAwareCompare(QString::fromStdString(b.pokemon.name));
+                            case 2:
+                                // Sort by the CollectionStatus enum, whose values are the
+                                // documented precedence order — a more meaningful grouping
+                                // than the status labels' alphabetical order.
+                                return compareValues(static_cast<int>(a.status),
+                                                     static_cast<int>(b.status));
+                        }
+                        return 0;
+                    });
 }
 
 void BinderView::applyFilter(const QString& filter) {

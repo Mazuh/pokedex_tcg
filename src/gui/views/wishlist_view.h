@@ -50,6 +50,10 @@ private:
 
     WishlistService& wishlist_;
     QTableWidget* table_;
+    // Header-driven sort state, re-applied on every refresh so it survives a reload.
+    // -1 = unsorted (keep the service's order); see refresh().
+    int sortColumn_ = -1;
+    Qt::SortOrder sortOrder_ = Qt::AscendingOrder;
     QLabel* emptyLabel_;
     QPushButton* editButton_;
     QPushButton* removeButton_;

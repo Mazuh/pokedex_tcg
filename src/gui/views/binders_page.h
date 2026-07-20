@@ -47,6 +47,10 @@ public:
 
 private:
     void refresh();
+    // Sort the cached binders_ in place by the active header column/order before a
+    // refresh() populates the table. A negative sortColumn_ keeps the service's
+    // natural order (the initial, unsorted state).
+    void sortBinders();
     void createBinder();
     void renameSelected();
     void removeSelected();
@@ -65,6 +69,10 @@ private:
     CardImageStore& cardImages_;
     QStackedWidget* stack_;
     QTableWidget* table_;
+    // The header-driven sort state, re-applied on every refresh so it survives a
+    // reload. -1 = unsorted (keep the service's order); see sortBinders().
+    int sortColumn_ = -1;
+    Qt::SortOrder sortOrder_ = Qt::AscendingOrder;
     QPushButton* renameButton_;
     QPushButton* removeButton_;
     QPushButton* openButton_;

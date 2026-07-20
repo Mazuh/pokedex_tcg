@@ -25,6 +25,7 @@
 #include "gui/views/binder_view.h"
 #include "gui/views/datetime_label.h"
 #include "gui/views/region_labels.h"
+#include "gui/views/sortable_table.h"
 #include "gui/views/table_cell.h"
 #include "gui/views/toast.h"
 
@@ -88,6 +89,12 @@ BindersPage::BindersPage(BinderService& service, BinderGuideService& guide,
     connect(table_, &QTableWidget::itemSelectionChanged, this, &BindersPage::updateButtonState);
     // Double-clicking a binder opens it, the usual list-activation gesture.
     connect(table_, &QTableWidget::cellActivated, this, &BindersPage::openSelected);
+    // Clicking a header sorts by that column; store the choice and rebuild.
+    installHeaderSort(table_, [this](int column, Qt::SortOrder order) {
+        sortColumn_ = column;
+        sortOrder_ = order;
+        refresh();
+    });
 
     auto* buttons = new QHBoxLayout;
     buttons->addWidget(newButton);
@@ -121,10 +128,16 @@ BindersPage::BindersPage(BinderService& service, BinderGuideService& guide,
 }
 
 void BindersPage::refresh() {
+    // Remember the selected binder by identity, not row index: a header-sort
+    // reorders the rows, so the same index would afterwards point at a different
+    // binder — and Rename/Remove act on the current row. Re-selecting it below at
+    // its new row keeps a destructive action from silently targeting the wrong one.
+    const std::string previouslySelected = selectedId();
     table_->setRowCount(0);
     binders_.clear();
     try {
         binders_ = service_.list();
+        sortBinders();
         table_->setRowCount(static_cast<int>(binders_.size()));
         for (int i = 0; i < static_cast<int>(binders_.size()); ++i) {
             const CardBinder& binder = binders_[i];
@@ -140,12 +153,42 @@ void BindersPage::refresh() {
             table_->setItem(i, 2, cell(dateTimeLabel(binder.insertedAt)));
             table_->setItem(i, 3, cell(dateTimeLabel(binder.updatedAt)));
         }
+        // Restore the selection at its new row (a no-op if it was removed).
+        if (!previouslySelected.empty()) {
+            for (int i = 0; i < static_cast<int>(binders_.size()); ++i) {
+                if (binders_[i].id == previouslySelected) {
+                    table_->setCurrentCell(i, 0);
+                    break;
+                }
+            }
+        }
     } catch (const std::exception& e) {
         QMessageBox::critical(this, tr("Pokedex TCG"),
                               tr("Could not load your binders:\n%1")
                                   .arg(QString::fromUtf8(e.what())));
     }
     updateButtonState();
+}
+
+void BindersPage::sortBinders() {
+    const auto regionText = [](const CardBinder& b) {
+        return b.pokemonRegion ? regionLabel(*b.pokemonRegion) : QString();
+    };
+    applyColumnSort(binders_, sortColumn_, sortOrder_,
+                    [&](const CardBinder& a, const CardBinder& b, int column) -> int {
+                        switch (column) {
+                            case 0:
+                                return QString::fromStdString(a.name).localeAwareCompare(
+                                    QString::fromStdString(b.name));
+                            case 1:
+                                return regionText(a).localeAwareCompare(regionText(b));
+                            case 2:
+                                return compareValues(a.insertedAt, b.insertedAt);
+                            case 3:
+                                return compareValues(a.updatedAt, b.updatedAt);
+                        }
+                        return 0;
+                    });
 }
 
 void BindersPage::createBinder() {
