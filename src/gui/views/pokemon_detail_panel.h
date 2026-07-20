@@ -80,6 +80,9 @@ private:
     // Populate (and show) the copy-detail block for `copy`, out of `total` copies
     // filed here, and load its card image (fallback to artwork on a null pixmap).
     void showCopy(const CardCopy& copy, int total);
+    // Show the copy's card scan (by copy id) when it has one, else fall back to
+    // the Pokémon artwork. Shared by the initial show and the image-changed re-read.
+    void showCopyImage(const std::string& copyId);
     // Hide the copy block, counter and edit button (plain / empty-state).
     void hideCopy();
     // Reset the image to the loading placeholder and (re)request the current

@@ -25,7 +25,7 @@
 #include "core/app/card_copy_service.h"
 #include "core/domain/card_binder.h"
 #include "core/domain/card_copy.h"
-#include "core/domain/pokemon_catalog.h"
+#include "core/domain/pokemon.h"
 #include "gui/services/card_image_store.h"
 #include "gui/views/add_card_copy_page.h"
 #include "gui/views/binder_picker_dialog.h"
@@ -50,11 +50,8 @@ namespace {
 // helpers speciesName/cardText/speciesOrCardName/titleFor live in card_copy_labels.h,
 // shared with the binder guide's detail panel.)
 QString speciesRegionLabel(PokemonDexNum dexNumber) {
-    const auto catalog = pokemonCatalog();
-    if (dexNumber < 1 || dexNumber > static_cast<int>(catalog.size())) {
-        return QString();
-    }
-    return regionLabel(catalog[dexNumber - 1].region);
+    const Pokemon* entry = catalogEntry(dexNumber);
+    return entry ? regionLabel(entry->region) : QString();
 }
 
 }  // namespace

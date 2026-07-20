@@ -177,7 +177,11 @@ void PokemonDetailPanel::showCopy(const CardCopy& copy, int total) {
 
     // Image: the copy's card scan when it has one, else fall back to the Pokémon
     // artwork (request it and let onReady fill in; showingCopyImage_ stays false).
-    const QPixmap scan = images_->load(copy.id);
+    showCopyImage(copy.id);
+}
+
+void PokemonDetailPanel::showCopyImage(const std::string& copyId) {
+    const QPixmap scan = images_->load(copyId);
     if (!scan.isNull()) {
         showingCopyImage_ = true;
         originalPixmap_ = scan;
@@ -250,16 +254,9 @@ void PokemonDetailPanel::onCardImageChanged(const QString& copyId) {
     if (shownCopyId_.isEmpty() || copyId != shownCopyId_) {
         return;  // not the copy currently on screen
     }
-    const QPixmap scan = images_->load(shownCopyId_.toStdString());
-    if (!scan.isNull()) {
-        showingCopyImage_ = true;
-        originalPixmap_ = scan;
-        image_->setEnabled(true);
-        renderImage();
-        return;
-    }
-    // The copy's image was removed: fall back to the artwork.
-    requestArtworkFallback();
+    // Re-read the shown copy's scan; if it was removed, showCopyImage falls back
+    // to the artwork.
+    showCopyImage(shownCopyId_.toStdString());
 }
 
 void PokemonDetailPanel::renderImage() {

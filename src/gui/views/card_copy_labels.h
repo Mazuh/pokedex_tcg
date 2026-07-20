@@ -16,14 +16,22 @@ namespace pokedex {
 // Kept header-only in gui/views/ like the other *_labels.h helpers, and out of
 // the Qt-free core.
 
-// The species name for a dex number, from the compile-time catalog (contiguous
-// 1..N, so index == dex - 1). Empty for an out-of-range number (defensive).
-inline QString speciesName(PokemonDexNum dexNumber) {
+// The catalog entry for a dex number (contiguous 1..N, so index == dex - 1), or
+// nullptr for an out-of-range number (defensive). The single bounds/index guard
+// that species-name and species-region lookups share. The returned pointer is
+// stable — pokemonCatalog() is a span over compile-time storage, not a temporary.
+inline const Pokemon* catalogEntry(PokemonDexNum dexNumber) {
     const auto catalog = pokemonCatalog();
     if (dexNumber < 1 || dexNumber > static_cast<int>(catalog.size())) {
-        return QString();
+        return nullptr;
     }
-    return QString::fromStdString(catalog[dexNumber - 1].name);
+    return &catalog[dexNumber - 1];
+}
+
+// The species name for a dex number. Empty for an out-of-range number (defensive).
+inline QString speciesName(PokemonDexNum dexNumber) {
+    const Pokemon* entry = catalogEntry(dexNumber);
+    return entry ? QString::fromStdString(entry->name) : QString();
 }
 
 // The printed identity as one cell: "BS 44/102", or just the number when the
