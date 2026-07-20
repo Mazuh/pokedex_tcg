@@ -4,7 +4,9 @@
 #include <string>
 
 #include "core/domain/card_condition.h"
+#include "core/domain/card_foil.h"
 #include "core/domain/card_ownership.h"
+#include "core/domain/card_rarity.h"
 #include "core/domain/region.h"
 #include "core/domain/types.h"
 
@@ -31,6 +33,18 @@ CardOwnership ownershipFromText(const std::string& text);
 // conditionFromText throws StorageError on a non-empty unrecognized token.
 std::string conditionToText(std::optional<CardCondition> condition);
 std::optional<CardCondition> conditionFromText(const std::string& text);
+
+// CardRarity <-> its stable storage token ("Common" … "AceSpec"). Rarity is
+// optional (a copy may be recorded without one): nullopt <-> the empty string.
+// rarityFromText throws StorageError on a non-empty unrecognized token.
+std::string rarityToText(std::optional<CardRarity> rarity);
+std::optional<CardRarity> rarityFromText(const std::string& text);
+
+// CardFoil <-> its stable storage token ("NonHolo" … "Textured"). Foil treatment
+// is optional (a copy may be recorded without one): nullopt <-> the empty string.
+// foilFromText throws StorageError on a non-empty unrecognized token.
+std::string foilToText(std::optional<CardFoil> foil);
+std::optional<CardFoil> foilFromText(const std::string& text);
 
 // Timestamp <-> ISO-8601 UTC, second precision ("YYYY-MM-DDThh:mm:ssZ").
 // Sub-second parts are truncated on encode. timestampFromIso throws StorageError

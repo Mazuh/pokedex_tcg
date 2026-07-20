@@ -8,7 +8,9 @@
 
 #include "core/domain/card_condition.h"
 #include "core/domain/card_copy.h"
+#include "core/domain/card_foil.h"
 #include "core/domain/card_ownership.h"
+#include "core/domain/card_rarity.h"
 #include "core/domain/card_reference.h"
 #include "core/domain/types.h"
 
@@ -39,21 +41,26 @@ public:
     // Record a new copy the user owns / is receiving. The collector number is the
     // card's printed identity and is required — a blank one throws CardCopyError;
     // the reference fields are trimmed. `pokemonDexNum` is optional: pass nullopt
-    // for a card that depicts no species (a Trainer or Energy card). Both audit
-    // stamps are set to now(). Returns the persisted copy with its freshly minted id.
+    // for a card that depicts no species (a Trainer or Energy card). `rarity` and
+    // `foil` are the card's optional rarity classification and foil treatment. Both
+    // audit stamps are set to now(). Returns the persisted copy with its freshly
+    // minted id.
     CardCopy create(std::optional<PokemonDexNum> pokemonDexNum, CardReference cardRef,
                     CardOwnership ownership, std::optional<CardCondition> condition,
+                    std::optional<CardRarity> rarity, std::optional<CardFoil> foil,
                     std::optional<CardBinderId> binderId, std::string comments);
 
     // Edit a copy's mutable details — its printed reference (the copy's language is
     // the field the edit surface actually changes; the printing identity is otherwise
-    // shown read-only), ownership, condition (optional), and free-text comments —
-    // bumping updatedAt. The reference is trimmed and a blank collector number is
-    // rejected, mirroring create(). Binder filing is a separate verb (assignToBinder).
-    // Throws CardCopyError if no copy has that id, or if the copy is soft-Removed — a
-    // removed copy is frozen history, editable only by hardDelete.
+    // shown read-only), ownership, condition (optional), rarity (optional), foil
+    // treatment (optional), and free-text comments — bumping updatedAt. The reference
+    // is trimmed and a blank collector number is rejected, mirroring create(). Binder
+    // filing is a separate verb (assignToBinder). Throws CardCopyError if no copy has
+    // that id, or if the copy is soft-Removed — a removed copy is frozen history,
+    // editable only by hardDelete.
     void editDetails(const CardCopyId& id, CardReference cardRef, CardOwnership ownership,
-                     std::optional<CardCondition> condition, std::string comments);
+                     std::optional<CardCondition> condition, std::optional<CardRarity> rarity,
+                     std::optional<CardFoil> foil, std::string comments);
 
     // File the copy in a binder, or clear its binder when nullopt — bumping
     // updatedAt. Filing never touches the copy's ownership. Throws CardCopyError if

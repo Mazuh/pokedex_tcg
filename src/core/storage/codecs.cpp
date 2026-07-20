@@ -91,6 +91,87 @@ std::optional<CardCondition> conditionFromText(const std::string& text) {
     throw StorageError("unknown condition token: " + text);
 }
 
+std::string rarityToText(std::optional<CardRarity> rarity) {
+    if (!rarity) {
+        return "";  // unspecified — rarity is optional
+    }
+    // Stable on-disk tokens for the rarity classification (modern + legacy). A new
+    // enumerator makes this switch fail -Wswitch under -Werror rather than defaulting.
+    switch (*rarity) {
+        case CardRarity::Common:                  return "Common";
+        case CardRarity::Uncommon:                return "Uncommon";
+        case CardRarity::Rare:                    return "Rare";
+        case CardRarity::DoubleRare:              return "DoubleRare";
+        case CardRarity::IllustrationRare:        return "IllustrationRare";
+        case CardRarity::UltraRare:               return "UltraRare";
+        case CardRarity::SpecialIllustrationRare: return "SpecialIllustrationRare";
+        case CardRarity::HyperRare:               return "HyperRare";
+        case CardRarity::Promo:                   return "Promo";
+        case CardRarity::RareHolo:                return "RareHolo";
+        case CardRarity::RareHoloEX:              return "RareHoloEX";
+        case CardRarity::RarePrime:               return "RarePrime";
+        case CardRarity::RareLegend:              return "RareLegend";
+        case CardRarity::AmazingRare:             return "AmazingRare";
+        case CardRarity::Shining:                 return "Shining";
+        case CardRarity::Radiant:                 return "Radiant";
+        case CardRarity::AceSpec:                 return "AceSpec";
+    }
+    throw StorageError("unknown CardRarity enum value");
+}
+
+std::optional<CardRarity> rarityFromText(const std::string& text) {
+    if (text.empty()) {
+        return std::nullopt;  // unspecified
+    }
+    for (const CardRarity rarity :
+         {CardRarity::Common, CardRarity::Uncommon, CardRarity::Rare, CardRarity::DoubleRare,
+          CardRarity::IllustrationRare, CardRarity::UltraRare, CardRarity::SpecialIllustrationRare,
+          CardRarity::HyperRare, CardRarity::Promo, CardRarity::RareHolo, CardRarity::RareHoloEX,
+          CardRarity::RarePrime, CardRarity::RareLegend, CardRarity::AmazingRare,
+          CardRarity::Shining, CardRarity::Radiant, CardRarity::AceSpec}) {
+        if (text == rarityToText(rarity)) {
+            return rarity;
+        }
+    }
+    throw StorageError("unknown rarity token: " + text);
+}
+
+std::string foilToText(std::optional<CardFoil> foil) {
+    if (!foil) {
+        return "";  // unspecified — foil treatment is optional
+    }
+    // Stable on-disk tokens for the foil treatment / finish. A new enumerator makes
+    // this switch fail -Wswitch under -Werror rather than defaulting.
+    switch (*foil) {
+        case CardFoil::NonHolo:        return "NonHolo";
+        case CardFoil::Holo:           return "Holo";
+        case CardFoil::ReverseHolo:    return "ReverseHolo";
+        case CardFoil::CosmosHolo:     return "CosmosHolo";
+        case CardFoil::MirrorHolo:     return "MirrorHolo";
+        case CardFoil::CrackedIceHolo: return "CrackedIceHolo";
+        case CardFoil::ConfettiHolo:   return "ConfettiHolo";
+        case CardFoil::CrosshatchHolo: return "CrosshatchHolo";
+        case CardFoil::HDHolo:         return "HDHolo";
+        case CardFoil::Textured:       return "Textured";
+    }
+    throw StorageError("unknown CardFoil enum value");
+}
+
+std::optional<CardFoil> foilFromText(const std::string& text) {
+    if (text.empty()) {
+        return std::nullopt;  // unspecified
+    }
+    for (const CardFoil foil :
+         {CardFoil::NonHolo, CardFoil::Holo, CardFoil::ReverseHolo, CardFoil::CosmosHolo,
+          CardFoil::MirrorHolo, CardFoil::CrackedIceHolo, CardFoil::ConfettiHolo,
+          CardFoil::CrosshatchHolo, CardFoil::HDHolo, CardFoil::Textured}) {
+        if (text == foilToText(foil)) {
+            return foil;
+        }
+    }
+    throw StorageError("unknown foil token: " + text);
+}
+
 std::string timestampToIso(Timestamp when) {
     const std::time_t secs = std::chrono::system_clock::to_time_t(
         std::chrono::time_point_cast<std::chrono::seconds>(when));

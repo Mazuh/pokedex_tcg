@@ -17,7 +17,9 @@
 
 #include "gui/views/binder_combo.h"
 #include "gui/views/condition_labels.h"
+#include "gui/views/foil_labels.h"
 #include "gui/views/ownership_labels.h"
+#include "gui/views/rarity_labels.h"
 
 namespace pokedex {
 
@@ -31,22 +33,62 @@ const QStringList& languageCodes() {
     return codes;
 }
 
-// The condition-picker "info" popover text: every grade this app records, each with
-// its plain-language description. Built from the same conditionLabel/Description
-// helpers the picker uses, so the explanation can never drift from the options — and
-// a new CardCondition flows in automatically. Rich text (a definition list) so the
-// grade name reads bold above its description.
-QString conditionInfoHtml() {
-    QString html = QStringLiteral("<p><b>What the condition grades mean</b></p><dl>");
-    for (const CardCondition c :
-         {CardCondition::NearMint, CardCondition::LightlyPlayed, CardCondition::ModeratelyPlayed,
-          CardCondition::HeavilyPlayed, CardCondition::Damaged}) {
+// The enum values each picker and its info popover iterate — the single lists, so a
+// new enumerator flows into both the combo and the explanation automatically. The
+// rarity split matches the CardRarity docstring: the modern scale, then the legacy
+// rarities from older eras (shown as a distinct popover section).
+constexpr CardCondition kConditions[] = {
+    CardCondition::NearMint, CardCondition::LightlyPlayed, CardCondition::ModeratelyPlayed,
+    CardCondition::HeavilyPlayed, CardCondition::Damaged};
+constexpr CardRarity kModernRarities[] = {
+    CardRarity::Common,    CardRarity::Uncommon,        CardRarity::Rare,
+    CardRarity::DoubleRare, CardRarity::IllustrationRare, CardRarity::UltraRare,
+    CardRarity::SpecialIllustrationRare, CardRarity::HyperRare, CardRarity::Promo};
+constexpr CardRarity kLegacyRarities[] = {
+    CardRarity::RareHolo,   CardRarity::RareHoloEX,  CardRarity::RarePrime,
+    CardRarity::RareLegend, CardRarity::AmazingRare, CardRarity::Shining,
+    CardRarity::Radiant,    CardRarity::AceSpec};
+constexpr CardFoil kFoils[] = {
+    CardFoil::NonHolo,        CardFoil::Holo,          CardFoil::ReverseHolo,
+    CardFoil::CosmosHolo,     CardFoil::MirrorHolo,    CardFoil::CrackedIceHolo,
+    CardFoil::ConfettiHolo,   CardFoil::CrosshatchHolo, CardFoil::HDHolo,
+    CardFoil::Textured};
+
+// A rich-text <dl> definition list of label/description pairs over a range of enum
+// values, built from the same label/description helpers the picker uses (so the
+// explanation can never drift from the options). Shared by all three info popovers —
+// the single home of the dt/dd markup and its HTML-escaping.
+template <class Range, class LabelFn, class DescFn>
+QString definitionListHtml(const Range& values, LabelFn label, DescFn desc) {
+    QString html = QStringLiteral("<dl>");
+    for (const auto value : values) {
         html += QStringLiteral("<dt><b>%1</b></dt><dd>%2</dd>")
-                    .arg(conditionLabel(c).toHtmlEscaped(),
-                         conditionDescription(c).toHtmlEscaped());
+                    .arg(label(value).toHtmlEscaped(), desc(value).toHtmlEscaped());
     }
     html += QStringLiteral("</dl>");
     return html;
+}
+
+// The condition-picker "info" popover: every grade, each with its description.
+QString conditionInfoHtml() {
+    return QStringLiteral("<p><b>What the condition grades mean</b></p>") +
+           definitionListHtml(kConditions, conditionLabel, conditionDescription);
+}
+
+// The rarity-picker "info" popover: the modern scale, then a "Legacy rarities"
+// subheading with the older-era rarities — mirroring the two tables the terms come
+// from, so the legacy ones read as a distinct, secondary group.
+QString rarityInfoHtml() {
+    return QStringLiteral("<p><b>What the rarities mean</b></p>") +
+           definitionListHtml(kModernRarities, rarityLabel, rarityDescription) +
+           QStringLiteral("<p><b>Legacy rarities</b> (older eras)</p>") +
+           definitionListHtml(kLegacyRarities, rarityLabel, rarityDescription);
+}
+
+// The foil-treatment "info" popover: every finish, each with its description.
+QString foilInfoHtml() {
+    return QStringLiteral("<p><b>What the foil treatments mean</b></p>") +
+           definitionListHtml(kFoils, foilLabel, foilDescription);
 }
 
 }  // namespace
@@ -102,6 +144,27 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     }
     connect(condition_, &QComboBox::activated, this, [this](int) { Q_EMIT detailsChanged(); });
 
+    // Rarity and foil treatment are optional physical-copy attributes (like condition):
+    // each has a "(Unspecified)" -1 sentinel first, then one item per enum value with
+    // its label from the app's single source. Rarity lists the modern scale followed by
+    // the legacy rarities (the two info-popover sections). Foil lists every finish.
+    rarity_ = new QComboBox(this);
+    rarity_->addItem(tr("(Unspecified)"), -1);
+    for (const CardRarity r : kModernRarities) {
+        rarity_->addItem(rarityLabel(r), static_cast<int>(r));
+    }
+    for (const CardRarity r : kLegacyRarities) {
+        rarity_->addItem(rarityLabel(r), static_cast<int>(r));
+    }
+    connect(rarity_, &QComboBox::activated, this, [this](int) { Q_EMIT detailsChanged(); });
+
+    foil_ = new QComboBox(this);
+    foil_->addItem(tr("(Unspecified)"), -1);
+    for (const CardFoil f : kFoils) {
+        foil_->addItem(foilLabel(f), static_cast<int>(f));
+    }
+    connect(foil_, &QComboBox::activated, this, [this](int) { Q_EMIT detailsChanged(); });
+
     ownership_ = new QComboBox(this);
     // Only the live states are pickable. "Removed" is a one-way lifecycle transition
     // owned by the dedicated Remove verb (a confirmation plus an optional history note),
@@ -129,8 +192,8 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     // Guard every combo against accidental wheel changes: give them StrongFocus (so a
     // wheel-over doesn't focus them) and filter their wheel events (eventFilter eats an
     // unfocused wheel). A stray scroll while scanning the form must not silently flip a
-    // recorded copy's language/condition/ownership or move it between binders.
-    for (QComboBox* combo : {language_, condition_, ownership_, binder_}) {
+    // recorded copy's language/condition/rarity/foil/ownership or move it between binders.
+    for (QComboBox* combo : {language_, condition_, rarity_, foil_, ownership_, binder_}) {
         combo->setFocusPolicy(Qt::StrongFocus);
         combo->installEventFilter(this);
     }
@@ -141,27 +204,34 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     form->addRow(tr("Language"), language_);
     form->addRow(tr("Collector number"), collectorNumber_);
 
-    // Condition + a small "ⓘ" that explains what each grade means (the abbreviations
-    // are opaque otherwise). The same rich text is the button's tooltip (hover) and is
-    // shown on click via QToolTip, so it works with both mouse habits. WhatsThis cursor
-    // signals "this reveals help". The tip is anchored to the button and the popover
-    // text is the same source as the picker's options (conditionInfoHtml()).
-    auto* conditionInfo = new QToolButton(this);
-    conditionInfo->setText(QStringLiteral("ⓘ"));  // ⓘ
-    conditionInfo->setAutoRaise(true);
-    conditionInfo->setFocusPolicy(Qt::NoFocus);
-    conditionInfo->setCursor(Qt::WhatsThisCursor);
-    conditionInfo->setToolTip(conditionInfoHtml());
-    conditionInfo->setAccessibleName(tr("What the condition grades mean"));
-    connect(conditionInfo, &QToolButton::clicked, this, [conditionInfo]() {
-        QToolTip::showText(conditionInfo->mapToGlobal(QPoint(0, conditionInfo->height())),
-                           conditionInfoHtml(), conditionInfo);
-    });
-    auto* conditionRow = new QHBoxLayout;
-    conditionRow->setContentsMargins(0, 0, 0, 0);
-    conditionRow->addWidget(condition_, 1);
-    conditionRow->addWidget(conditionInfo);
-    form->addRow(tr("Condition"), conditionRow);
+    // Condition, rarity, and foil treatment each pair their combo with a small "ⓘ"
+    // that explains the terms (opaque abbreviations / jargon otherwise). The same rich
+    // text is the button's tooltip (hover) and is shown on click via QToolTip, so it
+    // works with both mouse habits; the WhatsThis cursor signals "this reveals help";
+    // the popover text is the same source as the picker's options. One lambda builds
+    // all three rows so the affordance can't drift between them.
+    const auto attributeRow = [this, form](const QString& label, QComboBox* combo,
+                                           const QString& infoHtml, const QString& accessibleName) {
+        auto* info = new QToolButton(this);
+        info->setText(QStringLiteral("ⓘ"));
+        info->setAutoRaise(true);
+        info->setFocusPolicy(Qt::NoFocus);
+        info->setCursor(Qt::WhatsThisCursor);
+        info->setToolTip(infoHtml);
+        info->setAccessibleName(accessibleName);
+        connect(info, &QToolButton::clicked, this, [info, infoHtml]() {
+            QToolTip::showText(info->mapToGlobal(QPoint(0, info->height())), infoHtml, info);
+        });
+        auto* row = new QHBoxLayout;
+        row->setContentsMargins(0, 0, 0, 0);
+        row->addWidget(combo, 1);
+        row->addWidget(info);
+        form->addRow(label, row);
+    };
+    attributeRow(tr("Condition"), condition_, conditionInfoHtml(),
+                 tr("What the condition grades mean"));
+    attributeRow(tr("Rarity"), rarity_, rarityInfoHtml(), tr("What the rarities mean"));
+    attributeRow(tr("Foil treatment"), foil_, foilInfoHtml(), tr("What the foil treatments mean"));
 
     form->addRow(tr("Ownership"), ownership_);
     form->addRow(tr("Binder"), binder_);
@@ -213,10 +283,11 @@ void CardCopyForm::setReferenceEditable(bool editable) {
             field->setPalette(pal);
         }
     }
-    // Only the printing identity locks here. language / condition / ownership describe
-    // the physical copy, so they stay editable in both cases — a recorded copy's grade,
-    // state, or language can be corrected without re-picking the printing. comments_
-    // stays editable too; binder_ is governed by setupBinderPicker().
+    // Only the printing identity locks here. language / condition / rarity / foil /
+    // ownership describe the physical copy, so they stay editable in both cases — a
+    // recorded copy's grade, rarity, finish, state, or language can be corrected without
+    // re-picking the printing. comments_ stays editable too; binder_ is governed by
+    // setupBinderPicker().
 }
 
 void CardCopyForm::setCardReference(const CardReference& ref) {
@@ -226,6 +297,14 @@ void CardCopyForm::setCardReference(const CardReference& ref) {
     expansionCode_->setText(QString::fromStdString(ref.expansionCode));
     setName_->setText(QString::fromStdString(ref.setName));
     collectorNumber_->setText(QString::fromStdString(ref.collectorNumber));
+}
+
+void CardCopyForm::setRarity(std::optional<CardRarity> rarity) {
+    // Silent (setCurrentIndex, not activated), so autofilling from a picked card emits
+    // no detailsChanged(); nullopt / an unmapped value falls back to "(Unspecified)".
+    const int data = rarity ? static_cast<int>(*rarity) : -1;
+    const int index = rarity_->findData(data);
+    rarity_->setCurrentIndex(index >= 0 ? index : 0);
 }
 
 void CardCopyForm::loadCopy(const CardCopy& copy) {
@@ -238,6 +317,10 @@ void CardCopyForm::loadCopy(const CardCopy& copy) {
     const int cd = copy.condition ? static_cast<int>(*copy.condition) : -1;
     const int ci = condition_->findData(cd);
     condition_->setCurrentIndex(ci >= 0 ? ci : 0);
+    setRarity(copy.rarity);
+    const int fd = copy.foil ? static_cast<int>(*copy.foil) : -1;
+    const int fi = foil_->findData(fd);
+    foil_->setCurrentIndex(fi >= 0 ? fi : 0);
     ownership_->setCurrentIndex(ownership_->findData(static_cast<int>(copy.ownership)));
     comments_->setPlainText(QString::fromStdString(copy.comments));
 }
@@ -265,6 +348,17 @@ std::optional<CardCondition> CardCopyForm::condition() const {
     const int data = condition_->currentData().toInt();
     return data < 0 ? std::nullopt
                     : std::optional<CardCondition>(static_cast<CardCondition>(data));
+}
+
+std::optional<CardRarity> CardCopyForm::rarity() const {
+    const int data = rarity_->currentData().toInt();
+    return data < 0 ? std::nullopt
+                    : std::optional<CardRarity>(static_cast<CardRarity>(data));
+}
+
+std::optional<CardFoil> CardCopyForm::foil() const {
+    const int data = foil_->currentData().toInt();
+    return data < 0 ? std::nullopt : std::optional<CardFoil>(static_cast<CardFoil>(data));
 }
 
 std::optional<CardBinderId> CardCopyForm::binderId() const {

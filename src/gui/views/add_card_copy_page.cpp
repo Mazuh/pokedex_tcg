@@ -24,6 +24,7 @@
 #include "gui/views/card_copy_splitter.h"
 #include "gui/views/card_finder_panel.h"
 #include "gui/views/photo_upload.h"
+#include "gui/views/rarity_from_catalog.h"
 #include "gui/views/scaled_pixmap.h"
 #include "gui/views/toast.h"
 
@@ -125,6 +126,10 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
 
 void AddCardCopyPage::autofillFrom(const CardCandidate& candidate) {
     form_->setCardReference(candidate.cardRef);
+    // Best-effort pre-fill of the rarity from the catalog's rarity string (blank when
+    // it doesn't map to one of our rarities — the picker stays editable). Foil has no
+    // catalog source, so it is always the user's pick.
+    form_->setRarity(rarityFromCatalog(candidate.rarity));
     updateSubmitEnabled();  // the autofilled collector number may now satisfy submit
 }
 
@@ -215,6 +220,7 @@ bool AddCardCopyPage::isDirty() const {
         return true;
     }
     if (!form_->comments().empty() || form_->condition().has_value() ||
+        form_->rarity().has_value() || form_->foil().has_value() ||
         form_->ownership() != CardOwnership::Owned) {
         return true;
     }
@@ -256,7 +262,8 @@ void AddCardCopyPage::submitCopy() {
     CardCopy created;
     try {
         created = copies_.create(dexNumber_, form_->cardReference(), form_->ownership(),
-                                 form_->condition(), binderId, form_->comments());
+                                 form_->condition(), form_->rarity(), form_->foil(), binderId,
+                                 form_->comments());
     } catch (const std::exception& e) {
         QMessageBox::warning(this, tr("Pokedex TCG"),
                              tr("Could not add the copy:\n%1").arg(QString::fromUtf8(e.what())));

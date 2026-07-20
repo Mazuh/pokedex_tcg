@@ -8,7 +8,9 @@
 
 #include "core/domain/card_condition.h"
 #include "core/domain/card_copy.h"
+#include "core/domain/card_foil.h"
 #include "core/domain/card_ownership.h"
+#include "core/domain/card_rarity.h"
 #include "core/domain/card_reference.h"
 #include "core/storage/codecs.h"
 #include "core/storage/database.h"
@@ -18,7 +20,9 @@ namespace {
 using pokedex::CardCondition;
 using pokedex::CardCopy;
 using pokedex::CardCopyRepository;
+using pokedex::CardFoil;
 using pokedex::CardOwnership;
+using pokedex::CardRarity;
 using pokedex::CardReference;
 using pokedex::Database;
 using pokedex::PokemonDexNum;
@@ -35,6 +39,8 @@ CardCopy makeCopy(std::string id, PokemonDexNum dex, CardOwnership ownership,
     copy.cardRef = CardReference{"MEW", "EN", "151/165", "151"};
     copy.ownership = ownership;
     copy.condition = CardCondition::NearMint;
+    copy.rarity = CardRarity::DoubleRare;
+    copy.foil = CardFoil::Holo;
     copy.binderId = std::move(binderId);
     copy.comments = "bought at a con";
     copy.insertedAt = at(stamp);
@@ -60,6 +66,8 @@ TEST(CardCopyRepositoryTest, AddThenListByBinderRoundTripsAllFields) {
     EXPECT_EQ(c.cardRef, (CardReference{"MEW", "EN", "151/165", "151"}));  // incl. set name
     EXPECT_EQ(c.ownership, CardOwnership::Owned);
     EXPECT_EQ(c.condition, CardCondition::NearMint);
+    EXPECT_EQ(c.rarity, CardRarity::DoubleRare);
+    EXPECT_EQ(c.foil, CardFoil::Holo);
     ASSERT_TRUE(c.binderId.has_value());
     EXPECT_EQ(*c.binderId, "b1");
     EXPECT_EQ(c.comments, "bought at a con");
@@ -118,6 +126,22 @@ TEST(CardCopyRepositoryTest, UngradedConditionRoundTripsAsNullopt) {
     EXPECT_EQ(repo.find("c1")->condition, std::nullopt);
 }
 
+// Rarity and foil are optional too — an unset pair round-trips as nullopt (stored
+// as the empty-string sentinel, like an ungraded condition).
+TEST(CardCopyRepositoryTest, UnspecifiedRarityAndFoilRoundTripAsNullopt) {
+    Database db(":memory:");
+    db.migrate();
+    CardCopyRepository repo(db);
+    CardCopy copy = makeCopy("c1", 25, CardOwnership::Owned, std::nullopt);
+    copy.rarity = std::nullopt;
+    copy.foil = std::nullopt;
+    repo.add(copy);
+    const auto found = repo.find("c1");
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(found->rarity, std::nullopt);
+    EXPECT_EQ(found->foil, std::nullopt);
+}
+
 TEST(CardCopyRepositoryTest, FindReturnsTheCopyOrNulloptForAMissingId) {
     Database db(":memory:");
     db.migrate();
@@ -152,6 +176,8 @@ TEST(CardCopyRepositoryTest, UpdateOverwritesMutableFields) {
     CardCopy edited = *repo.find("c1");
     edited.ownership = CardOwnership::Removed;
     edited.condition = CardCondition::HeavilyPlayed;
+    edited.rarity = CardRarity::HyperRare;
+    edited.foil = CardFoil::Textured;
     edited.comments = "sold it";
     edited.updatedAt = at("2026-07-16T12:00:00Z");
     repo.update(edited);
@@ -159,6 +185,8 @@ TEST(CardCopyRepositoryTest, UpdateOverwritesMutableFields) {
     const CardCopy reloaded = *repo.find("c1");
     EXPECT_EQ(reloaded.ownership, CardOwnership::Removed);
     EXPECT_EQ(reloaded.condition, CardCondition::HeavilyPlayed);
+    EXPECT_EQ(reloaded.rarity, CardRarity::HyperRare);
+    EXPECT_EQ(reloaded.foil, CardFoil::Textured);
     EXPECT_EQ(reloaded.comments, "sold it");
     EXPECT_EQ(reloaded.updatedAt, at("2026-07-16T12:00:00Z"));
     EXPECT_EQ(reloaded.insertedAt, at("2026-07-14T09:00:00Z"));  // immutable

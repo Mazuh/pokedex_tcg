@@ -33,8 +33,9 @@ class WishlistSourcesEditor;
 // still stands and nothing crashes.
 //
 // Opt-in copy mode: the 3-arg showPokemon() overload takes the species' owned copies.
-// When non-empty, the panel picks one at random, shows a compact condition badge plus a
-// counter and the copy's comments, replaces the artwork with that copy's card image
+// When non-empty, the panel picks one at random, shows compact condition / rarity / foil
+// badges (each hidden when unset) plus a counter and the copy's comments, replaces the
+// artwork with that copy's card image
 // (falling back to the artwork when the copy has no saved image), and offers an
 // "Edit card" button (editCopyRequested). Deliberately spare — set/number and ownership
 // are omitted so the card image dominates the panel. It needs a CardImageStore for the copy image;
@@ -118,6 +119,8 @@ private:
     QLabel* name_;
     QLabel* image_;
     QLabel* copyCondition_;  // compact condition badge (hidden when ungraded)
+    QLabel* copyRarity_;     // compact rarity badge (hidden when unset)
+    QLabel* copyFoil_;       // compact foil-treatment badge (hidden when unset)
     QLabel* copyCounter_;  // "N copies filed here"
     QLabel* copyComments_;
     QWidget* copyDetail_;  // container for the copy labels; hidden outside copy mode

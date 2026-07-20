@@ -7,14 +7,18 @@
 #include <chrono>
 
 #include "core/domain/card_condition.h"
+#include "core/domain/card_foil.h"
 #include "core/domain/card_ownership.h"
+#include "core/domain/card_rarity.h"
 #include "core/domain/region.h"
 #include "core/storage/database.h"
 
 namespace {
 
 using pokedex::CardCondition;
+using pokedex::CardFoil;
 using pokedex::CardOwnership;
+using pokedex::CardRarity;
 using pokedex::Region;
 using pokedex::StorageError;
 using pokedex::Timestamp;
@@ -85,6 +89,62 @@ TEST(CodecsTest, UnknownConditionTokenThrows) {
 TEST(CodecsTest, ConditionOptionalRoundTripsThroughEmptyString) {
     EXPECT_EQ(pokedex::conditionToText(std::nullopt), "");
     EXPECT_EQ(pokedex::conditionFromText(""), std::nullopt);
+}
+
+// Every rarity (modern + legacy) round-trips through its storage token.
+TEST(CodecsTest, RarityRoundTripsForEveryValue) {
+    for (const CardRarity rarity :
+         {CardRarity::Common, CardRarity::Uncommon, CardRarity::Rare, CardRarity::DoubleRare,
+          CardRarity::IllustrationRare, CardRarity::UltraRare, CardRarity::SpecialIllustrationRare,
+          CardRarity::HyperRare, CardRarity::Promo, CardRarity::RareHolo, CardRarity::RareHoloEX,
+          CardRarity::RarePrime, CardRarity::RareLegend, CardRarity::AmazingRare,
+          CardRarity::Shining, CardRarity::Radiant, CardRarity::AceSpec}) {
+        EXPECT_EQ(pokedex::rarityFromText(pokedex::rarityToText(rarity)), rarity);
+    }
+}
+
+TEST(CodecsTest, RarityTokensAreTheExpectedText) {
+    EXPECT_EQ(pokedex::rarityToText(CardRarity::Common), "Common");
+    EXPECT_EQ(pokedex::rarityToText(CardRarity::DoubleRare), "DoubleRare");
+    EXPECT_EQ(pokedex::rarityToText(CardRarity::AceSpec), "AceSpec");
+    EXPECT_EQ(pokedex::rarityFromText("HyperRare"), CardRarity::HyperRare);
+}
+
+TEST(CodecsTest, UnknownRarityTokenThrows) {
+    EXPECT_THROW(pokedex::rarityFromText("SuperRare"), StorageError);
+}
+
+// Rarity is optional: nullopt <-> the empty string (a copy without a rarity).
+TEST(CodecsTest, RarityOptionalRoundTripsThroughEmptyString) {
+    EXPECT_EQ(pokedex::rarityToText(std::nullopt), "");
+    EXPECT_EQ(pokedex::rarityFromText(""), std::nullopt);
+}
+
+// Every foil treatment round-trips through its storage token.
+TEST(CodecsTest, FoilRoundTripsForEveryValue) {
+    for (const CardFoil foil :
+         {CardFoil::NonHolo, CardFoil::Holo, CardFoil::ReverseHolo, CardFoil::CosmosHolo,
+          CardFoil::MirrorHolo, CardFoil::CrackedIceHolo, CardFoil::ConfettiHolo,
+          CardFoil::CrosshatchHolo, CardFoil::HDHolo, CardFoil::Textured}) {
+        EXPECT_EQ(pokedex::foilFromText(pokedex::foilToText(foil)), foil);
+    }
+}
+
+TEST(CodecsTest, FoilTokensAreTheExpectedText) {
+    EXPECT_EQ(pokedex::foilToText(CardFoil::NonHolo), "NonHolo");
+    EXPECT_EQ(pokedex::foilToText(CardFoil::ReverseHolo), "ReverseHolo");
+    EXPECT_EQ(pokedex::foilToText(CardFoil::Textured), "Textured");
+    EXPECT_EQ(pokedex::foilFromText("CosmosHolo"), CardFoil::CosmosHolo);
+}
+
+TEST(CodecsTest, UnknownFoilTokenThrows) {
+    EXPECT_THROW(pokedex::foilFromText("RainbowHolo"), StorageError);
+}
+
+// Foil treatment is optional: nullopt <-> the empty string.
+TEST(CodecsTest, FoilOptionalRoundTripsThroughEmptyString) {
+    EXPECT_EQ(pokedex::foilToText(std::nullopt), "");
+    EXPECT_EQ(pokedex::foilFromText(""), std::nullopt);
 }
 
 // The stored form matches the literals the schema tests already use.

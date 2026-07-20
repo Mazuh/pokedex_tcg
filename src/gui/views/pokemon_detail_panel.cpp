@@ -12,6 +12,8 @@
 #include "gui/services/card_image_store.h"
 #include "gui/services/media_service.h"
 #include "gui/views/condition_labels.h"
+#include "gui/views/foil_labels.h"
+#include "gui/views/rarity_labels.h"
 #include "gui/views/scaled_pixmap.h"
 #include "gui/views/wishlist_sources_editor.h"
 
@@ -33,19 +35,27 @@ PokemonDetailPanel::PokemonDetailPanel(MediaService& media, WishlistService& wis
     image_->setMinimumSize(160, 160);
     image_->setEnabled(false);  // muted placeholder text until an image arrives
 
-    // Copy-detail block (copy mode only): a compact condition badge, a count of copies
-    // filed here, and the copy's comments. Kept deliberately spare — set/number and
-    // ownership are omitted so the card image dominates. Hidden outside copy mode. Sits
-    // between the art and the add-copy action.
-    copyCondition_ = new QLabel(this);
-    copyCondition_->setAlignment(Qt::AlignCenter);
-    // A small, subtle pill so the grade reads as a badge, not a full line of text. The
-    // palette() border keeps it legible in both light and dark themes.
-    QFont conditionFont = copyCondition_->font();
-    conditionFont.setPointSizeF(conditionFont.pointSizeF() - 1);
-    copyCondition_->setFont(conditionFont);
-    copyCondition_->setStyleSheet(
-        "border: 1px solid palette(mid); border-radius: 8px; padding: 1px 8px;");
+    // Copy-detail block (copy mode only): compact condition / rarity / foil badges, a
+    // count of copies filed here, and the copy's comments. Kept deliberately spare —
+    // set/number and ownership are omitted so the card image dominates. Hidden outside
+    // copy mode. Sits between the art and the add-copy action.
+    //
+    // The three badges share one look: a small, subtle pill so each value reads as a
+    // badge, not a full line of text. The palette() border keeps them legible in both
+    // light and dark themes.
+    const auto makeBadge = [this]() {
+        auto* badge = new QLabel(this);
+        badge->setAlignment(Qt::AlignCenter);
+        QFont font = badge->font();
+        font.setPointSizeF(font.pointSizeF() - 1);
+        badge->setFont(font);
+        badge->setStyleSheet(
+            "border: 1px solid palette(mid); border-radius: 8px; padding: 1px 8px;");
+        return badge;
+    };
+    copyCondition_ = makeBadge();
+    copyRarity_ = makeBadge();
+    copyFoil_ = makeBadge();
     copyCounter_ = new QLabel(this);
     copyCounter_->setAlignment(Qt::AlignHCenter);
     copyCounter_->setEnabled(false);  // muted, secondary info
@@ -54,18 +64,21 @@ PokemonDetailPanel::PokemonDetailPanel(MediaService& media, WishlistService& wis
     copyComments_->setAlignment(Qt::AlignHCenter);
     copyComments_->setTextInteractionFlags(Qt::TextSelectableByMouse);
 
-    // Center the badge at its natural width (a bordered QLabel would otherwise stretch
-    // the full panel width) via stretches on either side.
-    auto* conditionRow = new QHBoxLayout;
-    conditionRow->setContentsMargins(0, 0, 0, 0);
-    conditionRow->addStretch();
-    conditionRow->addWidget(copyCondition_);
-    conditionRow->addStretch();
+    // Center the badges at their natural width (a bordered QLabel would otherwise
+    // stretch the full panel width) via stretches on either side. Each badge hides
+    // independently when its value is unset, and the row re-centers the rest.
+    auto* badgeRow = new QHBoxLayout;
+    badgeRow->setContentsMargins(0, 0, 0, 0);
+    badgeRow->addStretch();
+    badgeRow->addWidget(copyCondition_);
+    badgeRow->addWidget(copyRarity_);
+    badgeRow->addWidget(copyFoil_);
+    badgeRow->addStretch();
 
     copyDetail_ = new QWidget(this);
     auto* copyLayout = new QVBoxLayout(copyDetail_);
     copyLayout->setContentsMargins(0, 0, 0, 0);
-    copyLayout->addLayout(conditionRow);
+    copyLayout->addLayout(badgeRow);
     copyLayout->addWidget(copyCounter_);
     copyLayout->addWidget(copyComments_);
 
@@ -157,13 +170,26 @@ void PokemonDetailPanel::showPokemon(int dexNumber, const QString& name,
 void PokemonDetailPanel::showCopy(const CardCopy& copy, int total) {
     shownCopyId_ = QString::fromStdString(copy.id);
 
-    // Condition badge: a small pill with the grade, shown only when graded — an
-    // ungraded copy hides it entirely rather than adding an "Ungraded" line of clutter.
+    // Condition / rarity / foil badges: a small pill each, shown only when the value is
+    // set — an unset one hides entirely rather than adding an "Unspecified" line of
+    // clutter. All three hidden leaves the badge row empty (its stretches collapse).
     if (copy.condition) {
         copyCondition_->setText(conditionLabel(*copy.condition));
         copyCondition_->show();
     } else {
         copyCondition_->hide();
+    }
+    if (copy.rarity) {
+        copyRarity_->setText(rarityLabel(*copy.rarity));
+        copyRarity_->show();
+    } else {
+        copyRarity_->hide();
+    }
+    if (copy.foil) {
+        copyFoil_->setText(foilLabel(*copy.foil));
+        copyFoil_->show();
+    } else {
+        copyFoil_->hide();
     }
     // The browser aggregates a species' copies across all binders, so "filed here"
     // names no location there (copiesAcrossBinders_); the binder guide keeps it.

@@ -21,6 +21,7 @@ CardCopyService::CardCopyService(CardCopyRepository& repo, Clock clock, IdGenera
 
 CardCopy CardCopyService::create(std::optional<PokemonDexNum> pokemonDexNum, CardReference cardRef,
                                  CardOwnership ownership, std::optional<CardCondition> condition,
+                                 std::optional<CardRarity> rarity, std::optional<CardFoil> foil,
                                  std::optional<CardBinderId> binderId, std::string comments) {
     cardRef.expansionCode = trim(cardRef.expansionCode);
     cardRef.language = trim(cardRef.language);
@@ -38,6 +39,8 @@ CardCopy CardCopyService::create(std::optional<PokemonDexNum> pokemonDexNum, Car
     copy.cardRef = std::move(cardRef);
     copy.ownership = ownership;
     copy.condition = condition;
+    copy.rarity = rarity;
+    copy.foil = foil;
     copy.binderId = std::move(binderId);
     copy.comments = std::move(comments);
     copy.insertedAt = now;
@@ -56,6 +59,7 @@ CardCopy CardCopyService::require(const CardCopyId& id) {
 
 void CardCopyService::editDetails(const CardCopyId& id, CardReference cardRef,
                                   CardOwnership ownership, std::optional<CardCondition> condition,
+                                  std::optional<CardRarity> rarity, std::optional<CardFoil> foil,
                                   std::string comments) {
     cardRef.expansionCode = trim(cardRef.expansionCode);
     cardRef.language = trim(cardRef.language);
@@ -73,6 +77,8 @@ void CardCopyService::editDetails(const CardCopyId& id, CardReference cardRef,
     copy.cardRef = std::move(cardRef);
     copy.ownership = ownership;
     copy.condition = condition;
+    copy.rarity = rarity;
+    copy.foil = foil;
     copy.comments = std::move(comments);
     copy.updatedAt = clock_();
     repo_.update(copy);

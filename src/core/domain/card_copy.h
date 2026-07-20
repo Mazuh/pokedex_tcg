@@ -4,7 +4,9 @@
 #include <string>
 
 #include "core/domain/card_condition.h"
+#include "core/domain/card_foil.h"
 #include "core/domain/card_ownership.h"
+#include "core/domain/card_rarity.h"
 #include "core/domain/card_reference.h"
 #include "core/domain/types.h"
 
@@ -34,6 +36,9 @@ struct CardCopy {
     CardOwnership ownership;
     std::optional<CardCondition> condition;  // grading is optional — a copy may be
                                              // recorded ungraded (nullopt)
+    std::optional<CardRarity> rarity;  // how hard the card is to obtain; optional
+    std::optional<CardFoil> foil;      // foil treatment / finish; optional, and
+                                       // independent of rarity
     std::optional<CardBinderId> binderId;  // filed in this binder, if any;
                                            // clearing it never affects the copy
     std::string comments;                  // multiline free text: capture story,

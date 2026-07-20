@@ -198,6 +198,8 @@ if(BUILD_TESTING)
         tests/domain/card_reference_test.cpp
         tests/domain/card_copy_test.cpp
         tests/domain/card_condition_test.cpp
+        tests/domain/card_rarity_test.cpp
+        tests/domain/card_foil_test.cpp
         tests/domain/card_binder_test.cpp
         tests/domain/wishlist_test.cpp
         tests/domain/pokemon_test.cpp

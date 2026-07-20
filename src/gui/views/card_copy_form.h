@@ -8,7 +8,9 @@
 
 #include "core/domain/card_condition.h"
 #include "core/domain/card_copy.h"
+#include "core/domain/card_foil.h"
 #include "core/domain/card_ownership.h"
+#include "core/domain/card_rarity.h"
 #include "core/domain/card_reference.h"
 #include "core/domain/types.h"
 
@@ -66,9 +68,14 @@ public:
     // / ownership alone). Uses setText, so it does NOT emit referenceEdited().
     void setCardReference(const CardReference& ref);
 
+    // Pre-fill the rarity picker (e.g. from a picked card's catalog rarity). nullopt
+    // selects "(Unspecified)". Silent — uses setCurrentIndex, so it emits no signals,
+    // and the user can still change it.
+    void setRarity(std::optional<CardRarity> rarity);
+
     // Fill every stored field from an existing copy (the edit case): identity,
-    // language, condition, ownership, and comments. Does not touch the binder combo
-    // (use setupBinderPicker for that). Silent — emits no signals.
+    // language, condition, rarity, foil, ownership, and comments. Does not touch the
+    // binder combo (use setupBinderPicker for that). Silent — emits no signals.
     void loadCopy(const CardCopy& copy);
 
     // Append a host action button (e.g. "Add copy" / "Save comments") to the bottom
@@ -79,6 +86,8 @@ public:
     CardReference cardReference() const;
     CardOwnership ownership() const;
     std::optional<CardCondition> condition() const;
+    std::optional<CardRarity> rarity() const;
+    std::optional<CardFoil> foil() const;
     std::optional<CardBinderId> binderId() const;
     std::string comments() const;
 
@@ -102,6 +111,8 @@ private:
     QComboBox* language_;
     QLineEdit* collectorNumber_;
     QComboBox* condition_;
+    QComboBox* rarity_;
+    QComboBox* foil_;
     QComboBox* ownership_;
     QComboBox* binder_;
     QPlainTextEdit* comments_;

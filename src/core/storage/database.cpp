@@ -63,6 +63,18 @@ constexpr char kMigrationV2[] =
 constexpr char kMigrationV3[] =
     "ALTER TABLE card_copy ADD COLUMN ref_name TEXT NOT NULL DEFAULT '';";
 
+// v3 → v4: record the card's rarity classification (Common … Hyper Rare, Promo,
+// plus the legacy rarities). Optional (blank default), like condition — the empty
+// string is the codec's nullopt sentinel, so existing rows decode to "no rarity".
+constexpr char kMigrationV4[] =
+    "ALTER TABLE card_copy ADD COLUMN rarity TEXT NOT NULL DEFAULT '';";
+
+// v4 → v5: record the card's foil treatment / finish (Non-Holo, Holo, Reverse
+// Holo…). Optional (blank default), independent of rarity; existing rows decode to
+// "no foil".
+constexpr char kMigrationV5[] =
+    "ALTER TABLE card_copy ADD COLUMN foil TEXT NOT NULL DEFAULT '';";
+
 }  // namespace
 
 Database::Database(const std::filesystem::path& path) {
@@ -132,6 +144,12 @@ void Database::migrate() {
         }
         if (from < 3) {
             exec(kMigrationV3);
+        }
+        if (from < 4) {
+            exec(kMigrationV4);
+        }
+        if (from < 5) {
+            exec(kMigrationV5);
         }
         setUserVersion(kSchemaVersion);
         exec("COMMIT;");

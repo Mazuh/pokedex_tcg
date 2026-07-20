@@ -150,6 +150,7 @@ bool EditCardCopyPage::isDirty() const {
     // except for language (the one reference field that stays editable). Compare the
     // editable fields against the stored copy.
     return form_->comments() != copy_.comments || form_->condition() != copy_.condition ||
+           form_->rarity() != copy_.rarity || form_->foil() != copy_.foil ||
            form_->ownership() != copy_.ownership ||
            form_->cardReference().language != copy_.cardRef.language;
 }
@@ -162,7 +163,8 @@ bool EditCardCopyPage::saveDetails() {
     // with ownership, condition, and comments in one write.
     try {
         copies_.editDetails(copy_.id, form_->cardReference(), form_->ownership(),
-                            form_->condition(), form_->comments());
+                            form_->condition(), form_->rarity(), form_->foil(),
+                            form_->comments());
     } catch (const std::exception& e) {
         QMessageBox::warning(this, tr("Pokedex TCG"),
                              tr("Could not save changes:\n%1").arg(QString::fromUtf8(e.what())));
@@ -172,6 +174,8 @@ bool EditCardCopyPage::saveDetails() {
     copy_.cardRef = form_->cardReference();
     copy_.ownership = form_->ownership();
     copy_.condition = form_->condition();
+    copy_.rarity = form_->rarity();
+    copy_.foil = form_->foil();
     copy_.comments = form_->comments();
     saveButton_->setEnabled(false);
     showToast(this, tr("Changes saved."));

@@ -34,7 +34,9 @@
 #include "gui/views/card_image_panel.h"
 #include "gui/views/edit_card_copy_page.h"
 #include "gui/views/condition_labels.h"
+#include "gui/views/foil_labels.h"
 #include "gui/views/ownership_labels.h"
+#include "gui/views/rarity_labels.h"
 #include "gui/views/region_labels.h"
 #include "gui/views/select_all_line_edit.h"
 #include "gui/views/sortable_table.h"
@@ -78,15 +80,16 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     search_->setClearButtonEnabled(true);
     connect(search_, &QLineEdit::textChanged, this, [this](const QString&) { applyFilter(); });
 
-    // A read-only seven-column table: Pokémon, card ref, set, language,
-    // condition, ownership, binder. Whole-row selection, no editing; the Pokémon
+    // A read-only nine-column table: Pokémon, card ref, set, language, condition,
+    // rarity, foil, ownership, binder. Whole-row selection, no editing; the Pokémon
     // column sizes to its content (so the species name is never truncated) while the
     // Set column takes up the slack. The Set column carries the human set name, which
     // for code-less sets (McDonald's, POP…) is the only disambiguator.
     table_ = new QTableWidget(this);
-    table_->setColumnCount(7);
+    table_->setColumnCount(9);
     table_->setHorizontalHeaderLabels({tr("Pokémon"), tr("Card"), tr("Set"), tr("Lang"),
-                                       tr("Cond."), tr("Ownership"), tr("Binder")});
+                                       tr("Cond."), tr("Rarity"), tr("Foil"), tr("Ownership"),
+                                       tr("Binder")});
     table_->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -98,14 +101,14 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     // image panel narrowing the table. Set (col 2) is the flexible slack absorber
     // instead: free text that grows when there's room and elides (full value on a
     // tooltip) when space is tight, so Pokémon keeps its width and, when very narrow,
-    // there is still overflow to scroll to. Binder (col 6) is content-sized-then-capped
+    // there is still overflow to scroll to. Binder (col 8) is content-sized-then-capped
     // in reload() so a long user-named binder can't crowd the table; the short
     // metadata columns size to content.
-    for (const int col : {0, 1, 3, 4, 5}) {  // Pokémon, Card, Lang, Cond., Ownership
+    for (const int col : {0, 1, 3, 4, 5, 6, 7}) {  // Pokémon, Card, Lang, Cond., Rarity, Foil, Ownership
         header->setSectionResizeMode(col, QHeaderView::ResizeToContents);
     }
     header->setSectionResizeMode(2, QHeaderView::Stretch);      // Set — flexible slack absorber
-    header->setSectionResizeMode(6, QHeaderView::Interactive);  // Binder — free text, capped
+    header->setSectionResizeMode(8, QHeaderView::Interactive);  // Binder — free text, capped
     table_->setStyleSheet("QTableView::item { padding-left: 8px; padding-right: 16px; }");
     connect(table_, &QTableWidget::itemSelectionChanged, this, [this]() {
         updateButtonState();
@@ -283,7 +286,7 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
         // a catalog lookup + allocation, and the text columns allocate.
         struct Key {
             QString species, card, setName, language, ownership, binderName;
-            int conditionRank;
+            int conditionRank, rarityRank, foilRank;
         };
         sortByKeys(
             loaded_, sortColumn_, sortOrder_,
@@ -292,9 +295,12 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
                            QString::fromStdString(c.cardRef.setName),
                            QString::fromStdString(c.cardRef.language),
                            ownershipLabel(c.ownership), binderName(c),
-                           // Condition ranks best-to-worst by enum value; an ungraded
-                           // copy (INT_MAX) sorts after every graded one.
-                           c.condition ? static_cast<int>(*c.condition) : INT_MAX};
+                           // Condition ranks best-to-worst by enum value; rarity and foil
+                           // rank by enum declaration order. An unset value (INT_MAX)
+                           // sorts after every specified one.
+                           c.condition ? static_cast<int>(*c.condition) : INT_MAX,
+                           c.rarity ? static_cast<int>(*c.rarity) : INT_MAX,
+                           c.foil ? static_cast<int>(*c.foil) : INT_MAX};
             },
             [](const Key& a, const Key& b, int column) -> int {
                 switch (column) {
@@ -303,8 +309,10 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
                     case 2: return a.setName.localeAwareCompare(b.setName);
                     case 3: return a.language.localeAwareCompare(b.language);
                     case 4: return compareValues(a.conditionRank, b.conditionRank);
-                    case 5: return a.ownership.localeAwareCompare(b.ownership);
-                    case 6: return a.binderName.localeAwareCompare(b.binderName);
+                    case 5: return compareValues(a.rarityRank, b.rarityRank);
+                    case 6: return compareValues(a.foilRank, b.foilRank);
+                    case 7: return a.ownership.localeAwareCompare(b.ownership);
+                    case 8: return a.binderName.localeAwareCompare(b.binderName);
                 }
                 return 0;
             });
@@ -337,7 +345,11 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
         table_->setItem(row, 3, cell(QString::fromStdString(c.cardRef.language)));
         // Condition is optional (ungraded copies) — blank renders as an em-dash.
         table_->setItem(row, 4, cell(c.condition ? conditionAbbrev(*c.condition) : QString()));
-        table_->setItem(row, 5, cell(ownershipLabel(c.ownership)));
+        // Rarity and foil are optional too — blank when unset. Full labels (no
+        // abbreviation), since many legacy rarities lack a standard short form.
+        table_->setItem(row, 5, cell(c.rarity ? rarityLabel(*c.rarity) : QString()));
+        table_->setItem(row, 6, cell(c.foil ? foilLabel(*c.foil) : QString()));
+        table_->setItem(row, 7, cell(ownershipLabel(c.ownership)));
         // Resolve the copy's binder once — its name goes in the cell, its region
         // into the search haystack below.
         const BinderInfo* binder = nullptr;
@@ -350,7 +362,7 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
         const QString binderName = binder ? binder->name : QString();
         auto* binderCell = cell(binderName);
         binderCell->setToolTip(binderName);
-        table_->setItem(row, 6, binderCell);
+        table_->setItem(row, 8, binderCell);
 
         // Gray out a Removed copy's whole row so the (bottom-sorted) history band
         // reads as inactive.
@@ -390,9 +402,9 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
     // names show whole.
     const int freeTextCap =
         table_->fontMetrics().horizontalAdvance(QStringLiteral("McDonald's Collection 2021")) + 32;
-    table_->resizeColumnToContents(6);
-    if (table_->columnWidth(6) > freeTextCap) {
-        table_->setColumnWidth(6, freeTextCap);
+    table_->resizeColumnToContents(8);
+    if (table_->columnWidth(8) > freeTextCap) {
+        table_->setColumnWidth(8, freeTextCap);
     }
     // Empty state: swap the table + search + row actions (and the card-image panel)
     // for a friendly hint when nothing is stored — otherwise the "select a card"

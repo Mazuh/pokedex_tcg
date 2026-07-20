@@ -27,7 +27,9 @@ public:
     //   v2 — card_copy.ref_set_name (the human set name, for code-less sets).
     //   v3 — card_copy.ref_name (the printed card name; the only title a
     //        species-free Trainer/Energy card has).
-    static constexpr int kSchemaVersion = 3;
+    //   v4 — card_copy.rarity (the card's rarity classification; optional).
+    //   v5 — card_copy.foil (the card's foil treatment / finish; optional).
+    static constexpr int kSchemaVersion = 5;
 
     // Open (creating if absent) the database at `path`, or an in-memory database
     // when path == ":memory:". Throws StorageError on failure.
