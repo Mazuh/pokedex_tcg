@@ -47,7 +47,7 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService&
       cardImages_(cardImages),
       binders_(binders) {
     search_ = new SelectAllLineEdit(this);
-    search_->setPlaceholderText(tr("Search Pokémon…"));
+    search_->setPlaceholderText(tr("Search Pokémon or region…"));
     search_->setClearButtonEnabled(true);
 
     // A read-only four-column table: dex number, name, region, owned count. Whole-
@@ -151,9 +151,11 @@ void PokemonListView::applyFilter() {
         const PokemonBrowseEntry& entry = entries_[i];
         const QString name = QString::fromStdString(entry.pokemon.name);
         const QString number = QString::number(entry.pokemon.dexNumber);
+        const QString region = regionLabel(entry.pokemon.region);
         const bool visible = filter.isEmpty() ||
                              name.contains(filter, Qt::CaseInsensitive) ||
-                             number.contains(filter);
+                             number.contains(filter) ||
+                             region.contains(filter, Qt::CaseInsensitive);
         if (visible) {
             filtered_.push_back(i);
         }
