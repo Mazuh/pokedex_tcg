@@ -131,6 +131,11 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
 }
 
 void BinderView::refresh() {
+    // Remember which copy the detail panel is showing before the rebuild, so the
+    // tail below can re-show that exact copy rather than let showPokemon re-roll a
+    // random one. "" when not in copy mode.
+    const QString shownCopyBefore = detail_->shownCopyId();
+
     // (Re)compute the guide's entries. A failure here (e.g. the workspace went
     // away) is reported and leaves an empty table rather than crashing.
     try {
@@ -177,11 +182,23 @@ void BinderView::refresh() {
     // row index now holds a different species than the detail panel shows. Re-drive
     // the panel from the current row so the highlight and panel stay in agreement
     // (and "Edit card…" targets the highlighted species), mirroring OwnedCardsView.
-    // openEditCopy re-selects the just-edited copy after its own refresh(), which
-    // overrides this.
+    // Re-show the SAME copy that was on screen (shownCopyBefore) rather than calling
+    // showRow(), which re-rolls a random copy of the species — a sort re-render must
+    // not swap the copy the user is reading. openEditCopy re-selects the just-edited
+    // copy after its own refresh(), which overrides this.
     const int current = table_->currentRow();
     if (current >= 0 && !table_->isRowHidden(current) && !table_->selectedItems().isEmpty()) {
-        showRow(current);
+        QTableWidgetItem* number = table_->item(current, 0);
+        QTableWidgetItem* name = table_->item(current, 1);
+        if (number && name) {
+            shownDex_ = number->text().toInt();
+            const auto it = ownedHere_.find(shownDex_);
+            if (it != ownedHere_.end()) {
+                detail_->showPokemon(shownDex_, name->text(), it->second, shownCopyBefore);
+            } else {
+                detail_->showPokemon(shownDex_, name->text());
+            }
+        }
     }
 }
 

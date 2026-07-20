@@ -61,6 +61,11 @@ public:
     // Empty state: no selection.
     void clear();
 
+    // The id of the copy currently shown in copy mode, or "" when not in copy mode
+    // (plain artwork / empty state). Lets an owning view re-show the SAME copy after
+    // a rebuild (e.g. a header-sort refresh) instead of re-rolling a random one.
+    QString shownCopyId() const { return shownCopyId_; }
+
 Q_SIGNALS:
     // The user asked to add a card copy for the shown Pokémon. The panel is
     // embedded (in a splitter), so it can't host a full page itself — the owning

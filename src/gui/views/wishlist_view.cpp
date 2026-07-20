@@ -184,6 +184,19 @@ bool WishlistView::eventFilter(QObject* watched, QEvent* event) {
 }
 
 void WishlistView::refresh() {
+    // Remember the selected source by identity (Pokémon + source text), not row
+    // index: a header-sort reorders the rows, so restoring by index would land on a
+    // different source — and Edit/Delete act on the current row. Re-select it at its
+    // new row below.
+    int selectedDex = -1;
+    QString selectedSource;
+    if (const int sel = table_->currentRow(); sel >= 0 && !table_->selectedItems().isEmpty()) {
+        if (QTableWidgetItem* item = table_->item(sel, 0)) {
+            selectedDex = item->data(kDexRole).toInt();
+            selectedSource = item->data(kSourceRole).toString();
+        }
+    }
+
     table_->setRowCount(0);
 
     // Flatten the wishlist to one record per (Pokémon, source) so a header click can
@@ -247,6 +260,16 @@ void WishlistView::refresh() {
         // Per-species stamps, repeated on each of its source rows.
         table_->setItem(row, 3, cell(dateTimeLabel(r.insertedAt)));
         table_->setItem(row, 4, cell(dateTimeLabel(r.updatedAt)));
+    }
+
+    // Restore the selection at its new row (a no-op if the source is gone).
+    if (selectedDex >= 0) {
+        for (int row = 0; row < static_cast<int>(rows.size()); ++row) {
+            if (rows[row].dexNumber == selectedDex && rows[row].source == selectedSource) {
+                table_->setCurrentCell(row, 0);
+                break;
+            }
+        }
     }
 
     const bool empty = rows.empty();

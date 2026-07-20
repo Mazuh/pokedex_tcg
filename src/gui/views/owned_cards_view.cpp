@@ -207,6 +207,18 @@ void OwnedCardsView::showEvent(QShowEvent* event) {
 }
 
 void OwnedCardsView::reload() {
+    // Remember the selected copy by id, not row index: a header-sort reorders
+    // loaded_, so the same index would afterwards point at a different copy — and
+    // Remove/Assign act on the current row. Re-select it at its new row below so a
+    // destructive action never silently targets the wrong card. Captured before
+    // loaded_ is replaced, while the current row still indexes the old vector.
+    std::string previouslySelected;
+    if (const int sel = table_->currentRow();
+        sel >= 0 && sel < static_cast<int>(loaded_.size()) &&
+        !table_->selectedItems().isEmpty()) {
+        previouslySelected = loaded_[sel].id;
+    }
+
     loaded_ = copies_.listAll();
 
     // Resolve a binder id to its display name (shown in the Binder column) and its
@@ -351,6 +363,16 @@ void OwnedCardsView::reload() {
     editButton_->setVisible(!empty);
     emptyLabel_->setVisible(empty);
     panel_->setVisible(!empty);
+
+    // Restore the selection at its new row (a no-op if the copy is gone).
+    if (!previouslySelected.empty()) {
+        for (int row = 0; row < static_cast<int>(loaded_.size()); ++row) {
+            if (loaded_[row].id == previouslySelected) {
+                table_->selectRow(row);
+                break;
+            }
+        }
+    }
 
     applyFilter();  // re-hide non-matches, set the count, and re-sync the panel
     updateButtonState();
