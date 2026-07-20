@@ -8,8 +8,11 @@
 #include <QLineEdit>
 #include <QPalette>
 #include <QPlainTextEdit>
+#include <QPoint>
 #include <QPushButton>
 #include <QStringList>
+#include <QToolButton>
+#include <QToolTip>
 #include <QVBoxLayout>
 
 #include "gui/views/binder_combo.h"
@@ -26,6 +29,24 @@ const QStringList& languageCodes() {
     static const QStringList codes = {"", "EN", "FR", "DE", "IT", "ES",
                                       "LA", "PT", "C",  "F",  "T",  "I"};
     return codes;
+}
+
+// The condition-picker "info" popover text: every grade this app records, each with
+// its plain-language description. Built from the same conditionLabel/Description
+// helpers the picker uses, so the explanation can never drift from the options — and
+// a new CardCondition flows in automatically. Rich text (a definition list) so the
+// grade name reads bold above its description.
+QString conditionInfoHtml() {
+    QString html = QStringLiteral("<p><b>What the condition grades mean</b></p><dl>");
+    for (const CardCondition c :
+         {CardCondition::NearMint, CardCondition::LightlyPlayed, CardCondition::ModeratelyPlayed,
+          CardCondition::HeavilyPlayed, CardCondition::Damaged}) {
+        html += QStringLiteral("<dt><b>%1</b></dt><dd>%2</dd>")
+                    .arg(conditionLabel(c).toHtmlEscaped(),
+                         conditionDescription(c).toHtmlEscaped());
+    }
+    html += QStringLiteral("</dl>");
+    return html;
 }
 
 }  // namespace
@@ -116,7 +137,29 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     form->addRow(tr("Set name"), setName_);
     form->addRow(tr("Language"), language_);
     form->addRow(tr("Collector number"), collectorNumber_);
-    form->addRow(tr("Condition"), condition_);
+
+    // Condition + a small "ⓘ" that explains what each grade means (the abbreviations
+    // are opaque otherwise). The same rich text is the button's tooltip (hover) and is
+    // shown on click via QToolTip, so it works with both mouse habits. WhatsThis cursor
+    // signals "this reveals help". The tip is anchored to the button and the popover
+    // text is the same source as the picker's options (conditionInfoHtml()).
+    auto* conditionInfo = new QToolButton(this);
+    conditionInfo->setText(QStringLiteral("ⓘ"));  // ⓘ
+    conditionInfo->setAutoRaise(true);
+    conditionInfo->setFocusPolicy(Qt::NoFocus);
+    conditionInfo->setCursor(Qt::WhatsThisCursor);
+    conditionInfo->setToolTip(conditionInfoHtml());
+    conditionInfo->setAccessibleName(tr("What the condition grades mean"));
+    connect(conditionInfo, &QToolButton::clicked, this, [conditionInfo]() {
+        QToolTip::showText(conditionInfo->mapToGlobal(QPoint(0, conditionInfo->height())),
+                           conditionInfoHtml(), conditionInfo);
+    });
+    auto* conditionRow = new QHBoxLayout;
+    conditionRow->setContentsMargins(0, 0, 0, 0);
+    conditionRow->addWidget(condition_, 1);
+    conditionRow->addWidget(conditionInfo);
+    form->addRow(tr("Condition"), conditionRow);
+
     form->addRow(tr("Ownership"), ownership_);
     form->addRow(tr("Binder"), binder_);
     form->addRow(tr("Comments"), comments_);
