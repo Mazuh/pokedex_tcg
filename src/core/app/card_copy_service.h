@@ -50,13 +50,15 @@ public:
     // shown read-only), ownership, condition (optional), and free-text comments —
     // bumping updatedAt. The reference is trimmed and a blank collector number is
     // rejected, mirroring create(). Binder filing is a separate verb (assignToBinder).
-    // Throws CardCopyError if no copy has that id.
+    // Throws CardCopyError if no copy has that id, or if the copy is soft-Removed — a
+    // removed copy is frozen history, editable only by hardDelete.
     void editDetails(const CardCopyId& id, CardReference cardRef, CardOwnership ownership,
                      std::optional<CardCondition> condition, std::string comments);
 
     // File the copy in a binder, or clear its binder when nullopt — bumping
     // updatedAt. Filing never touches the copy's ownership. Throws CardCopyError if
-    // no copy has that id (a bad binder id is rejected by the storage FK).
+    // no copy has that id (a bad binder id is rejected by the storage FK), or if the
+    // copy is soft-Removed — frozen history is not refiled.
     void assignToBinder(const CardCopyId& id, std::optional<CardBinderId> binderId);
 
     // Soft-remove: mark the copy Removed — kept for auditable history rather than

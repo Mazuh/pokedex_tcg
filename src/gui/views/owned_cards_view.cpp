@@ -457,9 +457,15 @@ void OwnedCardsView::applyFilter() {
 void OwnedCardsView::updateButtonState() {
     const int row = table_->currentRow();
     const bool hasSelection = row >= 0 && !table_->selectedItems().isEmpty();
-    assignButton_->setEnabled(hasSelection);
+    // A soft-Removed copy is frozen history: it can only be permanently deleted (or
+    // left as-is), never edited or refiled. So Edit/Assign are disabled over one —
+    // mirroring CardCopyService, which rejects editDetails/assignToBinder on a Removed
+    // copy. Remove stays available (re-removing appends a fresh history note).
+    const bool liveSelection = hasSelection && row < static_cast<int>(loaded_.size()) &&
+                               !isRemoved(loaded_[row]);
+    assignButton_->setEnabled(liveSelection);
     removeButton_->setEnabled(hasSelection);
-    editButton_->setEnabled(hasSelection);
+    editButton_->setEnabled(liveSelection);
     // Permanent deletion is only offered for a copy that's already soft-Removed —
     // you remove first, then (optionally) purge it from history. A row hidden by the
     // search filter isn't deletable: the selection survives a filter (see applyFilter),
@@ -499,6 +505,9 @@ void OwnedCardsView::assignSelected() {
         return;
     }
     const CardCopy& copy = loaded_[row];
+    if (isRemoved(copy)) {
+        return;  // frozen history — the button is disabled, but re-check defensively
+    }
     BinderPickerDialog dialog(binders_.list(), copy.binderId, this);
     if (dialog.exec() != QDialog::Accepted) {
         return;
@@ -584,6 +593,9 @@ void OwnedCardsView::editSelectedCard() {
         return;
     }
     const CardCopy& copy = loaded_[row];
+    if (isRemoved(copy)) {
+        return;  // frozen history — the button is disabled, but re-check defensively
+    }
     const std::string copyId = copy.id;
     auto* page = new EditCardCopyPage(cardSearch_, images_, copies_, copy, binders_.list(),
                                       titleFor(copy));

@@ -185,6 +185,23 @@ TEST(CardCopyServiceTest, RemoveAppendsAnOptionalNoteToExistingComments) {
     EXPECT_TRUE(f.repo.find("copy-2")->comments.empty());
 }
 
+TEST(CardCopyServiceTest, RemovedCopyIsFrozenHistoryAndCannotBeEditedOrRefiled) {
+    Fixture f;
+    f.service.create(6, ref(), CardOwnership::Owned, CardCondition::NearMint, std::nullopt, "");
+    f.service.remove("copy-1");
+
+    // Neither editing details nor refiling in a binder touches a removed copy.
+    EXPECT_THROW(f.service.editDetails("copy-1", ref(), CardOwnership::Owned,
+                                       CardCondition::NearMint, "second thoughts"),
+                 CardCopyError);
+    EXPECT_THROW(f.service.assignToBinder("copy-1", std::nullopt), CardCopyError);
+
+    // The copy is untouched — still Removed, comments unchanged.
+    const CardCopy stored = *f.repo.find("copy-1");
+    EXPECT_EQ(stored.ownership, CardOwnership::Removed);
+    EXPECT_TRUE(stored.comments.empty());
+}
+
 TEST(CardCopyServiceTest, HardDeleteDropsTheRow) {
     Fixture f;
     f.service.create(6, ref(), CardOwnership::Owned, CardCondition::NearMint, std::nullopt, "");

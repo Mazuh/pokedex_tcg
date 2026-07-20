@@ -103,8 +103,11 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     connect(condition_, &QComboBox::activated, this, [this](int) { Q_EMIT detailsChanged(); });
 
     ownership_ = new QComboBox(this);
-    for (const CardOwnership o :
-         {CardOwnership::Incoming, CardOwnership::Owned, CardOwnership::Removed}) {
+    // Only the live states are pickable. "Removed" is a one-way lifecycle transition
+    // owned by the dedicated Remove verb (a confirmation plus an optional history note),
+    // never a value set by editing a form field — and a Removed copy is frozen history
+    // that CardCopyService won't re-edit anyway, so it never loads back into this combo.
+    for (const CardOwnership o : {CardOwnership::Incoming, CardOwnership::Owned}) {
         ownership_->addItem(ownershipLabel(o), static_cast<int>(o));
     }
     ownership_->setCurrentIndex(ownership_->findData(static_cast<int>(CardOwnership::Owned)));

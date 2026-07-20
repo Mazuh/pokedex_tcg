@@ -67,6 +67,9 @@ void CardCopyService::editDetails(const CardCopyId& id, CardReference cardRef,
     }
 
     CardCopy copy = require(id);
+    if (copy.ownership == CardOwnership::Removed) {
+        throw CardCopyError("A removed card is frozen history and cannot be edited.");
+    }
     copy.cardRef = std::move(cardRef);
     copy.ownership = ownership;
     copy.condition = condition;
@@ -77,6 +80,9 @@ void CardCopyService::editDetails(const CardCopyId& id, CardReference cardRef,
 
 void CardCopyService::assignToBinder(const CardCopyId& id, std::optional<CardBinderId> binderId) {
     CardCopy copy = require(id);
+    if (copy.ownership == CardOwnership::Removed) {
+        throw CardCopyError("A removed card is frozen history and cannot be filed in a binder.");
+    }
     copy.binderId = std::move(binderId);
     copy.updatedAt = clock_();
     repo_.update(copy);
