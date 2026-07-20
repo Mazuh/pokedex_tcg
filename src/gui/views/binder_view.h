@@ -75,6 +75,10 @@ private:
     // is showing) onto the inner stack; Back pops it, then refreshes the guide and
     // re-shows the current row so an edit (comment, binder move, image) is reflected.
     void openEditCopy(const QString& copyId);
+    // Move the highlight to species `dex`'s row and re-show its copy `copyId` in the
+    // panel — restoring the selection by IDENTITY after a refresh() rebuilt the rows.
+    // Clears the panel if the species left the guide. Called by the edit-page return.
+    void reselectSpecies(int dex, const QString& copyId);
 
     BinderGuideService& guide_;
     CardBinder binder_;

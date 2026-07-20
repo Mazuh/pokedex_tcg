@@ -21,8 +21,7 @@
 #include "core/app/binder_service.h"
 #include "core/app/card_copy_service.h"
 #include "gui/views/add_card_copy_page.h"
-#include "gui/views/card_copy_labels.h"
-#include "gui/views/edit_card_copy_page.h"
+#include "gui/views/edit_copy_page_host.h"
 #include "gui/views/owned_copy_buckets.h"
 #include "gui/views/pokemon_detail_panel.h"
 #include "gui/views/region_labels.h"
@@ -357,23 +356,17 @@ void PokemonListView::openEditCopy(const QString& copyId) {
     if (copyIt == it->second.end()) {
         return;
     }
-    auto* page = new EditCardCopyPage(cardSearch_, cardImages_, cardCopies_, *copyIt,
-                                      binders_.list(), titleFor(*copyIt));
-    connect(page, &EditCardCopyPage::backRequested, this, [this, page, copyId]() {
-        // Capture the shown species before refresh(), which re-renders from the top.
-        const int dex = shownDex_;
-        stack_->setCurrentIndex(0);
-        stack_->removeWidget(page);
-        page->deleteLater();
-        // An edit can change owned data (a comment, a new image, a binder move). Re-read
-        // the inventory, then re-select the edited species' row and re-show the SAME
-        // copy — not a fresh random pick — so the highlight and panel agree and the user
-        // sees their change land.
-        refresh();
-        reselectSpecies(dex, copyId);
-    });
-    stack_->addWidget(page);
-    stack_->setCurrentWidget(page);
+    pushEditCopyPage(stack_, cardSearch_, cardImages_, cardCopies_, *copyIt, binders_.list(),
+                     [this, copyId]() {
+                         // Capture the shown species before refresh(), which re-renders
+                         // from the top. An edit can change owned data (a comment, a new
+                         // image, a binder move), so re-read the inventory, then re-select
+                         // the edited species' row and re-show the SAME copy — not a fresh
+                         // random pick — so the highlight and panel agree.
+                         const int dex = shownDex_;
+                         refresh();
+                         reselectSpecies(dex, copyId);
+                     });
 }
 
 void PokemonListView::refresh() {

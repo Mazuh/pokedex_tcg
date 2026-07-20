@@ -25,8 +25,7 @@
 #include "gui/views/add_card_copy_page.h"
 #include "gui/views/back_button.h"
 #include "gui/views/binder_combo.h"
-#include "gui/views/card_copy_labels.h"
-#include "gui/views/edit_card_copy_page.h"
+#include "gui/views/edit_copy_page_host.h"
 #include "gui/views/owned_copy_buckets.h"
 #include "gui/views/pokemon_detail_panel.h"
 #include "gui/views/select_all_line_edit.h"
@@ -331,40 +330,38 @@ void BinderView::openEditCopy(const QString& copyId) {
     if (copyIt == it->second.end()) {
         return;
     }
-    auto* page = new EditCardCopyPage(cardSearch_, cardImages_, cardCopies_, *copyIt,
-                                      binders_.list(), titleFor(*copyIt));
-    connect(page, &EditCardCopyPage::backRequested, this, [this, page, copyId]() {
-        // Capture the shown species before refresh(), which may clear shownDex_.
-        const int dex = shownDex_;
-        stack_->setCurrentIndex(0);
-        stack_->removeWidget(page);
-        page->deleteLater();
-        // An edit can change the guide (a comment, a binder move that removes the copy
-        // from here, a new image). Recompute, then re-show the SAME copy that was just
-        // edited — not a fresh random pick — so the user sees their change land.
-        refresh();
-        for (int i = 0; i < static_cast<int>(entries_.size()); ++i) {
-            if (entries_[i].pokemon.dexNumber == dex) {
-                table_->blockSignals(true);  // setCurrentCell would re-fire showRow (random)
-                table_->setCurrentCell(i, 1);
-                table_->blockSignals(false);
-                shownDex_ = dex;
-                const QString name = QString::fromStdString(entries_[i].pokemon.name);
-                const auto it = ownedHere_.find(dex);
-                if (it != ownedHere_.end()) {
-                    detail_->showPokemon(dex, name, it->second, copyId);
-                } else {  // the copy left the binder (moved/removed) → plain artwork
-                    detail_->showPokemon(dex, name);
-                }
-                return;
+    pushEditCopyPage(stack_, cardSearch_, cardImages_, cardCopies_, *copyIt, binders_.list(),
+                     [this, copyId]() {
+                         // Capture the shown species before refresh(), which may clear
+                         // shownDex_. An edit can change the guide (a comment, a binder
+                         // move that removes the copy from here, a new image), so
+                         // recompute, then re-show the SAME copy — not a fresh random pick.
+                         const int dex = shownDex_;
+                         refresh();
+                         reselectSpecies(dex, copyId);
+                     });
+}
+
+void BinderView::reselectSpecies(int dex, const QString& copyId) {
+    for (int i = 0; i < static_cast<int>(entries_.size()); ++i) {
+        if (entries_[i].pokemon.dexNumber == dex) {
+            table_->blockSignals(true);  // setCurrentCell would re-fire showRow (random)
+            table_->setCurrentCell(i, 1);
+            table_->blockSignals(false);
+            shownDex_ = dex;
+            const QString name = QString::fromStdString(entries_[i].pokemon.name);
+            const auto it = ownedHere_.find(dex);
+            if (it != ownedHere_.end()) {
+                detail_->showPokemon(dex, name, it->second, copyId);
+            } else {  // the copy left the binder (moved/removed) → plain artwork
+                detail_->showPokemon(dex, name);
             }
+            return;
         }
-        // The species left the guide entirely (its only copy moved away).
-        detail_->clear();
-        shownDex_ = -1;
-    });
-    stack_->addWidget(page);
-    stack_->setCurrentWidget(page);
+    }
+    // The species left the guide entirely (its only copy moved away).
+    detail_->clear();
+    shownDex_ = -1;
 }
 
 }  // namespace pokedex
