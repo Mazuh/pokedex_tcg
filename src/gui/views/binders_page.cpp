@@ -178,17 +178,35 @@ void BindersPage::repopulate() {
 }
 
 void BindersPage::sortBinders() {
-    const auto regionText = [](const CardBinder& b) {
-        return b.pokemonRegion ? regionLabel(*b.pokemonRegion) : QString();
+    if (sortColumn_ < 0) {
+        return;  // unsorted: keep the natural load order
+    }
+    // Decorate each binder with its precomputed sort keys (the name and region columns
+    // each allocate a QString) so a key is built once per row rather than recomputed for
+    // both operands on every comparison. Sort the decorated vector, then reorder binders_
+    // to match — the decorate-sort-reorder pattern the other sortable views use.
+    struct Keyed {
+        QString name;
+        QString region;
+        Timestamp insertedAt;
+        Timestamp updatedAt;
+        std::size_t index;
     };
-    applyColumnSort(binders_, sortColumn_, sortOrder_,
-                    [&](const CardBinder& a, const CardBinder& b, int column) -> int {
+    std::vector<Keyed> keyed;
+    keyed.reserve(binders_.size());
+    for (std::size_t i = 0; i < binders_.size(); ++i) {
+        const CardBinder& b = binders_[i];
+        keyed.push_back({QString::fromStdString(b.name),
+                         b.pokemonRegion ? regionLabel(*b.pokemonRegion) : QString(),
+                         b.insertedAt, b.updatedAt, i});
+    }
+    applyColumnSort(keyed, sortColumn_, sortOrder_,
+                    [](const Keyed& a, const Keyed& b, int column) -> int {
                         switch (column) {
                             case 0:
-                                return QString::fromStdString(a.name).localeAwareCompare(
-                                    QString::fromStdString(b.name));
+                                return a.name.localeAwareCompare(b.name);
                             case 1:
-                                return regionText(a).localeAwareCompare(regionText(b));
+                                return a.region.localeAwareCompare(b.region);
                             case 2:
                                 return compareValues(a.insertedAt, b.insertedAt);
                             case 3:
@@ -196,6 +214,12 @@ void BindersPage::sortBinders() {
                         }
                         return 0;
                     });
+    std::vector<CardBinder> sorted;
+    sorted.reserve(binders_.size());
+    for (const Keyed& k : keyed) {
+        sorted.push_back(std::move(binders_[k.index]));
+    }
+    binders_ = std::move(sorted);
 }
 
 void BindersPage::createBinder() {
