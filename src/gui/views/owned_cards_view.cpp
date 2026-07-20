@@ -35,6 +35,7 @@
 #include "gui/views/condition_labels.h"
 #include "gui/views/ownership_labels.h"
 #include "gui/views/region_labels.h"
+#include "gui/views/select_all_line_edit.h"
 #include "gui/views/splitter_style.h"
 #include "gui/views/table_cell.h"
 #include "gui/views/toast.h"
@@ -66,7 +67,7 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
       binders_(binders),
       images_(images),
       cardSearch_(cardSearch) {
-    search_ = new QLineEdit(this);
+    search_ = new SelectAllLineEdit(this);
     search_->setPlaceholderText(
         tr("Search copy by Pokémon, collector number, set or binder…"));
     search_->setClearButtonEnabled(true);

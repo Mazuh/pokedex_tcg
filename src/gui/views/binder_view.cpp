@@ -28,6 +28,7 @@
 #include "gui/views/card_copy_labels.h"
 #include "gui/views/edit_card_copy_page.h"
 #include "gui/views/pokemon_detail_panel.h"
+#include "gui/views/select_all_line_edit.h"
 #include "gui/views/splitter_style.h"
 #include "gui/views/status_labels.h"
 #include "gui/views/table_cell.h"
@@ -56,7 +57,7 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     topBar->addWidget(heading);
     topBar->addStretch();
 
-    search_ = new QLineEdit(this);
+    search_ = new SelectAllLineEdit(this);
     search_->setPlaceholderText(tr("Search Pokémon…"));
     search_->setClearButtonEnabled(true);
 

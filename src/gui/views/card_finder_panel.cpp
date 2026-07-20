@@ -20,6 +20,7 @@
 
 #include "gui/services/card_search_service.h"
 #include "gui/views/scaled_pixmap.h"
+#include "gui/views/select_all_line_edit.h"
 #include "gui/views/splitter_style.h"
 
 namespace pokedex {
@@ -64,7 +65,7 @@ CardFinderPanel::CardFinderPanel(CardSearchService& search, NameSearchMode,
 void CardFinderPanel::init(const QString& initialQuery) {
     // --- Search field + results list (left) --------------------------------
     auto* listPane = new QWidget(this);
-    searchField_ = new QLineEdit(listPane);
+    searchField_ = new SelectAllLineEdit(listPane);
     searchField_->setPlaceholderText(nameMode_ ? tr("Find a card by name…")
                                                : tr("Find by set — code or name…"));
     searchField_->setClearButtonEnabled(true);

@@ -17,6 +17,7 @@
 #include "gui/views/add_card_copy_page.h"
 #include "gui/views/pokemon_detail_panel.h"
 #include "gui/views/region_labels.h"
+#include "gui/views/select_all_line_edit.h"
 #include "gui/views/splitter_style.h"
 #include "gui/views/table_cell.h"
 
@@ -45,7 +46,7 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService&
       cardCopies_(cardCopies),
       cardImages_(cardImages),
       binders_(binders) {
-    search_ = new QLineEdit(this);
+    search_ = new SelectAllLineEdit(this);
     search_->setPlaceholderText(tr("Search Pokémon…"));
     search_->setClearButtonEnabled(true);
 
