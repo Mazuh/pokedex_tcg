@@ -4,7 +4,6 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
-#include <QMessageBox>
 #include <QScrollBar>
 #include <QSplitter>
 #include <QStackedWidget>
@@ -21,6 +20,7 @@
 #include "core/app/binder_service.h"
 #include "core/app/card_copy_service.h"
 #include "gui/views/add_card_copy_page.h"
+#include "gui/views/copy_row_activation.h"
 #include "gui/views/edit_copy_page_host.h"
 #include "gui/views/owned_copy_buckets.h"
 #include "gui/views/pokemon_detail_panel.h"
@@ -303,30 +303,13 @@ void PokemonListView::activateRow(int row) {
     const QString species = name->text();
 
     const auto it = owned_.find(dex);
-    if (it == owned_.end() || it->second.empty()) {
-        // No owned card: confirm opening the add-copy page for this species.
-        const auto choice = QMessageBox::question(
-            this, tr("Add a card"),
-            tr("%1 has no cards in your collection yet.\nAdd one now?").arg(species),
-            QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
-        if (choice == QMessageBox::Yes) {
-            openAddCopy(dex, species);
-        }
-        return;
-    }
-
-    // Owned: confirm editing the copy the detail panel is showing. Selection precedes
-    // activation, so showRow has already put one of this species' copies on screen.
+    const bool owned = it != owned_.end() && !it->second.empty();
     const QString copyId = detail_->shownCopyId();
-    if (copyId.isEmpty()) {
-        return;  // defensive: nothing shown to edit
-    }
-    const auto choice = QMessageBox::question(
-        this, tr("Edit card"), tr("Edit the shown card of %1?").arg(species),
-        QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
-    if (choice == QMessageBox::Yes) {
-        openEditCopy(copyId);
-    }
+    activateCopyRow(
+        {this, owned, species, copyId,
+         tr("%1 has no cards in your collection yet.\nAdd one now?").arg(species),
+         [this, dex, species]() { openAddCopy(dex, species); },
+         [this, copyId]() { openEditCopy(copyId); }});
 }
 
 void PokemonListView::openAddCopy(int dexNumber, const QString& name) {

@@ -25,6 +25,7 @@
 #include "gui/views/add_card_copy_page.h"
 #include "gui/views/back_button.h"
 #include "gui/views/binder_combo.h"
+#include "gui/views/copy_row_activation.h"
 #include "gui/views/edit_copy_page_host.h"
 #include "gui/views/owned_copy_buckets.h"
 #include "gui/views/pokemon_detail_panel.h"
@@ -89,6 +90,12 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     // just fire showRow twice per click. (cellActivated would be double-click/Enter
     // — the wrong gesture.)
     connect(table_, &QTableWidget::currentCellChanged, this, &BinderView::showRow);
+    // Double-click / Enter is the confirm-then-act shortcut (edit the shown copy, or add
+    // one if none is filed here). cellActivated is exactly that gesture and never fires on
+    // plain selection, so it won't race showRow — by the time it fires the row is selected
+    // and a copy is on screen. Mirrors the Pokémon browser and My Cards.
+    connect(table_, &QTableWidget::cellActivated, this,
+            [this](int row, int) { activateRow(row); });
     // Clicking a header sorts the guide by that column; store the choice and
     // repopulate from the cached entries_ (re-sorted so they stay 1:1 with the rows).
     // A pure reorder — it never recomputes the guide or re-reads the binder's copies.
@@ -298,6 +305,28 @@ void BinderView::showRow(int row) {
     } else {
         detail_->showPokemon(shownDex_, name->text());
     }
+}
+
+void BinderView::activateRow(int row) {
+    if (row < 0) {
+        return;
+    }
+    QTableWidgetItem* number = table_->item(row, 0);
+    QTableWidgetItem* name = table_->item(row, 1);
+    if (!number || !name) {
+        return;
+    }
+    const int dex = number->text().toInt();
+    const QString species = name->text();
+
+    const auto it = ownedHere_.find(dex);
+    const bool ownedHere = it != ownedHere_.end() && !it->second.empty();
+    const QString copyId = detail_->shownCopyId();
+    activateCopyRow(
+        {this, ownedHere, species, copyId,
+         tr("%1 has no cards filed in this binder yet.\nAdd one now?").arg(species),
+         [this, dex, species]() { openAddCopy(dex, species); },
+         [this, copyId]() { openEditCopy(copyId); }});
 }
 
 void BinderView::openAddCopy(int dexNumber, const QString& name) {

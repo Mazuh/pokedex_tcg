@@ -33,10 +33,11 @@ class WishlistSourcesEditor;
 // still stands and nothing crashes.
 //
 // Opt-in copy mode: the 3-arg showPokemon() overload takes the species' owned copies.
-// When non-empty, the panel picks one at random, shows its printed identity / condition
-// / ownership / comments plus a counter, replaces the artwork with that copy's card
-// image (falling back to the artwork when the copy has no saved image), and offers an
-// "Edit card" button (editCopyRequested). It needs a CardImageStore for the copy image;
+// When non-empty, the panel picks one at random, shows a compact condition badge plus a
+// counter and the copy's comments, replaces the artwork with that copy's card image
+// (falling back to the artwork when the copy has no saved image), and offers an
+// "Edit card" button (editCopyRequested). Deliberately spare — set/number and ownership
+// are omitted so the card image dominates the panel. It needs a CardImageStore for the copy image;
 // when constructed without one, the copy widgets never appear and the plain 2-arg
 // showPokemon() behaves exactly as before.
 //
@@ -116,9 +117,7 @@ private:
     bool copiesAcrossBinders_ = false;  // drop the counter's "filed here" (unscoped browser)
     QLabel* name_;
     QLabel* image_;
-    QLabel* copyIdentity_;  // set/number line
-    QLabel* copyCondition_;
-    QLabel* copyOwnership_;
+    QLabel* copyCondition_;  // compact condition badge (hidden when ungraded)
     QLabel* copyCounter_;  // "N copies filed here"
     QLabel* copyComments_;
     QWidget* copyDetail_;  // container for the copy labels; hidden outside copy mode

@@ -68,6 +68,11 @@ private:
     // Show the clicked/selected row's Pokémon in the detail panel. Reads the dex
     // number and name from the row's cells (columns 0 and 1).
     void showRow(int row);
+    // Double-click / Enter on a row: if the species has a copy filed here, confirm and
+    // open its edit page (the copy the panel is showing); otherwise offer to add one to
+    // this binder. Mirrors the Pokémon browser's activate gesture and My Cards'
+    // double-click-to-edit.
+    void activateRow(int row);
     // Push an AddCardCopyPage for `dexNumber` onto the inner stack; its Back pops
     // and disposes it, returning to the binder guide.
     void openAddCopy(int dexNumber, const QString& name);

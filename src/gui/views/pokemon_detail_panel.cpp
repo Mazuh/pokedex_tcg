@@ -1,6 +1,7 @@
 #include "gui/views/pokemon_detail_panel.h"
 
 #include <QFont>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
 #include <QRandomGenerator>
@@ -10,9 +11,7 @@
 
 #include "gui/services/card_image_store.h"
 #include "gui/services/media_service.h"
-#include "gui/views/card_copy_labels.h"
 #include "gui/views/condition_labels.h"
-#include "gui/views/ownership_labels.h"
 #include "gui/views/scaled_pixmap.h"
 #include "gui/views/wishlist_sources_editor.h"
 
@@ -34,19 +33,19 @@ PokemonDetailPanel::PokemonDetailPanel(MediaService& media, WishlistService& wis
     image_->setMinimumSize(160, 160);
     image_->setEnabled(false);  // muted placeholder text until an image arrives
 
-    // Copy-detail block (copy mode only): the owned copy's printed identity,
-    // condition, ownership, a count of copies filed here, and its comments. Hidden
-    // outside copy mode. Sits between the art and the add-copy action.
-    copyIdentity_ = new QLabel(this);
-    copyIdentity_->setAlignment(Qt::AlignHCenter);
-    copyIdentity_->setWordWrap(true);
-    QFont identityFont = copyIdentity_->font();
-    identityFont.setBold(true);
-    copyIdentity_->setFont(identityFont);
+    // Copy-detail block (copy mode only): a compact condition badge, a count of copies
+    // filed here, and the copy's comments. Kept deliberately spare — set/number and
+    // ownership are omitted so the card image dominates. Hidden outside copy mode. Sits
+    // between the art and the add-copy action.
     copyCondition_ = new QLabel(this);
-    copyCondition_->setAlignment(Qt::AlignHCenter);
-    copyOwnership_ = new QLabel(this);
-    copyOwnership_->setAlignment(Qt::AlignHCenter);
+    copyCondition_->setAlignment(Qt::AlignCenter);
+    // A small, subtle pill so the grade reads as a badge, not a full line of text. The
+    // palette() border keeps it legible in both light and dark themes.
+    QFont conditionFont = copyCondition_->font();
+    conditionFont.setPointSizeF(conditionFont.pointSizeF() - 1);
+    copyCondition_->setFont(conditionFont);
+    copyCondition_->setStyleSheet(
+        "border: 1px solid palette(mid); border-radius: 8px; padding: 1px 8px;");
     copyCounter_ = new QLabel(this);
     copyCounter_->setAlignment(Qt::AlignHCenter);
     copyCounter_->setEnabled(false);  // muted, secondary info
@@ -55,12 +54,18 @@ PokemonDetailPanel::PokemonDetailPanel(MediaService& media, WishlistService& wis
     copyComments_->setAlignment(Qt::AlignHCenter);
     copyComments_->setTextInteractionFlags(Qt::TextSelectableByMouse);
 
+    // Center the badge at its natural width (a bordered QLabel would otherwise stretch
+    // the full panel width) via stretches on either side.
+    auto* conditionRow = new QHBoxLayout;
+    conditionRow->setContentsMargins(0, 0, 0, 0);
+    conditionRow->addStretch();
+    conditionRow->addWidget(copyCondition_);
+    conditionRow->addStretch();
+
     copyDetail_ = new QWidget(this);
     auto* copyLayout = new QVBoxLayout(copyDetail_);
     copyLayout->setContentsMargins(0, 0, 0, 0);
-    copyLayout->addWidget(copyIdentity_);
-    copyLayout->addWidget(copyCondition_);
-    copyLayout->addWidget(copyOwnership_);
+    copyLayout->addLayout(conditionRow);
     copyLayout->addWidget(copyCounter_);
     copyLayout->addWidget(copyComments_);
 
@@ -152,19 +157,14 @@ void PokemonDetailPanel::showPokemon(int dexNumber, const QString& name,
 void PokemonDetailPanel::showCopy(const CardCopy& copy, int total) {
     shownCopyId_ = QString::fromStdString(copy.id);
 
-    const QString set = QString::fromStdString(copy.cardRef.setName);
-    const QString code = cardText(copy.cardRef);
-    QString identity = set;
-    if (!code.isEmpty()) {
-        identity = set.isEmpty() ? code : set + QStringLiteral(" · ") + code;
+    // Condition badge: a small pill with the grade, shown only when graded — an
+    // ungraded copy hides it entirely rather than adding an "Ungraded" line of clutter.
+    if (copy.condition) {
+        copyCondition_->setText(conditionLabel(*copy.condition));
+        copyCondition_->show();
+    } else {
+        copyCondition_->hide();
     }
-    copyIdentity_->setText(identity);
-    copyIdentity_->setVisible(!identity.isEmpty());
-
-    copyCondition_->setText(
-        tr("Condition: %1")
-            .arg(copy.condition ? conditionLabel(*copy.condition) : tr("Ungraded")));
-    copyOwnership_->setText(tr("Ownership: %1").arg(ownershipLabel(copy.ownership)));
     // The browser aggregates a species' copies across all binders, so "filed here"
     // names no location there (copiesAcrossBinders_); the binder guide keeps it.
     if (copiesAcrossBinders_) {
