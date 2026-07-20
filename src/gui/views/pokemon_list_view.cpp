@@ -166,7 +166,75 @@ bool PokemonListView::eventFilter(QObject* watched, QEvent* event) {
 
 void PokemonListView::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);
-    refresh();  // reflect copies added/edited in another section since this was last shown
+    // Reflect copies added/edited in another section since this was last shown — but
+    // WITHOUT throwing away the user's place. refresh() re-renders from the top and
+    // clears the selection, so first capture the scroll offset, how far the list was
+    // loaded, and the shown species/copy, then restore them: re-grow to at least the
+    // prior row count, re-select the species by identity, and put the scroll offset
+    // back. Otherwise every return to this ~1000-row section snapped back to the top.
+    const int scrollValue = table_->verticalScrollBar()->value();
+    const int loadedBefore = loadedCount_;
+    const int dex = shownDex_;
+    const QString copyId = detail_->shownCopyId();
+    const bool hadSelection = !table_->selectedItems().isEmpty();
+
+    refresh();
+
+    // Re-grow to the previously loaded depth so the old scroll offset is reachable.
+    while (loadedCount_ < loadedBefore && loadedCount_ < static_cast<int>(filtered_.size())) {
+        const int before = loadedCount_;
+        loadMore();
+        if (loadedCount_ == before) {
+            break;  // safety: never spin if a load made no progress
+        }
+    }
+    if (hadSelection && dex >= 0) {
+        reselectSpecies(dex, copyId);
+    }
+    // Restore last so it wins over any auto-scroll setCurrentCell caused (the scrollbar
+    // clamps the value if the filtered list shrank).
+    table_->verticalScrollBar()->setValue(scrollValue);
+}
+
+void PokemonListView::reselectSpecies(int dex, const QString& copyId) {
+    // refresh() reset the list to the top and cleared the selection; the target row can
+    // also sit past the first loaded chunk, so load rows until it exists before
+    // selecting (unlike BinderView, where every row is always present).
+    int targetRow = -1;
+    for (int pos = 0; pos < static_cast<int>(filtered_.size()); ++pos) {
+        if (entries_[filtered_[pos]].pokemon.dexNumber == dex) {
+            targetRow = pos;
+            break;
+        }
+    }
+    if (targetRow < 0) {  // the species is filtered out by the active search, or gone
+        detail_->clear();
+        shownDex_ = -1;
+        return;
+    }
+    while (loadedCount_ <= targetRow) {
+        const int before = loadedCount_;
+        loadMore();
+        if (loadedCount_ == before) {
+            break;  // safety: never spin if a load made no progress
+        }
+    }
+    shownDex_ = dex;
+    // setCurrentCell would re-fire showRow (a random re-roll); block it and drive the
+    // panel ourselves with the requested copy.
+    table_->blockSignals(true);
+    table_->setCurrentCell(targetRow, 1);
+    table_->blockSignals(false);
+    if (QTableWidgetItem* item = table_->item(targetRow, 1)) {
+        table_->scrollToItem(item);
+    }
+    const QString name = QString::fromStdString(entries_[filtered_[targetRow]].pokemon.name);
+    const auto owner = owned_.find(dex);
+    if (owner != owned_.end() && !owner->second.empty()) {
+        detail_->showPokemon(dex, name, owner->second, copyId);
+    } else {  // its only copy moved/was removed → plain artwork under the same row
+        detail_->showPokemon(dex, name);
+    }
 }
 
 void PokemonListView::applyFilter() {
@@ -298,48 +366,11 @@ void PokemonListView::openEditCopy(const QString& copyId) {
         stack_->removeWidget(page);
         page->deleteLater();
         // An edit can change owned data (a comment, a new image, a binder move). Re-read
-        // the inventory, re-select the edited species' row, and re-show the SAME copy —
-        // not a fresh random pick — so the highlight and panel agree and the user sees
-        // their change land. refresh() reset the list to the top and cleared the
-        // selection; the row can also sit past the first loaded chunk, so load rows until
-        // it exists before selecting (mirroring BinderView, which needs no load — all its
-        // rows are always present).
+        // the inventory, then re-select the edited species' row and re-show the SAME
+        // copy — not a fresh random pick — so the highlight and panel agree and the user
+        // sees their change land.
         refresh();
-        int targetRow = -1;
-        for (int pos = 0; pos < static_cast<int>(filtered_.size()); ++pos) {
-            if (entries_[filtered_[pos]].pokemon.dexNumber == dex) {
-                targetRow = pos;
-                break;
-            }
-        }
-        if (targetRow < 0) {  // the species is filtered out by the active search
-            detail_->clear();
-            shownDex_ = -1;
-            return;
-        }
-        while (loadedCount_ <= targetRow) {
-            const int before = loadedCount_;
-            loadMore();
-            if (loadedCount_ == before) {
-                break;  // safety: never spin if a load made no progress
-            }
-        }
-        shownDex_ = dex;
-        // setCurrentCell would re-fire showRow (a random re-roll); block it and drive the
-        // panel ourselves with the just-edited copy.
-        table_->blockSignals(true);
-        table_->setCurrentCell(targetRow, 1);
-        table_->blockSignals(false);
-        if (QTableWidgetItem* item = table_->item(targetRow, 1)) {
-            table_->scrollToItem(item);
-        }
-        const QString name = QString::fromStdString(entries_[filtered_[targetRow]].pokemon.name);
-        const auto owner = owned_.find(dex);
-        if (owner != owned_.end() && !owner->second.empty()) {
-            detail_->showPokemon(dex, name, owner->second, copyId);
-        } else {  // its only copy moved/was removed → plain artwork under the same row
-            detail_->showPokemon(dex, name);
-        }
+        reselectSpecies(dex, copyId);
     });
     stack_->addWidget(page);
     stack_->setCurrentWidget(page);

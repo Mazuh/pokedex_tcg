@@ -2,6 +2,7 @@
 
 #include <QWidget>
 
+#include <QString>
 #include <unordered_map>
 #include <vector>
 
@@ -92,6 +93,12 @@ private:
     // is showing) onto the inner stack; Back pops it, then refreshes and re-shows the
     // just-edited copy so a change (comment, image, binder move) is reflected.
     void openEditCopy(const QString& copyId);
+    // Move the highlight to the row for species `dex` (loading rows until it exists,
+    // since it can sit past the first chunk) and re-show its copy `copyId` in the
+    // panel — restoring the selection by IDENTITY after a refresh() re-rendered the
+    // list from the top. Clears the panel if the species is filtered out. Shared by
+    // the edit-page return and showEvent's revisit restore.
+    void reselectSpecies(int dex, const QString& copyId);
     // Re-query the catalog + owned counts and re-render, so the Owned column
     // reflects a copy just added.
     void refresh();
