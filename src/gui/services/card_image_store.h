@@ -60,6 +60,13 @@ public:
     // file is unreadable/undecodable — e.g. a hand-placed file that isn't an image).
     QPixmap load(const std::string& copyId) const;
 
+    // Delete a copy's stored image from disk (called when a copy is permanently
+    // deleted, so its cards/<copyId>.png isn't orphaned). First aborts any
+    // still-in-flight fetchAndSave() for this copy, so a late download can't recreate
+    // the file after it's gone. Best-effort: a missing file is success (nothing to
+    // do); a delete failure is logged, not thrown.
+    void remove(const std::string& copyId);
+
 Q_SIGNALS:
     // This copy's stored image changed on disk — synchronously from save(), or later
     // when a fetchAndSave() download lands. Lets a view showing that copy re-read the

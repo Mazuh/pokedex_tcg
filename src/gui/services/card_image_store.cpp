@@ -4,6 +4,7 @@
 #include <QByteArray>
 #include <QDebug>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QIODevice>
 #include <QNetworkAccessManager>
@@ -111,6 +112,21 @@ void CardImageStore::fetchAndSave(const std::string& copyId, const QString& url)
             Q_EMIT imageChanged(QString::fromStdString(copyId));
         }
     });
+}
+
+void CardImageStore::remove(const std::string& copyId) {
+    const QString path = pathFor(copyId);
+    // Abort any in-flight download first, so its late completion can't recreate the
+    // file we're about to delete (mirrors save()'s supersede-the-fetch handling).
+    if (QNetworkReply* reply = inFlight_.take(path)) {
+        reply->abort();
+    }
+    if (!QFileInfo::exists(path)) {
+        return;  // nothing stored — the copy never had an image
+    }
+    if (!QFile::remove(path)) {
+        qWarning() << "CardImageStore: could not delete" << path;
+    }
 }
 
 QPixmap CardImageStore::load(const std::string& copyId) const {

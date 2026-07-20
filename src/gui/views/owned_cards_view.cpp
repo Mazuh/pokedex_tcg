@@ -56,6 +56,12 @@ QString speciesRegionLabel(PokemonDexNum dexNumber) {
     return entry ? regionLabel(entry->region) : QString();
 }
 
+// A soft-Removed copy is history, not part of the live collection: it sorts to the
+// bottom band, grays out, and is the only kind that can be permanently deleted.
+// One predicate so the sort, the graying, the button gate, and the delete guard
+// can never drift apart.
+bool isRemoved(const CardCopy& copy) { return copy.ownership == CardOwnership::Removed; }
+
 }  // namespace
 
 OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
@@ -126,6 +132,14 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     removeButton_->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
     connect(removeButton_, &QPushButton::clicked, this, &OwnedCardsView::removeSelected);
 
+    // "Delete permanently…" drops a soft-Removed copy's row for good — enabled only
+    // when the selected copy is already Removed (a two-step gate: soft-remove first,
+    // then permanently delete), and always confirmed. Removed copies sort last and
+    // gray out (see repopulate), so this action targets that bottom band.
+    deleteButton_ = new QPushButton(tr("Delete permanently…"), this);
+    deleteButton_->setIcon(style()->standardIcon(QStyle::SP_DialogDiscardButton));
+    connect(deleteButton_, &QPushButton::clicked, this, &OwnedCardsView::deletePermanently);
+
     editButton_ = new QPushButton(tr("Edit card…"), this);
     editButton_->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
     connect(editButton_, &QPushButton::clicked, this, &OwnedCardsView::editSelectedCard);
@@ -153,6 +167,7 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     buttons->addWidget(addButton_);
     buttons->addWidget(assignButton_);
     buttons->addWidget(removeButton_);
+    buttons->addWidget(deleteButton_);
     buttons->addWidget(editButton_);
     buttons->addStretch();
 
@@ -305,6 +320,17 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
         loaded_ = std::move(sorted);
     }
 
+    // Soft-Removed copies always sink to the bottom, regardless of the active sort:
+    // they're history, not part of the live collection. std::stable_partition keeps
+    // the just-computed order within each band, so the live copies stay sorted as
+    // above and the removed ones keep their relative order beneath them.
+    std::stable_partition(loaded_.begin(), loaded_.end(),
+                          [](const CardCopy& c) { return !isRemoved(c); });
+
+    // Removed rows render grayed out (the palette's disabled text color), so the
+    // bottom band reads as inactive history at a glance.
+    const QBrush removedForeground = table_->palette().brush(QPalette::Disabled, QPalette::Text);
+
     table_->setRowCount(static_cast<int>(loaded_.size()));
     haystacks_.assign(loaded_.size(), QString());
     for (int row = 0; row < static_cast<int>(loaded_.size()); ++row) {
@@ -335,6 +361,14 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
         auto* binderCell = cell(binderName);
         binderCell->setToolTip(binderName);
         table_->setItem(row, 6, binderCell);
+
+        // Gray out a Removed copy's whole row so the (bottom-sorted) history band
+        // reads as inactive.
+        if (isRemoved(c)) {
+            for (int col = 0; col < table_->columnCount(); ++col) {
+                table_->item(row, col)->setForeground(removedForeground);
+            }
+        }
 
         // Precompute this row's lowercased search text from its cells, plus a few
         // fields that don't show verbatim in the table yet users still expect to
@@ -379,6 +413,7 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
     countLabel_->setVisible(!empty);
     assignButton_->setVisible(!empty);
     removeButton_->setVisible(!empty);
+    deleteButton_->setVisible(!empty);
     editButton_->setVisible(!empty);
     emptyLabel_->setVisible(empty);
     panel_->setVisible(!empty);
@@ -413,15 +448,25 @@ void OwnedCardsView::applyFilter() {
     }
     countLabel_->setText(tr("Showing %1 of %2 cards").arg(visible).arg(table_->rowCount()));
     // A filter that hides the selected row doesn't deselect it, so re-sync the panel
-    // (it clears when the current row is hidden).
+    // (it clears when the current row is hidden) and the row actions — most importantly
+    // "Delete permanently…", which must not stay enabled over a now-hidden row.
     showSelectedImage();
+    updateButtonState();
 }
 
 void OwnedCardsView::updateButtonState() {
-    const bool hasSelection = table_->currentRow() >= 0 && !table_->selectedItems().isEmpty();
+    const int row = table_->currentRow();
+    const bool hasSelection = row >= 0 && !table_->selectedItems().isEmpty();
     assignButton_->setEnabled(hasSelection);
     removeButton_->setEnabled(hasSelection);
     editButton_->setEnabled(hasSelection);
+    // Permanent deletion is only offered for a copy that's already soft-Removed —
+    // you remove first, then (optionally) purge it from history. A row hidden by the
+    // search filter isn't deletable: the selection survives a filter (see applyFilter),
+    // so without this an off-screen row could be irreversibly purged.
+    const bool removedSelected = hasSelection && row < static_cast<int>(loaded_.size()) &&
+                                 !table_->isRowHidden(row) && isRemoved(loaded_[row]);
+    deleteButton_->setEnabled(removedSelected);
 }
 
 void OwnedCardsView::showSelectedImage() {
@@ -494,6 +539,41 @@ void OwnedCardsView::removeSelected() {
         QMessageBox::critical(
             this, tr("Pokedex TCG"),
             tr("Could not remove the card:\n%1").arg(QString::fromUtf8(e.what())));
+    }
+    reload();
+}
+
+void OwnedCardsView::deletePermanently() {
+    const int row = table_->currentRow();
+    if (row < 0 || row >= static_cast<int>(loaded_.size())) {
+        return;
+    }
+    const CardCopy& copy = loaded_[row];
+    // Guard: only a soft-Removed copy that's actually visible can be purged (the button
+    // is disabled otherwise, but re-check in case state changed underneath us — a
+    // hidden row's selection survives the search filter).
+    if (!isRemoved(copy) || table_->isRowHidden(row)) {
+        return;
+    }
+    // Always confirm — a hard delete drops the row for good, with no history kept.
+    const auto answer = QMessageBox::warning(
+        this, tr("Delete permanently"),
+        tr("Permanently delete “%1” from your history?\n\nThis cannot be undone.")
+            .arg(titleFor(copy)),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (answer != QMessageBox::Yes) {
+        return;
+    }
+    try {
+        const std::string copyId = copy.id;  // copy.id before reload() invalidates loaded_
+        copies_.hardDelete(copyId);
+        // Reclaim the copy's on-disk card image so it isn't orphaned in cards/.
+        images_.remove(copyId);
+        showToast(this, tr("Card permanently deleted."));
+    } catch (const std::exception& e) {
+        QMessageBox::critical(
+            this, tr("Pokedex TCG"),
+            tr("Could not delete the card:\n%1").arg(QString::fromUtf8(e.what())));
     }
     reload();
 }

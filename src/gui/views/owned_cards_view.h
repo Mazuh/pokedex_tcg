@@ -72,6 +72,9 @@ private:
     void assignSelected();
     // Soft-remove the selected copy, prompting for an optional note to append.
     void removeSelected();
+    // Permanently delete the selected copy's row (enabled only for an already
+    // soft-Removed copy), after an always-shown confirmation.
+    void deletePermanently();
     // Push the in-window "Edit card" page for the selected copy (to change its image).
     void editSelectedCard();
     // Push the in-window "Add a card" page for a species-free card (a Trainer/Energy
@@ -95,6 +98,7 @@ private:
     QPushButton* addButton_;   // "Add a card…" — stays available even when empty
     QPushButton* assignButton_;
     QPushButton* removeButton_;
+    QPushButton* deleteButton_;   // "Delete permanently…" — enabled only for Removed copies
     QPushButton* editButton_;
     QLabel* countLabel_;
     // The copies backing the current rows, in display order (row i ⇄ loaded_[i]);
