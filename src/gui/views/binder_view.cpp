@@ -159,10 +159,14 @@ void BinderView::refresh() {
 }
 
 void BinderView::repopulate() {
-    // Remember which copy the detail panel is showing before the rebuild, so the
-    // tail below can re-show that exact copy rather than let showPokemon re-roll a
-    // random one. "" when not in copy mode.
+    // Remember which species + copy the detail panel is showing before the rebuild.
+    // A header-sort reorders the rows, so the selection must be restored by IDENTITY
+    // (the species' dex number), not by the old row index — restoring by row index
+    // would leave a different species highlighted and the panel + "Edit card…"
+    // targeting the wrong one. shownDex_ is the shown species; "" / -1 when nothing
+    // is shown (no selection).
     const QString shownCopyBefore = detail_->shownCopyId();
+    const int selectedDex = table_->selectedItems().isEmpty() ? -1 : shownDex_;
 
     sortEntries();
 
@@ -178,16 +182,29 @@ void BinderView::repopulate() {
         table_->setItem(i, 1, cell(QString::fromStdString(entry.pokemon.name)));
         table_->setItem(i, 2, cell(statusLabel(entry.status)));
     }
+
+    // Move the highlight to the row the selected species landed on after the sort, so
+    // the selection follows the record rather than the row index. Block signals so
+    // setCurrentCell doesn't re-fire showRow (which re-rolls a random copy); the panel
+    // is re-driven explicitly below with the SAME copy that was on screen.
+    if (selectedDex >= 0) {
+        for (int i = 0; i < static_cast<int>(entries_.size()); ++i) {
+            if (entries_[i].pokemon.dexNumber == selectedDex) {
+                table_->blockSignals(true);
+                table_->setCurrentCell(i, 1);
+                table_->blockSignals(false);
+                break;
+            }
+        }
+    }
+
     applyFilter(search_->text());  // preserve the current filter across a refresh
 
-    // A header-sort reorders the rows under a stationary highlight, so the selected
-    // row index now holds a different species than the detail panel shows. Re-drive
-    // the panel from the current row so the highlight and panel stay in agreement
-    // (and "Edit card…" targets the highlighted species), mirroring OwnedCardsView.
-    // Re-show the SAME copy that was on screen (shownCopyBefore) rather than calling
-    // showRow(), which re-rolls a random copy of the species — a sort re-render must
-    // not swap the copy the user is reading. openEditCopy re-selects the just-edited
-    // copy after its own refresh(), which overrides this.
+    // Re-drive the panel from the (identity-restored) current row so the highlight and
+    // panel stay in agreement, mirroring OwnedCardsView. Re-show the SAME copy that was
+    // on screen (shownCopyBefore) rather than calling showRow(), which re-rolls a random
+    // copy of the species. openEditCopy re-selects the just-edited copy after its own
+    // refresh(), which overrides this.
     const int current = table_->currentRow();
     if (current >= 0 && !table_->isRowHidden(current) && !table_->selectedItems().isEmpty()) {
         QTableWidgetItem* number = table_->item(current, 0);
