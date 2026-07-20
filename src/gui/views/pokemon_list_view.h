@@ -2,9 +2,12 @@
 
 #include <QWidget>
 
+#include <unordered_map>
 #include <vector>
 
 #include "core/app/pokemon_browse_service.h"
+#include "core/domain/card_copy.h"
+#include "core/domain/types.h"
 
 class QLabel;
 class QLineEdit;
@@ -25,7 +28,13 @@ class PokemonDetailPanel;
 // the whole National Pokédex (# / name / region / owned-copy count) with a live
 // partial-name search. A thin shell over PokemonBrowseService (the Qt-free
 // verb): it computes the entries once on construction, then filters and paginates
-// the cached list. Read-only in this slice — there are no per-Pokémon actions.
+// the cached list.
+//
+// The detail panel runs in copy mode here (unlike the read-only past): selecting a
+// species that owns copies (in any binder) shows one of them. Double-clicking a row
+// is a shortcut with a confirm prompt — on a species that owns nothing it offers to
+// open the add-copy page, and on one that owns copies it offers to edit the shown
+// copy.
 //
 // The full catalog is ~1000 species, so the table loads incrementally
 // (infinite scroll): it starts with one chunk of rows and appends the next
@@ -63,14 +72,27 @@ private:
     void updateCountLabel();
     // Show the clicked/selected row's Pokémon in the detail panel. Reads the dex
     // number and name from the row's cells (columns 0 and 1), so it is immune to
-    // the filtered_-index indirection.
+    // the filtered_-index indirection. Hands the panel this species' owned copies
+    // (copy mode) when it owns any, so one is shown.
     void showRow(int row);
+    // Double-click / Enter on a row: a confirm-then-act shortcut. On a species that
+    // owns nothing, prompt to open the add-copy page; on one that owns copies,
+    // prompt to edit the copy the detail panel is showing.
+    void activateRow(int row);
     // Push an AddCardCopyPage for `dexNumber` onto the inner stack; its Back pops
     // and disposes it, returning to the browse splitter.
     void openAddCopy(int dexNumber, const QString& name);
+    // Push an EditCardCopyPage for the owned copy `copyId` (the one the detail panel
+    // is showing) onto the inner stack; Back pops it, then refreshes and re-shows the
+    // just-edited copy so a change (comment, image, binder move) is reflected.
+    void openEditCopy(const QString& copyId);
     // Re-query the catalog + owned counts and re-render, so the Owned column
     // reflects a copy just added.
     void refresh();
+    // (Re)bucket every owned, species-tied copy by dex number into owned_ — the
+    // whole-inventory read (unscoped by binder) behind copy mode. Rebuilt on
+    // construction and on every refresh().
+    void loadOwnedCopies();
 
     PokemonBrowseService& service_;
     CardSearchService& cardSearch_;
@@ -92,6 +114,10 @@ private:
     // Dex number currently shown in the detail panel (-1 = none), so a filter that
     // hides it can clear the panel rather than leave stale artwork on screen.
     int shownDex_ = -1;
+    // Owned copies bucketed by species dex, across all binders, rebuilt on every
+    // refresh(). Drives copy mode in the detail panel and the double-click branch:
+    // a species present here owns at least one copy to show / edit.
+    std::unordered_map<PokemonDexNum, std::vector<CardCopy>> owned_;
     // Guards fillViewport() against re-entry: appending rows can make a
     // scrollbar appear, which resizes the viewport and re-fires the resize
     // event mid-fill — without this it would overshoot the rows actually needed.

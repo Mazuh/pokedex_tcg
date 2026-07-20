@@ -32,14 +32,19 @@ class WishlistSourcesEditor;
 // one (the stale-guard). On failure it shows a "no image" placeholder — the name
 // still stands and nothing crashes.
 //
-// Opt-in copy mode (binder guide only): the 3-arg showPokemon() overload takes the
-// species' owned copies filed in the current binder. When non-empty, the panel picks
-// one at random, shows its printed identity / condition / ownership / comments plus a
-// counter, replaces the artwork with that copy's card image (falling back to the
-// artwork when the copy has no saved image), and offers an "Edit card" button
-// (editCopyRequested). It needs a CardImageStore for the copy image; when constructed
-// without one (the Pokémon browser), the copy widgets never appear and the plain
-// 2-arg showPokemon() behaves exactly as before.
+// Opt-in copy mode: the 3-arg showPokemon() overload takes the species' owned copies.
+// When non-empty, the panel picks one at random, shows its printed identity / condition
+// / ownership / comments plus a counter, replaces the artwork with that copy's card
+// image (falling back to the artwork when the copy has no saved image), and offers an
+// "Edit card" button (editCopyRequested). It needs a CardImageStore for the copy image;
+// when constructed without one, the copy widgets never appear and the plain 2-arg
+// showPokemon() behaves exactly as before.
+//
+// Both the binder guide and the Pokémon browser use copy mode, but the copies they pass
+// are scoped differently: the guide passes one binder's copies (listByBinder) so the
+// counter reads "filed here"; the browser passes copies aggregated across every binder
+// (listAll), where "filed here" would name no location — setCountedAcrossBinders(true)
+// drops that suffix for the unscoped case.
 class PokemonDetailPanel : public QWidget {
     Q_OBJECT
 
@@ -60,6 +65,11 @@ public:
                      const QString& preferCopyId = QString());
     // Empty state: no selection.
     void clear();
+
+    // When true, the copy-count line drops the "filed here" suffix — for the Pokémon
+    // browser, whose copy mode aggregates a species' copies across every binder, so no
+    // single filing location exists. Defaults to false (binder-guide wording).
+    void setCountedAcrossBinders(bool acrossBinders) { copiesAcrossBinders_ = acrossBinders; }
 
     // The id of the copy currently shown in copy mode, or "" when not in copy mode
     // (plain artwork / empty state). Lets an owning view re-show the SAME copy after
@@ -103,6 +113,7 @@ private:
     int currentDex_ = -1;  // the dex we currently want shown; guards stale results
     QString shownCopyId_;  // id of the copy shown in copy mode ("" = not in copy mode)
     bool showingCopyImage_ = false;  // the image is a copy scan, not artwork → keep
+    bool copiesAcrossBinders_ = false;  // drop the counter's "filed here" (unscoped browser)
     QLabel* name_;
     QLabel* image_;
     QLabel* copyIdentity_;  // set/number line

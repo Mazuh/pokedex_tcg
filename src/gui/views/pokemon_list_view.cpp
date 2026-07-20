@@ -4,6 +4,7 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QScrollBar>
 #include <QSplitter>
 #include <QStackedWidget>
@@ -13,8 +14,15 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <exception>
+#include <string>
 
+#include "core/app/binder_service.h"
+#include "core/app/card_copy_service.h"
 #include "gui/views/add_card_copy_page.h"
+#include "gui/views/card_copy_labels.h"
+#include "gui/views/edit_card_copy_page.h"
+#include "gui/views/owned_copy_buckets.h"
 #include "gui/views/pokemon_detail_panel.h"
 #include "gui/views/region_labels.h"
 #include "gui/views/select_all_line_edit.h"
@@ -78,9 +86,12 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService&
     countLabel_ = new QLabel(this);
     countLabel_->setEnabled(false);  // muted: a status detail, not an action
 
-    // No CardImageStore here: the unscoped Pokémon browser shows artwork only, never
-    // a specific owned copy (that is the binder guide's copy mode).
-    detail_ = new PokemonDetailPanel(media, wishlist, /*images=*/nullptr, this);
+    // Copy mode is on here too (a CardImageStore is passed): a selected species that
+    // owns copies shows one, so the double-click shortcut can offer to edit it. The
+    // copies are aggregated across every binder (loadOwnedCopies), so tell the panel to
+    // drop the counter's binder-scoped "filed here" wording.
+    detail_ = new PokemonDetailPanel(media, wishlist, &cardImages_, this);
+    detail_->setCountedAcrossBinders(true);
 
     connect(search_, &QLineEdit::textChanged, this, &PokemonListView::applyFilter);
     // Show the current row's Pokémon in the detail panel. currentCellChanged
@@ -89,8 +100,15 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService&
     // just fire showRow twice per click. Row → data is read from the cells,
     // sidestepping the filtered_ map.
     connect(table_, &QTableWidget::currentCellChanged, this, &PokemonListView::showRow);
+    // Double-click / Enter on a row is the confirm-then-act shortcut. cellActivated
+    // is exactly that gesture (and never fires on plain selection), so it won't race
+    // showRow — by the time it fires, the row is selected and a copy is on screen.
+    connect(table_, &QTableWidget::cellActivated, this,
+            [this](int row, int) { activateRow(row); });
     // The detail panel's "Add copy" relays up to an in-place page push.
     connect(detail_, &PokemonDetailPanel::addCopyRequested, this, &PokemonListView::openAddCopy);
+    // In copy mode, "Edit card" relays up to an in-place edit-page push.
+    connect(detail_, &PokemonDetailPanel::editCopyRequested, this, &PokemonListView::openEditCopy);
     // Infinite scroll: append the next chunk as the user nears the bottom. The
     // complementary "viewport isn't full yet" case (first show, or the window
     // grew taller than the loaded rows, where no scrollbar exists) is handled by
@@ -134,6 +152,7 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService&
     // cached vector, never re-query. applyFilter() seeds filtered_ and loads
     // enough to fill the viewport.
     entries_ = service_.listAll();
+    loadOwnedCopies();
     applyFilter();
 }
 
@@ -190,7 +209,51 @@ void PokemonListView::showRow(int row) {
         return;
     }
     shownDex_ = number->text().toInt();
-    detail_->showPokemon(shownDex_, name->text());
+    const auto it = owned_.find(shownDex_);
+    if (it != owned_.end() && !it->second.empty()) {
+        detail_->showPokemon(shownDex_, name->text(), it->second);
+    } else {
+        detail_->showPokemon(shownDex_, name->text());
+    }
+}
+
+void PokemonListView::activateRow(int row) {
+    if (row < 0) {
+        return;
+    }
+    QTableWidgetItem* number = table_->item(row, 0);
+    QTableWidgetItem* name = table_->item(row, 1);
+    if (!number || !name) {
+        return;
+    }
+    const int dex = number->text().toInt();
+    const QString species = name->text();
+
+    const auto it = owned_.find(dex);
+    if (it == owned_.end() || it->second.empty()) {
+        // No owned card: confirm opening the add-copy page for this species.
+        const auto choice = QMessageBox::question(
+            this, tr("Add a card"),
+            tr("%1 has no cards in your collection yet.\nAdd one now?").arg(species),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+        if (choice == QMessageBox::Yes) {
+            openAddCopy(dex, species);
+        }
+        return;
+    }
+
+    // Owned: confirm editing the copy the detail panel is showing. Selection precedes
+    // activation, so showRow has already put one of this species' copies on screen.
+    const QString copyId = detail_->shownCopyId();
+    if (copyId.isEmpty()) {
+        return;  // defensive: nothing shown to edit
+    }
+    const auto choice = QMessageBox::question(
+        this, tr("Edit card"), tr("Edit the shown card of %1?").arg(species),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+    if (choice == QMessageBox::Yes) {
+        openEditCopy(copyId);
+    }
 }
 
 void PokemonListView::openAddCopy(int dexNumber, const QString& name) {
@@ -208,11 +271,94 @@ void PokemonListView::openAddCopy(int dexNumber, const QString& name) {
     stack_->setCurrentWidget(page);
 }
 
+void PokemonListView::openEditCopy(const QString& copyId) {
+    // Find the copy the detail panel is showing among this species' owned copies.
+    const auto it = owned_.find(shownDex_);
+    if (it == owned_.end()) {
+        return;
+    }
+    const std::string id = copyId.toStdString();
+    const auto copyIt = std::find_if(it->second.begin(), it->second.end(),
+                                     [&](const CardCopy& c) { return c.id == id; });
+    if (copyIt == it->second.end()) {
+        return;
+    }
+    auto* page = new EditCardCopyPage(cardSearch_, cardImages_, cardCopies_, *copyIt,
+                                      binders_.list(), titleFor(*copyIt));
+    connect(page, &EditCardCopyPage::backRequested, this, [this, page, copyId]() {
+        // Capture the shown species before refresh(), which re-renders from the top.
+        const int dex = shownDex_;
+        stack_->setCurrentIndex(0);
+        stack_->removeWidget(page);
+        page->deleteLater();
+        // An edit can change owned data (a comment, a new image, a binder move). Re-read
+        // the inventory, re-select the edited species' row, and re-show the SAME copy —
+        // not a fresh random pick — so the highlight and panel agree and the user sees
+        // their change land. refresh() reset the list to the top and cleared the
+        // selection; the row can also sit past the first loaded chunk, so load rows until
+        // it exists before selecting (mirroring BinderView, which needs no load — all its
+        // rows are always present).
+        refresh();
+        int targetRow = -1;
+        for (int pos = 0; pos < static_cast<int>(filtered_.size()); ++pos) {
+            if (entries_[filtered_[pos]].pokemon.dexNumber == dex) {
+                targetRow = pos;
+                break;
+            }
+        }
+        if (targetRow < 0) {  // the species is filtered out by the active search
+            detail_->clear();
+            shownDex_ = -1;
+            return;
+        }
+        while (loadedCount_ <= targetRow) {
+            const int before = loadedCount_;
+            loadMore();
+            if (loadedCount_ == before) {
+                break;  // safety: never spin if a load made no progress
+            }
+        }
+        shownDex_ = dex;
+        // setCurrentCell would re-fire showRow (a random re-roll); block it and drive the
+        // panel ourselves with the just-edited copy.
+        table_->blockSignals(true);
+        table_->setCurrentCell(targetRow, 1);
+        table_->blockSignals(false);
+        if (QTableWidgetItem* item = table_->item(targetRow, 1)) {
+            table_->scrollToItem(item);
+        }
+        const QString name = QString::fromStdString(entries_[filtered_[targetRow]].pokemon.name);
+        const auto owner = owned_.find(dex);
+        if (owner != owned_.end() && !owner->second.empty()) {
+            detail_->showPokemon(dex, name, owner->second, copyId);
+        } else {  // its only copy moved/was removed → plain artwork under the same row
+            detail_->showPokemon(dex, name);
+        }
+    });
+    stack_->addWidget(page);
+    stack_->setCurrentWidget(page);
+}
+
 void PokemonListView::refresh() {
     // Re-query the catalog + owned counts; applyFilter() re-renders from the top,
     // preserving the current search text (it reads search_->text()).
     entries_ = service_.listAll();
+    loadOwnedCopies();
     applyFilter();
+}
+
+void PokemonListView::loadOwnedCopies() {
+    // Bucket every owned, species-tied copy by dex so showRow() can hand the detail
+    // panel a species' copies (copy mode). Unscoped by binder — this is the whole
+    // Pokédex browser — so it reads the full inventory (listAll), unlike the binder
+    // guide's scoped listByBinder. bucketOwnedCopiesByDex applies the shared Owned,
+    // non-species-free predicate, so the Owned column and the double-click branch agree.
+    owned_.clear();
+    try {
+        owned_ = bucketOwnedCopiesByDex(cardCopies_.listAll());
+    } catch (const std::exception&) {
+        owned_.clear();  // best-effort: fall back to artwork-only if the read fails
+    }
 }
 
 void PokemonListView::loadMore() {

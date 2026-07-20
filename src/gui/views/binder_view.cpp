@@ -27,6 +27,7 @@
 #include "gui/views/binder_combo.h"
 #include "gui/views/card_copy_labels.h"
 #include "gui/views/edit_card_copy_page.h"
+#include "gui/views/owned_copy_buckets.h"
 #include "gui/views/pokemon_detail_panel.h"
 #include "gui/views/select_all_line_edit.h"
 #include "gui/views/sortable_table.h"
@@ -144,16 +145,12 @@ void BinderView::refresh() {
     }
 
     // Bucket the binder's owned copies by species so showRow() can hand the detail
-    // panel the copies to display (copy mode). Only owned copies tied to a species
-    // qualify — that mirrors the "Completed" status. Scoped read (listByBinder), not a
-    // whole-inventory scan.
+    // panel the copies to display (copy mode). bucketOwnedCopiesByDex applies the shared
+    // "owned + species-tied" predicate (mirroring the "Completed" status). Scoped read
+    // (listByBinder), not a whole-inventory scan — unlike the Pokémon browser's listAll.
     ownedHere_.clear();
     try {
-        for (const CardCopy& copy : cardCopies_.listByBinder(binder_.id)) {
-            if (copy.pokemonDexNum && copy.ownership == CardOwnership::Owned) {
-                ownedHere_[*copy.pokemonDexNum].push_back(copy);
-            }
-        }
+        ownedHere_ = bucketOwnedCopiesByDex(cardCopies_.listByBinder(binder_.id));
     } catch (const std::exception&) {
         ownedHere_.clear();  // best-effort: fall back to artwork-only if the read fails
     }

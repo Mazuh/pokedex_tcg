@@ -165,8 +165,15 @@ void PokemonDetailPanel::showCopy(const CardCopy& copy, int total) {
         tr("Condition: %1")
             .arg(copy.condition ? conditionLabel(*copy.condition) : tr("Ungraded")));
     copyOwnership_->setText(tr("Ownership: %1").arg(ownershipLabel(copy.ownership)));
-    copyCounter_->setText(total == 1 ? tr("1 owned copy filed here")
-                                     : tr("%1 owned copies filed here").arg(total));
+    // The browser aggregates a species' copies across all binders, so "filed here"
+    // names no location there (copiesAcrossBinders_); the binder guide keeps it.
+    if (copiesAcrossBinders_) {
+        copyCounter_->setText(total == 1 ? tr("1 owned copy")
+                                         : tr("%1 owned copies").arg(total));
+    } else {
+        copyCounter_->setText(total == 1 ? tr("1 owned copy filed here")
+                                         : tr("%1 owned copies filed here").arg(total));
+    }
 
     const QString comments = QString::fromStdString(copy.comments);
     copyComments_->setText(comments);
