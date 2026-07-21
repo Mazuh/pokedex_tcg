@@ -69,26 +69,38 @@ QString definitionListHtml(const Range& values, LabelFn label, DescFn desc) {
     return html;
 }
 
+// The three "info" popovers are constant markup over compile-time enum ranges, so
+// each is built once (function-local static) and returned by reference — every
+// CardCopyForm (a fresh one per Add/Edit page open) then reuses it instead of
+// re-escaping and re-concatenating the same definition list. The app has no
+// runtime language switching, so freezing the translation at first build is fine.
+
 // The condition-picker "info" popover: every grade, each with its description.
-QString conditionInfoHtml() {
-    return QStringLiteral("<p><b>What the condition grades mean</b></p>") +
-           definitionListHtml(kConditions, conditionLabel, conditionDescription);
+const QString& conditionInfoHtml() {
+    static const QString html =
+        QStringLiteral("<p><b>What the condition grades mean</b></p>") +
+        definitionListHtml(kConditions, conditionLabel, conditionDescription);
+    return html;
 }
 
 // The rarity-picker "info" popover: the modern scale, then a "Legacy rarities"
 // subheading with the older-era rarities — mirroring the two tables the terms come
 // from, so the legacy ones read as a distinct, secondary group.
-QString rarityInfoHtml() {
-    return QStringLiteral("<p><b>What the rarities mean</b></p>") +
-           definitionListHtml(kModernRarities, rarityLabel, rarityDescription) +
-           QStringLiteral("<p><b>Legacy rarities</b> (older eras)</p>") +
-           definitionListHtml(kLegacyRarities, rarityLabel, rarityDescription);
+const QString& rarityInfoHtml() {
+    static const QString html =
+        QStringLiteral("<p><b>What the rarities mean</b></p>") +
+        definitionListHtml(kModernRarities, rarityLabel, rarityDescription) +
+        QStringLiteral("<p><b>Legacy rarities</b> (older eras)</p>") +
+        definitionListHtml(kLegacyRarities, rarityLabel, rarityDescription);
+    return html;
 }
 
 // The foil-treatment "info" popover: every finish, each with its description.
-QString foilInfoHtml() {
-    return QStringLiteral("<p><b>What the foil treatments mean</b></p>") +
-           definitionListHtml(kFoils, foilLabel, foilDescription);
+const QString& foilInfoHtml() {
+    static const QString html =
+        QStringLiteral("<p><b>What the foil treatments mean</b></p>") +
+        definitionListHtml(kFoils, foilLabel, foilDescription);
+    return html;
 }
 
 }  // namespace
