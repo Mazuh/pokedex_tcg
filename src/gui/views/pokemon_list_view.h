@@ -99,6 +99,10 @@ private:
     // list from the top. Clears the panel if the species is filtered out. Shared by
     // the edit-page return and showEvent's revisit restore.
     void reselectSpecies(int dex, const QString& copyId);
+    // Drive the detail panel for species `dex`: copy mode when it owns copies
+    // (preferring `preferCopyId` if set, else a random one), plain artwork otherwise.
+    // The one place the owned_ lookup → showPokemon dispatch lives.
+    void showSpeciesInPanel(int dex, const QString& name, const QString& preferCopyId = {});
     // Re-query the catalog + owned counts and re-render, so the Owned column
     // reflects a copy just added.
     void refresh();

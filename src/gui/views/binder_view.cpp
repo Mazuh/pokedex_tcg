@@ -215,12 +215,7 @@ void BinderView::repopulate() {
         QTableWidgetItem* name = table_->item(current, 1);
         if (number && name) {
             shownDex_ = number->text().toInt();
-            const auto it = ownedHere_.find(shownDex_);
-            if (it != ownedHere_.end()) {
-                detail_->showPokemon(shownDex_, name->text(), it->second, shownCopyBefore);
-            } else {
-                detail_->showPokemon(shownDex_, name->text());
-            }
+            showSpeciesInPanel(shownDex_, name->text(), shownCopyBefore);
         }
     }
 }
@@ -284,11 +279,15 @@ void BinderView::showRow(int row) {
         return;
     }
     shownDex_ = number->text().toInt();
-    const auto it = ownedHere_.find(shownDex_);
+    showSpeciesInPanel(shownDex_, name->text());
+}
+
+void BinderView::showSpeciesInPanel(int dex, const QString& name, const QString& preferCopyId) {
+    const auto it = ownedHere_.find(dex);
     if (it != ownedHere_.end()) {
-        detail_->showPokemon(shownDex_, name->text(), it->second);
+        detail_->showPokemon(dex, name, it->second, preferCopyId);
     } else {
-        detail_->showPokemon(shownDex_, name->text());
+        detail_->showPokemon(dex, name);
     }
 }
 
@@ -357,13 +356,9 @@ void BinderView::reselectSpecies(int dex, const QString& copyId) {
             table_->setCurrentCell(i, 1);
             table_->blockSignals(false);
             shownDex_ = dex;
-            const QString name = QString::fromStdString(entries_[i].pokemon.name);
-            const auto it = ownedHere_.find(dex);
-            if (it != ownedHere_.end()) {
-                detail_->showPokemon(dex, name, it->second, copyId);
-            } else {  // the copy left the binder (moved/removed) → plain artwork
-                detail_->showPokemon(dex, name);
-            }
+            // If the copy left the binder (moved/removed), showSpeciesInPanel falls back
+            // to plain artwork.
+            showSpeciesInPanel(dex, QString::fromStdString(entries_[i].pokemon.name), copyId);
             return;
         }
     }

@@ -84,6 +84,10 @@ private:
     // panel — restoring the selection by IDENTITY after a refresh() rebuilt the rows.
     // Clears the panel if the species left the guide. Called by the edit-page return.
     void reselectSpecies(int dex, const QString& copyId);
+    // Drive the detail panel for species `dex`: copy mode when it has copies filed here
+    // (preferring `preferCopyId` if set, else a random one), plain artwork otherwise.
+    // The one place the ownedHere_ lookup → showPokemon dispatch lives.
+    void showSpeciesInPanel(int dex, const QString& name, const QString& preferCopyId = {});
 
     BinderGuideService& guide_;
     CardBinder binder_;

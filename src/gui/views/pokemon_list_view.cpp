@@ -233,13 +233,9 @@ void PokemonListView::reselectSpecies(int dex, const QString& copyId) {
     if (QTableWidgetItem* item = table_->item(targetRow, 1)) {
         table_->scrollToItem(item);
     }
-    const QString name = QString::fromStdString(entries_[filtered_[targetRow]].pokemon.name);
-    const auto owner = owned_.find(dex);
-    if (owner != owned_.end() && !owner->second.empty()) {
-        detail_->showPokemon(dex, name, owner->second, copyId);
-    } else {  // its only copy moved/was removed → plain artwork under the same row
-        detail_->showPokemon(dex, name);
-    }
+    // If its only copy moved/was removed, showSpeciesInPanel falls back to plain artwork.
+    showSpeciesInPanel(dex, QString::fromStdString(entries_[filtered_[targetRow]].pokemon.name),
+                       copyId);
 }
 
 void PokemonListView::applyFilter() {
@@ -288,11 +284,16 @@ void PokemonListView::showRow(int row) {
         return;
     }
     shownDex_ = number->text().toInt();
-    const auto it = owned_.find(shownDex_);
+    showSpeciesInPanel(shownDex_, name->text());
+}
+
+void PokemonListView::showSpeciesInPanel(int dex, const QString& name,
+                                         const QString& preferCopyId) {
+    const auto it = owned_.find(dex);
     if (it != owned_.end() && !it->second.empty()) {
-        detail_->showPokemon(shownDex_, name->text(), it->second);
+        detail_->showPokemon(dex, name, it->second, preferCopyId);
     } else {
-        detail_->showPokemon(shownDex_, name->text());
+        detail_->showPokemon(dex, name);
     }
 }
 
