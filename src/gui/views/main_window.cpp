@@ -26,6 +26,12 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
     // shown on the right. No frame, so it reads as a pane rather than a boxed list.
     auto* sidebar = new QListWidget(this);
     sidebar->setFrameShape(QFrame::NoFrame);
+    // Keep it a narrow, fixed-purpose pane: never a horizontal scrollbar (it
+    // would clip labels like "All Pokémon"), and a bounded width so the split
+    // divider can't be dragged to swallow the whole window or collapse the pane.
+    sidebar->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    sidebar->setMinimumWidth(160);
+    sidebar->setMaximumWidth(280);
     // Breathing room so rows don't hug the window edge, and rounded selection
     // pills — the macOS source-list look.
     sidebar->setStyleSheet(
@@ -63,6 +69,9 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
     splitter->addWidget(sections_);
     splitter->setStretchFactor(0, 0);
     splitter->setStretchFactor(1, 1);
+    // Neither pane may be dragged shut; the sidebar's min/max width keep it a
+    // narrow band so a fast drag can't flip it to full-window width.
+    splitter->setChildrenCollapsible(false);
     splitter->setSizes({180, 720});
     thinDivider(splitter);
 
