@@ -312,7 +312,17 @@ void CardCopyForm::loadCopy(const CardCopy& copy) {
     expansionCode_->setText(QString::fromStdString(copy.cardRef.expansionCode));
     setName_->setText(QString::fromStdString(copy.cardRef.setName));
     collectorNumber_->setText(QString::fromStdString(copy.cardRef.collectorNumber));
-    const int li = language_->findText(QString::fromStdString(copy.cardRef.language));
+    const QString language = QString::fromStdString(copy.cardRef.language);
+    int li = language_->findText(language);
+    if (li < 0 && !language.isEmpty()) {
+        // The stored code isn't one this build lists (a row written by a newer
+        // version, or a code since dropped from languageCodes). Add it as a
+        // selectable item so loading + saving round-trips it — otherwise it would
+        // fall to the blank "(unspecified)" item and the first save (even a
+        // comment-only one, since the page then reads dirty) would erase it.
+        language_->addItem(language);
+        li = language_->count() - 1;
+    }
     language_->setCurrentIndex(li >= 0 ? li : 0);
     const int cd = copy.condition ? static_cast<int>(*copy.condition) : -1;
     const int ci = condition_->findData(cd);
