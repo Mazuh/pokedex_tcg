@@ -290,6 +290,16 @@ allocation), sort that, then reorder the backing vector — the pattern
 `WishlistView`'s `SourceRow` uses; a comparator that recomputes both operands' keys
 does it `O(n log n)` times.
 
+**An optional/nullable column must sink its unset rows to the bottom in *both*
+directions.** The shared sort shell (`applyColumnSort`) flips the comparator's sign
+for a descending sort (`ascending ? cmp < 0 : cmp > 0`), so a fixed "unset is
+largest" sentinel (e.g. keying `nullopt` as `INT_MAX`) only sinks it on the
+ascending click — descending then floats every blank row to the *top*. "No data"
+isn't a low value; it belongs last regardless of direction. Key the field as
+`std::optional` and compare via a direction-aware helper that pre-inverts the
+set-vs-unset case for the shell's flip (see `compareOptionalRank` in
+`owned_cards_view.cpp`, used for the Condition/Rarity/Foil columns).
+
 **Storage writes that span statements go in a transaction.** A repository `add`
 that writes more than one row (e.g. `Wishlist` — a parent row plus its source
 rows) must wrap them in `BEGIN` / `COMMIT` with a best-effort `ROLLBACK` on
