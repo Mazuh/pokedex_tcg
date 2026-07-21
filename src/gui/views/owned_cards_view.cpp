@@ -16,7 +16,6 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
-#include <climits>
 #include <exception>
 #include <optional>
 #include <unordered_map>
@@ -63,6 +62,26 @@ QString speciesRegionLabel(PokemonDexNum dexNumber) {
 // One predicate so the sort, the graying, the button gate, and the delete guard
 // can never drift apart.
 bool isRemoved(const CardCopy& copy) { return copy.ownership == CardOwnership::Removed; }
+
+// Three-way compare (compareValues shape) for an optional-valued column
+// (Condition / Rarity / Foil) where an unset value must always sink to the
+// BOTTOM — in both sort directions, because "no data" isn't a low value. The
+// shared sort shell flips the comparator's sign for a descending sort, so we
+// pre-invert the set-vs-unset case here: `ascending` decides which sign keeps
+// the unset operand last after that flip. Two set values compare normally; two
+// unset values are equal.
+int compareOptionalRank(std::optional<int> a, std::optional<int> b, bool ascending) {
+    if (a && b) {
+        return compareValues(*a, *b);
+    }
+    if (!a && !b) {
+        return 0;
+    }
+    // Exactly one is unset. Set-before-unset is cmp<0 ascending / cmp>0
+    // descending (the shell's flip turns the latter back into "last").
+    const int setBeforeUnset = ascending ? -1 : 1;
+    return a ? setBeforeUnset : -setBeforeUnset;
+}
 
 }  // namespace
 
@@ -286,31 +305,34 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
         // a catalog lookup + allocation, and the text columns allocate.
         struct Key {
             QString species, card, setName, language, ownership, binderName;
-            int conditionRank, rarityRank, foilRank;
+            std::optional<int> conditionRank, rarityRank, foilRank;
         };
+        const bool ascending = sortOrder_ == Qt::AscendingOrder;
         sortByKeys(
             loaded_, sortColumn_, sortOrder_,
             [&](const CardCopy& c) {
+                // Condition ranks best-to-worst by enum value; rarity and foil rank by
+                // enum declaration order. An unset value stays nullopt so it can sink to
+                // the bottom in either direction (see compareOptionalRank), not just
+                // ascending.
+                const auto rank = [](auto opt) -> std::optional<int> {
+                    return opt ? std::optional<int>(static_cast<int>(*opt)) : std::nullopt;
+                };
                 return Key{speciesOrCardName(c), cardText(c.cardRef),
                            QString::fromStdString(c.cardRef.setName),
                            QString::fromStdString(c.cardRef.language),
                            ownershipLabel(c.ownership), binderName(c),
-                           // Condition ranks best-to-worst by enum value; rarity and foil
-                           // rank by enum declaration order. An unset value (INT_MAX)
-                           // sorts after every specified one.
-                           c.condition ? static_cast<int>(*c.condition) : INT_MAX,
-                           c.rarity ? static_cast<int>(*c.rarity) : INT_MAX,
-                           c.foil ? static_cast<int>(*c.foil) : INT_MAX};
+                           rank(c.condition), rank(c.rarity), rank(c.foil)};
             },
-            [](const Key& a, const Key& b, int column) -> int {
+            [ascending](const Key& a, const Key& b, int column) -> int {
                 switch (column) {
                     case 0: return a.species.localeAwareCompare(b.species);
                     case 1: return a.card.localeAwareCompare(b.card);
                     case 2: return a.setName.localeAwareCompare(b.setName);
                     case 3: return a.language.localeAwareCompare(b.language);
-                    case 4: return compareValues(a.conditionRank, b.conditionRank);
-                    case 5: return compareValues(a.rarityRank, b.rarityRank);
-                    case 6: return compareValues(a.foilRank, b.foilRank);
+                    case 4: return compareOptionalRank(a.conditionRank, b.conditionRank, ascending);
+                    case 5: return compareOptionalRank(a.rarityRank, b.rarityRank, ascending);
+                    case 6: return compareOptionalRank(a.foilRank, b.foilRank, ascending);
                     case 7: return a.ownership.localeAwareCompare(b.ownership);
                     case 8: return a.binderName.localeAwareCompare(b.binderName);
                 }
