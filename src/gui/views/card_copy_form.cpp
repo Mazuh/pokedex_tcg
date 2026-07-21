@@ -149,9 +149,7 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     // Labels come from conditionLabel() (the app's single source, so the picker reads
     // the same as the table and a new grade fails its exhaustive -Wswitch).
     condition_->addItem(tr("(Unspecified)"), -1);
-    for (const CardCondition c :
-         {CardCondition::NearMint, CardCondition::LightlyPlayed, CardCondition::ModeratelyPlayed,
-          CardCondition::HeavilyPlayed, CardCondition::Damaged}) {
+    for (const CardCondition c : kConditions) {
         condition_->addItem(conditionLabel(c), static_cast<int>(c));
     }
     connect(condition_, &QComboBox::activated, this, [this](int) { Q_EMIT detailsChanged(); });
