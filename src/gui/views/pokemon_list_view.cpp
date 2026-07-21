@@ -354,10 +354,17 @@ void PokemonListView::openEditCopy(const QString& copyId) {
 }
 
 void PokemonListView::refresh() {
-    // Re-query the catalog + owned counts; applyFilter() re-renders from the top,
-    // preserving the current search text (it reads search_->text()).
-    entries_ = service_.listAll();
+    // One read of the inventory feeds both needs: the per-dex copy buckets (copy
+    // mode) and the Owned column's counts, derived from the bucket sizes rather
+    // than a second aggregate scan of card_copy. applyFilter() re-renders from the
+    // top, preserving the current search text (it reads search_->text()).
     loadOwnedCopies();
+    std::unordered_map<PokemonDexNum, int> counts;
+    counts.reserve(owned_.size());
+    for (const auto& [dex, copies] : owned_) {
+        counts.emplace(dex, static_cast<int>(copies.size()));
+    }
+    entries_ = service_.listAll(counts);
     applyFilter();
 }
 
@@ -366,7 +373,8 @@ void PokemonListView::loadOwnedCopies() {
     // panel a species' copies (copy mode). Unscoped by binder — this is the whole
     // Pokédex browser — so it reads the full inventory (listAll), unlike the binder
     // guide's scoped listByBinder. bucketOwnedCopiesByDex applies the shared Owned,
-    // non-species-free predicate, so the Owned column and the double-click branch agree.
+    // non-species-free predicate — the same predicate as ownedCountsByDexNum — so the
+    // bucket sizes are exactly the Owned column's counts and the double-click branch agrees.
     owned_.clear();
     try {
         owned_ = bucketOwnedCopiesByDex(cardCopies_.listAll());

@@ -4,6 +4,7 @@
 
 #include <optional>
 #include <string>
+#include <unordered_map>
 
 #include "core/domain/card_condition.h"
 #include "core/domain/card_copy.h"
@@ -95,6 +96,20 @@ TEST_F(BrowseTest, CountsOwnedCopiesAcrossBindersAndExcludesNonOwned) {
 
     EXPECT_EQ(ownedOf(entries, kPikachu), 3);      // three Owned copies
     EXPECT_EQ(ownedOf(entries, kBulbasaur), 0);    // only a Removed copy
+}
+
+// The counts-supplied overload pairs the catalog with a caller-provided map
+// rather than querying — a species in the map reports its count, one absent
+// reports zero, and the list still spans the whole catalog in dex order.
+TEST_F(BrowseTest, ListAllFromSuppliedCountsPairsCatalogWithoutQuerying) {
+    const std::unordered_map<PokemonDexNum, int> counts{{kPikachu, 4}};
+
+    const auto entries = browse.listAll(counts);
+
+    ASSERT_EQ(entries.size(), pokedex::pokemonCatalog().size());
+    EXPECT_EQ(entries.front().pokemon.dexNumber, kBulbasaur);
+    EXPECT_EQ(ownedOf(entries, kPikachu), 4);      // from the supplied map
+    EXPECT_EQ(ownedOf(entries, kBulbasaur), 0);    // absent → zero
 }
 
 }  // namespace

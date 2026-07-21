@@ -1,8 +1,10 @@
 #pragma once
 
+#include <unordered_map>
 #include <vector>
 
 #include "core/domain/pokemon.h"
+#include "core/domain/types.h"
 
 namespace pokedex {
 
@@ -29,6 +31,15 @@ public:
     // whole National Pokédex regardless of ownership. A species with no Owned
     // copy reports ownedCount 0.
     std::vector<PokemonBrowseEntry> listAll();
+
+    // Same pairing, but from a caller-supplied dex → owned-count map instead of
+    // re-querying. For a caller that already materialized the owned copies (the
+    // browser view also needs the copies themselves, for the detail panel's copy
+    // mode) and so can derive the counts without a second scan of card_copy — the
+    // map must use the same predicate as ownedCountsByDexNum (Owned, species-tied).
+    // A species absent from the map reports ownedCount 0.
+    std::vector<PokemonBrowseEntry> listAll(
+        const std::unordered_map<PokemonDexNum, int>& ownedCounts) const;
 
 private:
     CardCopyRepository& copies_;
