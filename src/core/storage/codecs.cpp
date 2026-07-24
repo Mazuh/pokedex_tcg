@@ -2,10 +2,47 @@
 
 #include <cstdio>
 #include <ctime>
+#include <initializer_list>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "core/storage/database.h"  // StorageError
 
 namespace pokedex {
+
+namespace {
+
+// Decode a stable on-disk token to its enum value by scanning a token→value table
+// built ONCE (a function-local static, per Enum instantiation) from the same ToText
+// mapping used to encode it. The tokens are fixed string literals, so the naive
+// `text == fooToText(value)` loop rebuilds every candidate std::string on each call —
+// wasted work on a hot path, since every card_copy row read decodes its ownership,
+// condition, rarity, and foil. Returns nullopt on no match, leaving each caller to
+// throw its own typed StorageError. `enumValues` is the canonical enumerator list;
+// `toText` supplies each one's token (the first call's arguments seed the static
+// table — always identical for a given Enum, so caching them is safe).
+template <class Enum, class ToText>
+std::optional<Enum> decodeToken(const std::string& text,
+                                std::initializer_list<Enum> enumValues, ToText toText) {
+    static const std::vector<std::pair<std::string, Enum>> table = [&] {
+        std::vector<std::pair<std::string, Enum>> built;
+        built.reserve(enumValues.size());
+        for (const Enum value : enumValues) {
+            built.emplace_back(toText(value), value);
+        }
+        return built;
+    }();
+    for (const auto& [token, value] : table) {
+        if (text == token) {
+            return value;
+        }
+    }
+    return std::nullopt;
+}
+
+}  // namespace
 
 std::string regionToText(Region region) {
     // The single definition of every region's on-disk token. These strings are
@@ -52,11 +89,10 @@ std::string ownershipToText(CardOwnership ownership) {
 }
 
 CardOwnership ownershipFromText(const std::string& text) {
-    for (const CardOwnership ownership :
-         {CardOwnership::Incoming, CardOwnership::Owned, CardOwnership::Removed}) {
-        if (text == ownershipToText(ownership)) {
-            return ownership;
-        }
+    if (const auto ownership = decodeToken<CardOwnership>(
+            text, {CardOwnership::Incoming, CardOwnership::Owned, CardOwnership::Removed},
+            ownershipToText)) {
+        return *ownership;
     }
     throw StorageError("unknown ownership token: " + text);
 }
@@ -80,13 +116,13 @@ std::optional<CardCondition> conditionFromText(const std::string& text) {
     if (text.empty()) {
         return std::nullopt;  // unspecified
     }
-    for (const CardCondition condition :
-         {CardCondition::NearMint, CardCondition::LightlyPlayed,
-          CardCondition::ModeratelyPlayed, CardCondition::HeavilyPlayed,
-          CardCondition::Damaged}) {
-        if (text == conditionToText(condition)) {
-            return condition;
-        }
+    if (const auto condition = decodeToken<CardCondition>(
+            text,
+            {CardCondition::NearMint, CardCondition::LightlyPlayed,
+             CardCondition::ModeratelyPlayed, CardCondition::HeavilyPlayed,
+             CardCondition::Damaged},
+            conditionToText)) {
+        return condition;
     }
     throw StorageError("unknown condition token: " + text);
 }
@@ -123,15 +159,16 @@ std::optional<CardRarity> rarityFromText(const std::string& text) {
     if (text.empty()) {
         return std::nullopt;  // unspecified
     }
-    for (const CardRarity rarity :
-         {CardRarity::Common, CardRarity::Uncommon, CardRarity::Rare, CardRarity::DoubleRare,
-          CardRarity::IllustrationRare, CardRarity::UltraRare, CardRarity::SpecialIllustrationRare,
-          CardRarity::HyperRare, CardRarity::Promo, CardRarity::RareHolo, CardRarity::RareHoloEX,
-          CardRarity::RarePrime, CardRarity::RareLegend, CardRarity::AmazingRare,
-          CardRarity::Shining, CardRarity::Radiant, CardRarity::AceSpec}) {
-        if (text == rarityToText(rarity)) {
-            return rarity;
-        }
+    if (const auto rarity = decodeToken<CardRarity>(
+            text,
+            {CardRarity::Common, CardRarity::Uncommon, CardRarity::Rare, CardRarity::DoubleRare,
+             CardRarity::IllustrationRare, CardRarity::UltraRare,
+             CardRarity::SpecialIllustrationRare, CardRarity::HyperRare, CardRarity::Promo,
+             CardRarity::RareHolo, CardRarity::RareHoloEX, CardRarity::RarePrime,
+             CardRarity::RareLegend, CardRarity::AmazingRare, CardRarity::Shining,
+             CardRarity::Radiant, CardRarity::AceSpec},
+            rarityToText)) {
+        return rarity;
     }
     throw StorageError("unknown rarity token: " + text);
 }
@@ -161,13 +198,13 @@ std::optional<CardFoil> foilFromText(const std::string& text) {
     if (text.empty()) {
         return std::nullopt;  // unspecified
     }
-    for (const CardFoil foil :
-         {CardFoil::NonHolo, CardFoil::Holo, CardFoil::ReverseHolo, CardFoil::CosmosHolo,
-          CardFoil::MirrorHolo, CardFoil::CrackedIceHolo, CardFoil::ConfettiHolo,
-          CardFoil::CrosshatchHolo, CardFoil::HDHolo, CardFoil::Textured}) {
-        if (text == foilToText(foil)) {
-            return foil;
-        }
+    if (const auto foil = decodeToken<CardFoil>(
+            text,
+            {CardFoil::NonHolo, CardFoil::Holo, CardFoil::ReverseHolo, CardFoil::CosmosHolo,
+             CardFoil::MirrorHolo, CardFoil::CrackedIceHolo, CardFoil::ConfettiHolo,
+             CardFoil::CrosshatchHolo, CardFoil::HDHolo, CardFoil::Textured},
+            foilToText)) {
+        return foil;
     }
     throw StorageError("unknown foil token: " + text);
 }

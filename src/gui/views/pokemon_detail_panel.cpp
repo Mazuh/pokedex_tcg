@@ -181,25 +181,20 @@ void PokemonDetailPanel::showCopy(const CardCopy& copy, int total) {
 
     // Condition / rarity / foil badges: a small pill each, shown only when the value is
     // set — an unset one hides entirely rather than adding an "Unspecified" line of
-    // clutter. All three hidden leaves the badge row empty (its stretches collapse).
-    if (copy.condition) {
-        copyCondition_->setText(conditionLabel(*copy.condition));
-        copyCondition_->show();
-    } else {
-        copyCondition_->hide();
-    }
-    if (copy.rarity) {
-        copyRarity_->setText(rarityLabel(*copy.rarity));
-        copyRarity_->show();
-    } else {
-        copyRarity_->hide();
-    }
-    if (copy.foil) {
-        copyFoil_->setText(foilLabel(*copy.foil));
-        copyFoil_->show();
-    } else {
-        copyFoil_->hide();
-    }
+    // clutter. All three hidden leaves the badge row empty (its stretches collapse). One
+    // shared show-or-hide keeps the three identical, so a change (a tooltip, an
+    // accessible name) is made once rather than drifting across three copies.
+    const auto setBadge = [](QLabel* badge, const auto& value, auto labelOf) {
+        if (value) {
+            badge->setText(labelOf(*value));
+            badge->show();
+        } else {
+            badge->hide();
+        }
+    };
+    setBadge(copyCondition_, copy.condition, [](CardCondition c) { return conditionLabel(c); });
+    setBadge(copyRarity_, copy.rarity, [](CardRarity r) { return rarityLabel(r); });
+    setBadge(copyFoil_, copy.foil, [](CardFoil f) { return foilLabel(f); });
     // The browser aggregates a species' copies across all binders, so "filed here"
     // names no location there (copiesAcrossBinders_); the binder guide keeps it.
     if (copiesAcrossBinders_) {

@@ -139,10 +139,16 @@ private:
     // scrollbar appear, which resizes the viewport and re-fires the resize
     // event mid-fill — without this it would overshoot the rows actually needed.
     bool filling_ = false;
-    // The constructor already loads the catalog + owned copies, so the first showEvent
-    // must not re-query them (a doubled first-paint of ~1000 species + the whole
-    // inventory). Later shows do refresh() to pick up changes from other sections.
-    bool firstShow_ = true;
+    // CardCopyService::revision() at the last SUCCESSFUL loadOwnedCopies(). showEvent
+    // skips its full-inventory refresh (a whole card_copy read + ~1000-species catalog
+    // rebuild) when this still matches — i.e. no copy was added/edited/removed in any
+    // section since — keeping the section-switch hot path cheap for an unchanged
+    // collection while preserving the user's scroll position and selection untouched.
+    // The constructor's load stamps it, so the first visit refreshes only if a copy was
+    // added/removed in another eagerly-built section between construction and that visit.
+    // Held at the -1 sentinel after a failed read (never a real revision), so the gate
+    // can't latch an empty fallback and suppress the retry on the next visit.
+    long ownedRevision_ = -1;
 };
 
 }  // namespace pokedex

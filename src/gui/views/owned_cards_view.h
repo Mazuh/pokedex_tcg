@@ -60,6 +60,13 @@ private:
     void repopulate(const std::string& keepSelectedId);
     // The copy id of the current selection, or empty when nothing is selected.
     std::string selectedCopyId() const;
+    // The copy under the current row IF it is in-bounds and not hidden by the search
+    // filter, else nullptr — the bounds+visibility guard every row action opens with (a
+    // filter-hidden row keeps its selection, so acting on it would mutate an off-screen
+    // card). Each caller layers its own ownership policy on top (Assign/Edit reject a
+    // Removed copy, Delete requires one, Remove allows either). The pointer is valid
+    // until loaded_ is next rebuilt.
+    const CardCopy* selectedVisibleCopy() const;
     // Hide rows that don't match the search text (case-insensitive substring over
     // every visible column), and refresh the "Showing N of M" count.
     void applyFilter();

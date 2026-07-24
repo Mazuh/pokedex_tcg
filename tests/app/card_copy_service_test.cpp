@@ -292,4 +292,40 @@ TEST(CardCopyServiceTest, ListByBinderReturnsOnlyThatBindersCopies) {
     EXPECT_EQ(inB1.front().pokemonDexNum, 1);
 }
 
+// revision() advances on every mutating verb and never on a read, so a caching view
+// (the Pokémon browser) can gate a re-read on "has it changed since I last looked".
+TEST(CardCopyServiceTest, RevisionAdvancesOnEachMutationButNotOnReads) {
+    Fixture f;
+    const long start = f.service.revision();
+
+    const CardCopy copy =
+        f.service.create(6, ref(), CardOwnership::Owned, CardCondition::NearMint, std::nullopt,
+                         std::nullopt, std::nullopt, "");
+    const long afterCreate = f.service.revision();
+    EXPECT_GT(afterCreate, start);
+
+    // Reads leave it untouched.
+    f.service.listAll();
+    f.service.listByBinder("b1");
+    f.service.revision();
+    EXPECT_EQ(f.service.revision(), afterCreate);
+
+    // Each write advances it further.
+    f.service.editDetails(copy.id, ref(), CardOwnership::Owned, CardCondition::LightlyPlayed,
+                          std::nullopt, std::nullopt, "played");
+    const long afterEdit = f.service.revision();
+    EXPECT_GT(afterEdit, afterCreate);
+
+    f.service.assignToBinder(copy.id, std::nullopt);
+    const long afterAssign = f.service.revision();
+    EXPECT_GT(afterAssign, afterEdit);
+
+    f.service.remove(copy.id, "sold");
+    const long afterRemove = f.service.revision();
+    EXPECT_GT(afterRemove, afterAssign);
+
+    f.service.hardDelete(copy.id);
+    EXPECT_GT(f.service.revision(), afterRemove);
+}
+
 }  // namespace

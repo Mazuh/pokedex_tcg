@@ -253,6 +253,14 @@ std::string OwnedCardsView::selectedCopyId() const {
     return loaded_[sel].id;
 }
 
+const CardCopy* OwnedCardsView::selectedVisibleCopy() const {
+    const int row = table_->currentRow();
+    if (row < 0 || row >= static_cast<int>(loaded_.size()) || table_->isRowHidden(row)) {
+        return nullptr;
+    }
+    return &loaded_[row];
+}
+
 void OwnedCardsView::reload() {
     // Capture the selection by copy id before loaded_ is replaced (the current row
     // still indexes the old vector), so repopulate() can re-select it at its new row —
@@ -308,6 +316,7 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
             std::optional<int> conditionRank, rarityRank, foilRank;
         };
         const bool ascending = sortOrder_ == Qt::AscendingOrder;
+        const int column = sortColumn_;
         sortByKeys(
             loaded_, sortColumn_, sortOrder_,
             [&](const CardCopy& c) {
@@ -318,11 +327,24 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
                 const auto rank = [](auto opt) -> std::optional<int> {
                     return opt ? std::optional<int>(static_cast<int>(*opt)) : std::nullopt;
                 };
-                return Key{speciesOrCardName(c), cardText(c.cardRef),
-                           QString::fromStdString(c.cardRef.setName),
-                           QString::fromStdString(c.cardRef.language),
-                           ownershipLabel(c.ownership), binderName(c),
-                           rank(c.condition), rank(c.rarity), rank(c.foil)};
+                // Build ONLY the clicked column's key: keyCompare reads a single field,
+                // so materializing the other columns (column 0's catalog lookup, five
+                // QString allocations) for every row on each header click is pure waste
+                // that grows with the collection. Unset fields keep their default
+                // (empty QString / nullopt), which keyCompare never consults.
+                Key key;
+                switch (column) {
+                    case 0: key.species = speciesOrCardName(c); break;
+                    case 1: key.card = cardText(c.cardRef); break;
+                    case 2: key.setName = QString::fromStdString(c.cardRef.setName); break;
+                    case 3: key.language = QString::fromStdString(c.cardRef.language); break;
+                    case 4: key.conditionRank = rank(c.condition); break;
+                    case 5: key.rarityRank = rank(c.rarity); break;
+                    case 6: key.foilRank = rank(c.foil); break;
+                    case 7: key.ownership = ownershipLabel(c.ownership); break;
+                    case 8: key.binderName = binderName(c); break;
+                }
+                return key;
             },
             [ascending](const Key& a, const Key& b, int column) -> int {
                 switch (column) {
@@ -480,7 +502,13 @@ void OwnedCardsView::applyFilter() {
 
 void OwnedCardsView::updateButtonState() {
     const int row = table_->currentRow();
-    const bool hasSelection = row >= 0 && !table_->selectedItems().isEmpty();
+    // A row the search filter has hidden keeps its selection (applyFilter only toggles
+    // row visibility), so it stays currentRow() while off-screen. Treat that as "no
+    // actionable selection": every row action (Remove/Assign/Edit/Delete) reads
+    // loaded_[currentRow], so an enabled button over a hidden row would silently mutate
+    // a card the user can't see and didn't mean to touch. Gate them all on visibility.
+    const bool hasSelection = row >= 0 && !table_->selectedItems().isEmpty() &&
+                              !table_->isRowHidden(row);
     // A soft-Removed copy is frozen history: it can only be permanently deleted (or
     // left as-is), never edited or refiled. So Edit/Assign are disabled over one —
     // mirroring CardCopyService, which rejects editDetails/assignToBinder on a Removed
@@ -491,11 +519,10 @@ void OwnedCardsView::updateButtonState() {
     removeButton_->setEnabled(hasSelection);
     editButton_->setEnabled(liveSelection);
     // Permanent deletion is only offered for a copy that's already soft-Removed —
-    // you remove first, then (optionally) purge it from history. A row hidden by the
-    // search filter isn't deletable: the selection survives a filter (see applyFilter),
-    // so without this an off-screen row could be irreversibly purged.
+    // you remove first, then (optionally) purge it from history. (hasSelection already
+    // excludes a filter-hidden row, so an off-screen copy can't be purged.)
     const bool removedSelected = hasSelection && row < static_cast<int>(loaded_.size()) &&
-                                 !table_->isRowHidden(row) && isRemoved(loaded_[row]);
+                                 isRemoved(loaded_[row]);
     deleteButton_->setEnabled(removedSelected);
 }
 
@@ -524,14 +551,11 @@ void OwnedCardsView::showSelectedImage() {
 }
 
 void OwnedCardsView::assignSelected() {
-    const int row = table_->currentRow();
-    if (row < 0 || row >= static_cast<int>(loaded_.size())) {
-        return;
+    const CardCopy* selected = selectedVisibleCopy();
+    if (!selected || isRemoved(*selected)) {
+        return;  // no visible selection, or frozen history (button disabled; re-check)
     }
-    const CardCopy& copy = loaded_[row];
-    if (isRemoved(copy)) {
-        return;  // frozen history — the button is disabled, but re-check defensively
-    }
+    const CardCopy& copy = *selected;
     BinderPickerDialog dialog(binders_.list(), copy.binderId, this);
     if (dialog.exec() != QDialog::Accepted) {
         return;
@@ -548,11 +572,13 @@ void OwnedCardsView::assignSelected() {
 }
 
 void OwnedCardsView::removeSelected() {
-    const int row = table_->currentRow();
-    if (row < 0 || row >= static_cast<int>(loaded_.size())) {
+    // Remove is allowed on an already-Removed copy too (re-removing appends a fresh
+    // history note), so this guards only bounds+visibility, not ownership.
+    const CardCopy* selected = selectedVisibleCopy();
+    if (!selected) {
         return;
     }
-    const CardCopy& copy = loaded_[row];
+    const CardCopy& copy = *selected;
     // One dialog serves as both the confirmation and the optional note: OK removes
     // (the copy is kept as Removed for auditable history), Cancel aborts. A blank
     // note just removes without appending.
@@ -577,17 +603,14 @@ void OwnedCardsView::removeSelected() {
 }
 
 void OwnedCardsView::deletePermanently() {
-    const int row = table_->currentRow();
-    if (row < 0 || row >= static_cast<int>(loaded_.size())) {
+    // Only a soft-Removed copy that's actually visible can be purged (the button is
+    // disabled otherwise, but re-check in case state changed underneath us — a hidden
+    // row's selection survives the search filter).
+    const CardCopy* selected = selectedVisibleCopy();
+    if (!selected || !isRemoved(*selected)) {
         return;
     }
-    const CardCopy& copy = loaded_[row];
-    // Guard: only a soft-Removed copy that's actually visible can be purged (the button
-    // is disabled otherwise, but re-check in case state changed underneath us — a
-    // hidden row's selection survives the search filter).
-    if (!isRemoved(copy) || table_->isRowHidden(row)) {
-        return;
-    }
+    const CardCopy& copy = *selected;
     // Always confirm — a hard delete drops the row for good, with no history kept.
     const auto answer = QMessageBox::warning(
         this, tr("Delete permanently"),
@@ -612,14 +635,11 @@ void OwnedCardsView::deletePermanently() {
 }
 
 void OwnedCardsView::editSelectedCard() {
-    const int row = table_->currentRow();
-    if (row < 0 || row >= static_cast<int>(loaded_.size())) {
-        return;
+    const CardCopy* selected = selectedVisibleCopy();
+    if (!selected || isRemoved(*selected)) {
+        return;  // no visible selection, or frozen history (button disabled; re-check)
     }
-    const CardCopy& copy = loaded_[row];
-    if (isRemoved(copy)) {
-        return;  // frozen history — the button is disabled, but re-check defensively
-    }
+    const CardCopy& copy = *selected;
     const std::string copyId = copy.id;
     auto* page = new EditCardCopyPage(cardSearch_, images_, copies_, copy, binders_.list(),
                                       titleFor(copy));

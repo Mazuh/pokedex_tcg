@@ -283,12 +283,7 @@ void BinderView::showRow(int row) {
 }
 
 void BinderView::showSpeciesInPanel(int dex, const QString& name, const QString& preferCopyId) {
-    const auto it = ownedHere_.find(dex);
-    if (it != ownedHere_.end()) {
-        detail_->showPokemon(dex, name, it->second, preferCopyId);
-    } else {
-        detail_->showPokemon(dex, name);
-    }
+    showSpeciesCopiesInPanel(detail_, ownedHere_, dex, name, preferCopyId);
 }
 
 void BinderView::activateRow(int row) {
@@ -332,21 +327,17 @@ void BinderView::openAddCopy(int dexNumber, const QString& name) {
 }
 
 void BinderView::openEditCopy(const QString& copyId) {
-    // Find the copy the detail panel is showing among this species' owned copies.
-    const CardCopy* copy = findOwnedCopy(ownedHere_, shownDex_, copyId);
-    if (!copy) {
-        return;
-    }
-    pushEditCopyPage(stack_, cardSearch_, cardImages_, cardCopies_, *copy, binders_.list(),
-                     [this, copyId]() {
-                         // Capture the shown species before refresh(), which may clear
-                         // shownDex_. An edit can change the guide (a comment, a binder
-                         // move that removes the copy from here, a new image), so
-                         // recompute, then re-show the SAME copy — not a fresh random pick.
-                         const int dex = shownDex_;
-                         refresh();
-                         reselectSpecies(dex, copyId);
-                     });
+    openEditCopyFromBuckets(stack_, cardSearch_, cardImages_, cardCopies_, ownedHere_, shownDex_,
+                            copyId, binders_.list(), [this, copyId]() {
+                                // Capture the shown species before refresh(), which may
+                                // clear shownDex_. An edit can change the guide (a comment, a
+                                // binder move that removes the copy from here, a new image),
+                                // so recompute, then re-show the SAME copy — not a fresh
+                                // random pick.
+                                const int dex = shownDex_;
+                                refresh();
+                                reselectSpecies(dex, copyId);
+                            });
 }
 
 void BinderView::reselectSpecies(int dex, const QString& copyId) {

@@ -147,12 +147,12 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService&
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(stack_);
 
-    // Compute the whole catalog once; filtering and lazy loading only work the
-    // cached vector, never re-query. applyFilter() seeds filtered_ and loads
-    // enough to fill the viewport.
-    entries_ = service_.listAll();
-    loadOwnedCopies();
-    applyFilter();
+    // Compute the whole catalog once; filtering and lazy loading only work the cached
+    // vector, never re-query. refresh() does the single-read startup: bucket the owned
+    // copies, derive the Owned counts from those buckets, build entries_, and seed
+    // filtered_ + fill the viewport via applyFilter() — one card_copy scan, not the
+    // separate count-aggregate + full-scan the two-step form used to do.
+    refresh();
 }
 
 bool PokemonListView::eventFilter(QObject* watched, QEvent* event) {
@@ -164,11 +164,15 @@ bool PokemonListView::eventFilter(QObject* watched, QEvent* event) {
 
 void PokemonListView::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);
-    // First show: the constructor already loaded fresh data (and nothing could have
-    // changed since), so skip the refresh() and its full re-query. The resize/fill
-    // machinery grows the viewport from here. There's also no prior place to restore.
-    if (firstShow_) {
-        firstShow_ = false;
+    // Skip the whole re-query when no copy has been added/edited/removed in any section
+    // since our last successful load: the table (# / name / region / owned) derives only
+    // from the catalog (compile-time constant) and the copy inventory, so an unchanged
+    // revision means the visible data can't have changed. Returning here leaves the
+    // scroll offset and selection exactly as the user left them, at zero cost — the point
+    // of the gate. This subsumes the old "skip the first show" special-case: the ctor's
+    // load stamped ownedRevision_, so the first visit refreshes precisely when another
+    // section mutated a copy between construction and that visit (and not otherwise).
+    if (cardCopies_.revision() == ownedRevision_) {
         return;
     }
     // Reflect copies added/edited in another section since this was last shown — but
@@ -289,12 +293,7 @@ void PokemonListView::showRow(int row) {
 
 void PokemonListView::showSpeciesInPanel(int dex, const QString& name,
                                          const QString& preferCopyId) {
-    const auto it = owned_.find(dex);
-    if (it != owned_.end() && !it->second.empty()) {
-        detail_->showPokemon(dex, name, it->second, preferCopyId);
-    } else {
-        detail_->showPokemon(dex, name);
-    }
+    showSpeciesCopiesInPanel(detail_, owned_, dex, name, preferCopyId);
 }
 
 void PokemonListView::activateRow(int row) {
@@ -335,22 +334,18 @@ void PokemonListView::openAddCopy(int dexNumber, const QString& name) {
 }
 
 void PokemonListView::openEditCopy(const QString& copyId) {
-    // Find the copy the detail panel is showing among this species' owned copies.
-    const CardCopy* copy = findOwnedCopy(owned_, shownDex_, copyId);
-    if (!copy) {
-        return;
-    }
-    pushEditCopyPage(stack_, cardSearch_, cardImages_, cardCopies_, *copy, binders_.list(),
-                     [this, copyId]() {
-                         // Capture the shown species before refresh(), which re-renders
-                         // from the top. An edit can change owned data (a comment, a new
-                         // image, a binder move), so re-read the inventory, then re-select
-                         // the edited species' row and re-show the SAME copy — not a fresh
-                         // random pick — so the highlight and panel agree.
-                         const int dex = shownDex_;
-                         refresh();
-                         reselectSpecies(dex, copyId);
-                     });
+    openEditCopyFromBuckets(stack_, cardSearch_, cardImages_, cardCopies_, owned_, shownDex_,
+                            copyId, binders_.list(), [this, copyId]() {
+                                // Capture the shown species before refresh(), which
+                                // re-renders from the top. An edit can change owned data (a
+                                // comment, a new image, a binder move), so re-read the
+                                // inventory, then re-select the edited species' row and
+                                // re-show the SAME copy — not a fresh random pick — so the
+                                // highlight and panel agree.
+                                const int dex = shownDex_;
+                                refresh();
+                                reselectSpecies(dex, copyId);
+                            });
 }
 
 void PokemonListView::refresh() {
@@ -378,8 +373,17 @@ void PokemonListView::loadOwnedCopies() {
     owned_.clear();
     try {
         owned_ = bucketOwnedCopiesByDex(cardCopies_.listAll());
+        // Stamp the revision this SUCCESSFUL read reflects, so showEvent can later tell
+        // whether the inventory has moved on and skip an unchanged re-read. The single
+        // owned_-read site, so both the ctor and refresh() get it.
+        ownedRevision_ = cardCopies_.revision();
     } catch (const std::exception&) {
         owned_.clear();  // best-effort: fall back to artwork-only if the read fails
+        // Hold the sentinel (not the current revision): stamping it here would let the
+        // showEvent gate treat this empty fallback as a valid load and suppress the retry
+        // on the next visit, silently freezing every species at "0 owned". -1 never
+        // matches a real revision, so the next showEvent re-attempts the read.
+        ownedRevision_ = -1;
     }
 }
 

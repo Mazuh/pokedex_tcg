@@ -46,6 +46,7 @@ CardCopy CardCopyService::create(std::optional<PokemonDexNum> pokemonDexNum, Car
     copy.insertedAt = now;
     copy.updatedAt = now;
     repo_.add(copy);
+    ++revision_;
     return copy;
 }
 
@@ -82,6 +83,7 @@ void CardCopyService::editDetails(const CardCopyId& id, CardReference cardRef,
     copy.comments = std::move(comments);
     copy.updatedAt = clock_();
     repo_.update(copy);
+    ++revision_;
 }
 
 void CardCopyService::assignToBinder(const CardCopyId& id, std::optional<CardBinderId> binderId) {
@@ -92,6 +94,7 @@ void CardCopyService::assignToBinder(const CardCopyId& id, std::optional<CardBin
     copy.binderId = std::move(binderId);
     copy.updatedAt = clock_();
     repo_.update(copy);
+    ++revision_;
 }
 
 void CardCopyService::remove(const CardCopyId& id, const std::string& note) {
@@ -104,11 +107,13 @@ void CardCopyService::remove(const CardCopyId& id, const std::string& note) {
     }
     copy.updatedAt = clock_();
     repo_.update(copy);
+    ++revision_;
 }
 
 void CardCopyService::hardDelete(const CardCopyId& id) {
     require(id);  // surface a missing id as CardCopyError, like the other verbs
     repo_.hardDelete(id);
+    ++revision_;
 }
 
 std::vector<CardCopy> CardCopyService::listAll() { return repo_.listAll(); }

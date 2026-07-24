@@ -10,6 +10,7 @@
 #include "core/domain/card_copy.h"
 #include "core/domain/card_ownership.h"
 #include "core/domain/types.h"
+#include "gui/views/pokemon_detail_panel.h"
 
 namespace pokedex {
 
@@ -49,6 +50,26 @@ inline const CardCopy* findOwnedCopy(
     const auto copyIt = std::find_if(it->second.begin(), it->second.end(),
                                      [&](const CardCopy& c) { return c.id == id; });
     return copyIt == it->second.end() ? nullptr : &*copyIt;
+}
+
+// GUI — drive the detail panel for species `dex` from a bucketed-by-dex copy map:
+// copy mode (showing `preferCopyId`, else a random copy) when the species owns copies
+// on this surface, plain artwork otherwise. This owned_-lookup → showPokemon dispatch
+// was identical in both copy-mode hosts — the Pokémon browser over `owned_`, a binder
+// guide over `ownedHere_` — so it lives here rather than duplicated in each view's
+// showSpeciesInPanel, keeping the two from drifting on the copy-mode entry condition.
+// (bucketOwnedCopiesByDex never stores an empty vector, so a present bucket always has
+// a copy; the emptiness check is belt-and-suspenders.)
+inline void showSpeciesCopiesInPanel(
+    PokemonDetailPanel* panel,
+    const std::unordered_map<PokemonDexNum, std::vector<CardCopy>>& byDex, int dex,
+    const QString& name, const QString& preferCopyId = QString()) {
+    const auto it = byDex.find(dex);
+    if (it != byDex.end() && !it->second.empty()) {
+        panel->showPokemon(dex, name, it->second, preferCopyId);
+    } else {
+        panel->showPokemon(dex, name);
+    }
 }
 
 }  // namespace pokedex

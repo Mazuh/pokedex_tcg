@@ -86,6 +86,15 @@ public:
     // Avoids scanning the whole inventory just to find one binder's copies.
     std::vector<CardCopy> listByBinder(const CardBinderId& binderId);
 
+    // A monotonically increasing counter bumped on every mutation (create /
+    // editDetails / assignToBinder / remove / hardDelete); reads never advance it. A
+    // view that caches a derived read of the inventory can compare this against the
+    // value it last loaded at to skip an expensive re-read when nothing has changed
+    // since — a cheap "is my cached copy data stale?" check with no storage round-trip
+    // (the Pokémon browser gates its full-inventory refresh on it). Because the service
+    // is a single shared instance, a mutation in any section is visible to all.
+    long revision() const noexcept { return revision_; }
+
     // The defaults, exposed so callers can wrap/compose them if needed.
     static Clock systemClock();
     static IdGenerator uuidGenerator();
@@ -98,6 +107,8 @@ private:
     CardCopyRepository& repo_;
     Clock clock_;
     IdGenerator idGenerator_;
+    // Bumped by every mutating verb; see revision().
+    long revision_ = 0;
 };
 
 }  // namespace pokedex

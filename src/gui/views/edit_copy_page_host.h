@@ -5,12 +5,15 @@
 #include <QString>
 
 #include <functional>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "core/domain/card_copy.h"
+#include "core/domain/types.h"
 #include "gui/views/card_copy_labels.h"
 #include "gui/views/edit_card_copy_page.h"
+#include "gui/views/owned_copy_buckets.h"
 
 namespace pokedex {
 
@@ -44,6 +47,26 @@ inline void pushEditCopyPage(QStackedWidget* stack, CardSearchService& search,
                      });
     stack->addWidget(page);
     stack->setCurrentWidget(page);
+}
+
+// GUI — the guarded edit-page open both copy-mode hosts share: locate the shown copy
+// (`copyId` under species `dex`) in the host's bucketed-by-dex map and, if it's still
+// there, push its edit page (running `onReturn` on Back). A no-op when the copy is gone
+// (moved/removed under us). Both PokemonListView::openEditCopy and
+// BinderView::openEditCopy did exactly this find-guard-push; they differ only in which
+// map (owned_ vs ownedHere_) and in the per-host `onReturn` (how each re-reads its data
+// and restores the selection), which stay with the caller.
+inline void openEditCopyFromBuckets(
+    QStackedWidget* stack, CardSearchService& search, CardImageStore& images,
+    CardCopyService& copies,
+    const std::unordered_map<PokemonDexNum, std::vector<CardCopy>>& byDex, int dex,
+    const QString& copyId, const std::vector<CardBinder>& binders,
+    std::function<void()> onReturn) {
+    const CardCopy* copy = findOwnedCopy(byDex, dex, copyId);
+    if (!copy) {
+        return;
+    }
+    pushEditCopyPage(stack, search, images, copies, *copy, binders, std::move(onReturn));
 }
 
 }  // namespace pokedex
