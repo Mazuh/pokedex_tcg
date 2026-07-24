@@ -9,6 +9,7 @@
 #include "core/app/pokemon_external_api.h"
 #include "core/domain/card_copy.h"
 
+class QEvent;
 class QLabel;
 class QPushButton;
 
@@ -88,7 +89,9 @@ Q_SIGNALS:
     void editCopyRequested(const QString& copyId);
 
 protected:
-    void resizeEvent(QResizeEvent* event) override;
+    // Rescale the image when the image label resizes (on a panel resize, but also
+    // when showing/hiding the copy widgets changes the label's height on its own).
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     void onReady(int dexNumber, MediaKind kind, const QPixmap& pixmap);

@@ -1,11 +1,12 @@
 #include "gui/views/pokemon_detail_panel.h"
 
+#include <QEvent>
 #include <QFont>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
 #include <QRandomGenerator>
-#include <QResizeEvent>
+#include <QSizePolicy>
 #include <QStyle>
 #include <QVBoxLayout>
 
@@ -34,6 +35,14 @@ PokemonDetailPanel::PokemonDetailPanel(MediaService& media, WishlistService& wis
     image_->setAlignment(Qt::AlignCenter);
     image_->setMinimumSize(160, 160);
     image_->setEnabled(false);  // muted placeholder text until an image arrives
+    // Ignore the pixmap's own size hint so the label takes exactly the space the
+    // layout gives it (down to the minimum) and never grows to fit a large scan.
+    image_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+    // Rescale whenever the label itself resizes — not only on a panel resize. Showing
+    // the copy-detail block / edit button shrinks this label without resizing the
+    // panel, so a panel-only resize hook would leave the pixmap scaled to the old,
+    // taller height and the QLabel would clip it top and bottom (centered overflow).
+    image_->installEventFilter(this);
 
     // Copy-detail block (copy mode only): compact condition / rarity / foil badges, a
     // count of copies filed here, and the copy's comments. Kept deliberately spare —
@@ -300,9 +309,11 @@ void PokemonDetailPanel::renderImage() {
     setScaledPixmap(image_, originalPixmap_);
 }
 
-void PokemonDetailPanel::resizeEvent(QResizeEvent* event) {
-    QWidget::resizeEvent(event);
-    renderImage();  // rescale the artwork to the new panel size
+bool PokemonDetailPanel::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == image_ && event->type() == QEvent::Resize) {
+        renderImage();  // rescale the image to the label's new size
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 }  // namespace pokedex
