@@ -14,6 +14,7 @@
 
 #include "core/app/card_catalog_api.h"
 #include "core/app/card_catalog_parse.h"
+#include "gui/services/network_log.h"
 
 namespace pokedex {
 
@@ -137,7 +138,7 @@ void CardSearchService::fetchSets(int retriesLeft) {
     QNetworkRequest request{QUrl(QString::fromStdString(api_.resolveSets().url))};
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                          QNetworkRequest::NoLessSafeRedirectPolicy);
-    QNetworkReply* reply = nam_->get(request);
+    QNetworkReply* reply = loggedGet(nam_, request);
     connect(reply, &QNetworkReply::finished, this, [this, reply, retriesLeft]() {
         reply->deleteLater();
         if (reply->error() == QNetworkReply::NoError) {
@@ -236,7 +237,7 @@ void CardSearchService::startCardFetch(int dexNumber, std::uint64_t generation,
     QNetworkRequest request{QUrl(url)};
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                          QNetworkRequest::NoLessSafeRedirectPolicy);
-    QNetworkReply* reply = nam_->get(request);
+    QNetworkReply* reply = loggedGet(nam_, request);
     connect(reply, &QNetworkReply::finished, this,
             [this, reply, dexNumber, generation, url, retriesLeft]() {
                 reply->deleteLater();
@@ -303,7 +304,7 @@ void CardSearchService::pumpThumbnails() {
     QNetworkRequest request{QUrl(req.url)};
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                          QNetworkRequest::NoLessSafeRedirectPolicy);
-    QNetworkReply* reply = nam_->get(request);
+    QNetworkReply* reply = loggedGet(nam_, request);
     connect(reply, &QNetworkReply::finished, this, [this, reply, cardId = req.cardId]() {
         reply->deleteLater();
         inFlightThumbs_.remove(cardId);

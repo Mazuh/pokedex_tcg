@@ -132,7 +132,13 @@ passes no store) is the unchanged artwork-only path. The shared `scaled_pixmap.h
 shared by My Cards and the binder guide's panel. Other enum→label display helpers are
 header-only in `gui/views/`
 (`region_labels.h`, `status_labels.h`, `condition_labels.h`, `ownership_labels.h`).
-`gui/services/` holds `MediaService` (Pokémon artwork fetch+cache), `CardSearchService`
+Every outbound external-API GET goes through one chokepoint: `gui/services/network_log.h`'s
+`loggedGet(nam, request)` (used in place of a bare `nam_->get(request)`), which logs the URL
+under the `pokedex.net` `QLoggingCategory` and bumps a per-host session counter — so there is a
+single place that sees and tallies every call we make to a free public API (answering "are we
+hammering some API"). Silence it with `QT_LOGGING_RULES="pokedex.net.info=false"`. Each service
+keeps its own `QNetworkAccessManager` (ownership/abort semantics unchanged); `loggedGet` only wraps
+the `get`. `gui/services/` holds `MediaService` (Pokémon artwork fetch+cache), `CardSearchService`
 (card search transport — **no disk cache**: search results are display/memory-only),
 and `CardImageStore` (the on-disk store for the one image a committed copy keeps,
 `cards/<copyId>.png`; `save`/`fetchAndSave`/`load`, and an `imageChanged(copyId)`

@@ -17,6 +17,7 @@
 #include <utility>
 
 #include "core/app/media_cache_layout.h"
+#include "gui/services/network_log.h"
 
 namespace pokedex {
 
@@ -121,7 +122,7 @@ void MediaService::startFetch(int dexNumber, MediaKind kind, const QString& url,
     QNetworkRequest request{QUrl(url)};
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                          QNetworkRequest::NoLessSafeRedirectPolicy);
-    QNetworkReply* reply = nam_->get(request);
+    QNetworkReply* reply = loggedGet(nam_, request);
     inFlight_.insert(relPath, reply);
 
     connect(reply, &QNetworkReply::finished, this,
