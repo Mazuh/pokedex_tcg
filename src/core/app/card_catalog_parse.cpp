@@ -145,7 +145,7 @@ std::vector<CardPrice> extractCardPrices(const json& card, Timestamp fallbackObs
 
     // tcgplayer (USD): prices are nested one level by variant ("holofoil",
     // "normal"…), each variant an object of named metrics (low/mid/high/market…).
-    if (const auto tcg = card.find("tcgplayer"); tcg != card.end() && tcg->is_object()) {
+    if (const auto tcg = card.find(kTcgplayerProvenance); tcg != card.end() && tcg->is_object()) {
         const Timestamp observed = vendorUpdatedAt(*tcg).value_or(fallbackObservedAt);
         if (const auto pricesObj = tcg->find("prices");
             pricesObj != tcg->end() && pricesObj->is_object()) {
@@ -156,7 +156,7 @@ std::vector<CardPrice> extractCardPrices(const json& card, Timestamp fallbackObs
                 for (const auto& [metric, value] : metrics.items()) {
                     if (const auto cents = priceCents(value)) {
                         prices.push_back(CardPrice{.externalCardId = externalCardId,
-                                                   .provenance = "tcgplayer",
+                                                   .provenance = kTcgplayerProvenance,
                                                    .variant = variant,
                                                    .metric = metric,
                                                    .amountCents = *cents,
@@ -169,14 +169,14 @@ std::vector<CardPrice> extractCardPrices(const json& card, Timestamp fallbackObs
     }
 
     // cardmarket (EUR): a single flat prices object, no per-variant split.
-    if (const auto cm = card.find("cardmarket"); cm != card.end() && cm->is_object()) {
+    if (const auto cm = card.find(kCardmarketProvenance); cm != card.end() && cm->is_object()) {
         const Timestamp observed = vendorUpdatedAt(*cm).value_or(fallbackObservedAt);
         if (const auto pricesObj = cm->find("prices");
             pricesObj != cm->end() && pricesObj->is_object()) {
             for (const auto& [metric, value] : pricesObj->items()) {
                 if (const auto cents = priceCents(value)) {
                     prices.push_back(CardPrice{.externalCardId = externalCardId,
-                                               .provenance = "cardmarket",
+                                               .provenance = kCardmarketProvenance,
                                                .variant = "",
                                                .metric = metric,
                                                .amountCents = *cents,

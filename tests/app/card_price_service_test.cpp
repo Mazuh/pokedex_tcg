@@ -89,6 +89,34 @@ TEST(CardPriceServiceTest, RecordApiPricesPreservesManualAcrossRefetch) {
     EXPECT_EQ(manual, 1);
 }
 
+// A degraded response (valid card object, no price blocks) must NOT wipe prices we
+// already hold, nor bump the fetch stamp — so a flaky API can't blank a card's prices
+// for the whole TTL. Mirrors the set cache's empty-200 guard.
+TEST(CardPriceServiceTest, DegradedEmptyFetchKeepsExistingPrices) {
+    Fixture f;
+    f.service.recordApiPrices("base1-4", kPayload);
+    ASSERT_EQ(f.service.pricesFor("base1-4").size(), 2u);
+    const auto fetchedBefore = f.service.fetchedAt("base1-4");
+
+    f.now = at("2026-07-26T00:00:00Z");
+    const auto result = f.service.recordApiPrices(
+        "base1-4", R"({"data": {"id": "base1-4", "name": "Charizard"}})");
+    EXPECT_TRUE(result.empty());
+    EXPECT_EQ(f.service.pricesFor("base1-4").size(), 2u);      // preserved, not wiped
+    EXPECT_EQ(f.service.fetchedAt("base1-4"), fetchedBefore);  // stamp untouched → will retry
+}
+
+// A FIRST fetch that legitimately returns no prices still stamps, so a genuinely
+// price-less card reads "no prices" rather than re-offering Fetch forever.
+TEST(CardPriceServiceTest, FirstFetchWithNoPricesStillStamps) {
+    Fixture f;
+    const auto result =
+        f.service.recordApiPrices("sv3-5", R"({"data": {"id": "sv3-5", "name": "No Prices"}})");
+    EXPECT_TRUE(result.empty());
+    EXPECT_TRUE(f.service.pricesFor("sv3-5").empty());
+    EXPECT_TRUE(f.service.fetchedAt("sv3-5").has_value());  // stamped, so it won't re-offer
+}
+
 TEST(CardPriceServiceTest, RecordApiPricesThrowsOnBadJson) {
     Fixture f;
     EXPECT_THROW(f.service.recordApiPrices("base1-4", "}{"), CardCatalogParseError);

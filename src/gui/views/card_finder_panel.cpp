@@ -298,6 +298,9 @@ void CardFinderPanel::showPreview(int index) {
     // had no price blocks.
     const QString hint = priceHeadline(c.prices);
     priceHint_->setText(hint);
+    priceHint_->setToolTip(
+        tr("Rough market estimates: TCGplayer's market price and Cardmarket's trend price. "
+           "After you add this card, its Edit page shows the full price breakdown."));
     priceHint_->setVisible(!hint.isEmpty());
     previewPixmap_ = QPixmap();
     const QString url = QString::fromStdString(c.imageUrlLarge.empty() ? c.imageUrlSmall

@@ -42,23 +42,37 @@ inline QString formatMoney(long long cents, const std::string& currency) {
            QStringLiteral("%1").arg(frac, 2, 10, QLatin1Char('0'));
 }
 
-// A compact one-line summary of the spread: the TCGplayer "market" price (the
-// highest across variants — the notable figure) and the Cardmarket "trend" price,
-// e.g. "TCGplayer $800.43 · Cardmarket €1531.00". Empty when neither is present, so
-// callers can hide the hint. Deliberately picks two representative numbers rather
-// than the whole spread — the full list is the panel's expandable table.
-inline QString priceHeadline(const std::vector<CardPrice>& prices) {
-    const CardPrice* tcg = nullptr;
-    const CardPrice* cm = nullptr;
-    for (const CardPrice& p : prices) {
-        if (p.provenance == "tcgplayer" && p.metric == "market") {
-            if (tcg == nullptr || p.amountCents > tcg->amountCents) {
-                tcg = &p;
+// The best available price for one vendor, trying `metrics` in preference order and,
+// within the first metric that has any row, taking the highest value (the notable
+// figure when a card has several finishes). Returns nullptr when the vendor has none
+// of the listed metrics — so the headline degrades to whatever the card actually
+// carries instead of vanishing when the preferred metric happens to be absent.
+inline const CardPrice* bestPrice(const std::vector<CardPrice>& prices, const char* provenance,
+                                  std::initializer_list<const char*> metrics) {
+    for (const char* metric : metrics) {
+        const CardPrice* best = nullptr;
+        for (const CardPrice& p : prices) {
+            if (p.provenance == provenance && p.metric == metric &&
+                (best == nullptr || p.amountCents > best->amountCents)) {
+                best = &p;
             }
-        } else if (p.provenance == "cardmarket" && p.metric == "trendPrice") {
-            cm = &p;
+        }
+        if (best != nullptr) {
+            return best;
         }
     }
+    return nullptr;
+}
+
+// A compact one-line summary of the spread: one representative figure per vendor —
+// TCGplayer's market price (falling back to mid/low) and Cardmarket's trend price
+// (falling back to average-sell/low) — e.g. "TCGplayer $800.43 · Cardmarket €1531.00".
+// Empty only when a card truly has no usable price, so callers can hide the hint. The
+// full list is the panel's expandable table.
+inline QString priceHeadline(const std::vector<CardPrice>& prices) {
+    const CardPrice* tcg = bestPrice(prices, kTcgplayerProvenance, {"market", "mid", "low"});
+    const CardPrice* cm =
+        bestPrice(prices, kCardmarketProvenance, {"trendPrice", "averageSellPrice", "lowPrice"});
     QStringList parts;
     if (tcg != nullptr) {
         parts << QStringLiteral("TCGplayer ") + formatMoney(tcg->amountCents, tcg->currency);

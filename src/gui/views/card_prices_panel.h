@@ -11,6 +11,7 @@ class QLabel;
 class QPushButton;
 class QToolButton;
 class QTableWidget;
+class QHBoxLayout;
 
 namespace pokedex {
 
@@ -53,7 +54,9 @@ private:
     Qt::SortOrder sortOrder_ = Qt::AscendingOrder;
 
     QLabel* headline_;
+    QToolButton* infoButton_;  // "ⓘ" — explains what the metrics mean, on click
     QLabel* status_;
+    QLabel* links_;            // "View on TCGplayer/Cardmarket" listing links (rich text)
     QPushButton* fetchButton_;
     QToolButton* toggle_;
     QTableWidget* table_;

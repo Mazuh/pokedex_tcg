@@ -134,7 +134,12 @@ hits the API. The reusable `gui/views/CardPricesPanel` (keyed by a copy's
 the Edit page and the My Cards detail. An unlinked copy (added before the link existed, or
 by hand) gets a link from the Edit page: pick the matching printing in the finder and press
 "Link prices to this card" (persists immediately via `linkCatalogCard`, independent of the
-details Save), after which the panel offers the Fetch button. Prices ride along for free while **browsing**:
+details Save), after which the panel offers the Fetch button. The panel also carries an
+"ⓘ" popover (same idiom as the card-attribute pickers) explaining the metrics, and
+per-vendor **listing links** ("TCGplayer ↗ / Cardmarket ↗") built deterministically as
+`prices.pokemontcg.io/<vendor>/<id>` — a stable redirect to the real marketplace page, so
+no fetch or stored URL. The TCGplayer `high` metric is dropped from the display (a lone top
+listing, routinely an unrealistic outlier; still in the cache, never in the headline). Prices ride along for free while **browsing**:
 `parseCardSearchResponse` extracts the same tcgplayer/cardmarket blocks the search payload
 already carries into `CardCandidate.prices` (display-only, never persisted), and
 `CardFinderPanel` shows a subtle headline under the preview — no extra HTTP for a card the

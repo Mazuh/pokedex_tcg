@@ -6,10 +6,13 @@
 
 namespace pokedex {
 
-// The provenance token for a hand-entered price — the discriminator that a refetch
-// preserves (it replaces only API-sourced rows). The vendor provenances are the
-// pokemontcg.io block names, carried through verbatim ("tcgplayer", "cardmarket").
+// The provenance tokens. `manual` is a hand-entered price — the discriminator that a
+// refetch preserves (it replaces only API-sourced rows). The two vendor tokens are the
+// pokemontcg.io block names, carried through verbatim; they live here as constants so
+// the parser that EMITS a provenance and the GUI that MATCHES one can't drift apart.
 inline constexpr char kManualPriceProvenance[] = "manual";
+inline constexpr char kTcgplayerProvenance[] = "tcgplayer";
+inline constexpr char kCardmarketProvenance[] = "cardmarket";
 
 // APP — one price observation for a card, keyed by `externalCardId` — a
 // source-neutral card identity, NOT by any owned CardCopy: a card's price lives
