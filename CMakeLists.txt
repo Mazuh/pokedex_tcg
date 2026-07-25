@@ -168,6 +168,17 @@ qt_add_executable(pokedex_tcg
 )
 target_link_libraries(pokedex_tcg PRIVATE pokedex_core pokedex_warnings pokedex_sanitizers Qt6::Widgets Qt6::Network)
 
+# --- Install (drop a `pokedex` command onto PATH) ----------------------------
+# install.sh runs `cmake --install` after a Release build so the app is
+# launchable from any directory. We install via PROGRAMS + RENAME rather than
+# install(TARGETS): TARGETS has no RENAME, and renaming the target's OUTPUT_NAME
+# would also rename ./build/pokedex_tcg, which dev.sh and the docs refer to.
+# The genex resolves to the built binary regardless of the build directory.
+include(GNUInstallDirs)
+install(PROGRAMS "$<TARGET_FILE:pokedex_tcg>"
+        DESTINATION "${CMAKE_INSTALL_BINDIR}"
+        RENAME pokedex)
+
 # --- Tests (GoogleTest + CTest) ----------------------------------------------
 include(CTest)
 if(BUILD_TESTING)
