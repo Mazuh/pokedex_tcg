@@ -64,7 +64,10 @@ version exceeds the file's `user_version` (v1 = initial schema; v2 added
 `card_copy.ref_set_name`; v3 added `card_copy.ref_name`, the printed card name;
 v4 `card_copy.rarity`; v5 `card_copy.foil`; v6 added `card_set_cache` +
 `cache_meta`, the TTL'd local cache of the external `/v2/sets` table — reference
-data, not collection source-of-truth, see the `CardSetCache` note below),
+data, not collection source-of-truth, see the `CardSetCache` note below; v7 added
+`card_price` + `card_price_fetch`, the on-demand cache of a card's market prices —
+also external reference data, keyed by the pokemontcg.io card id and independent of
+any `card_copy`, see the `CardPriceCache` note below),
 so a fresh DB runs the whole chain and an existing one
 only the tail — bump `kSchemaVersion` and add a step (never edit `kSchemaV1`) when
 the schema changes. `storage/` holds
@@ -92,7 +95,24 @@ JSON note in the tech stack), and `CardSetCache` (the cross-launch persistence o
 the `/v2/sets` table — a `vector<CardSetInfo>` — in the `card_set_cache`/`cache_meta`
 tables; it lives in `app/` rather than `storage/` precisely because its row type
 `CardSetInfo` is an app projection, so a storage-layer repo would invert the
-layering: `app/` may use `storage/`, not vice versa). A `CardSearchQuery` is scoped EITHER by species
+layering: `app/` may use `storage/`, not vice versa). The **card-price seam** is the
+same shape: `CardCatalogApi::resolveCardById` → `/v2/cards/{id}` (the per-card
+endpoint whose response embeds the market prices), `card_catalog_parse::parseCardPrices`
+(pure parser of the `tcgplayer`/`cardmarket` blocks — one `CardPrice` row per
+vendor×variant×metric, dropping any value that rounds to ≤0 cents as noise; the vendor
+`YYYY/MM/DD` date → midnight-UTC `observedAt` with a caller-supplied fallback so the
+parser stays clock-free), `CardPriceCache` (thin SQL over `card_price`/`card_price_fetch`,
+mirroring `CardSetCache`), and `CardPriceService` (the verbs, with an injectable
+clock/uuid like `CardCopyService`: `recordApiPrices` [parse a fetched payload, replace
+the card's API-sourced rows, preserve `manual` rows, stamp the fetch], `addManualPrice`/
+`removeManualPrice`, `pricesFor`, `fetchedAt`, and `needsRefresh(key, ttl)` — the
+anti-hammer TTL gate the caller checks before the network GET). Prices are keyed by the
+external card id and are deliberately **independent of `card_copy`** (deleting a copy
+never removes pricing; a card carries many prices at once because there is no single
+true price); money is stored as integer cents (`Statement::bindInt64`/`columnInt64`).
+The transport GET stays GUI-side, as with search/sets. Not yet wired to any GUI — a
+`CardCopy` doesn't persist the card id, so surfacing a copy's price is a future step.
+A `CardSearchQuery` is scoped EITHER by species
 (`dexNumber`, → `nationalPokedexNumbers:N`) OR by card name (`nameQuery`, →
 `name:"…"`) — the latter is how a species-free card is found; on the GUI side
 `CardSearchService::searchByName` and `CardFinderPanel`'s name-search mode drive it. `gui/views/` holds the

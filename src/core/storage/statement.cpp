@@ -26,6 +26,12 @@ void Statement::bindInt(int index, int value) {
     }
 }
 
+void Statement::bindInt64(int index, long long value) {
+    if (sqlite3_bind_int64(stmt_, index, value) != SQLITE_OK) {
+        throw StorageError(sqlite3_errmsg(db_));
+    }
+}
+
 void Statement::bindNull(int index) {
     if (sqlite3_bind_null(stmt_, index) != SQLITE_OK) {
         throw StorageError(sqlite3_errmsg(db_));
@@ -51,6 +57,8 @@ std::string Statement::columnText(int column) {
 }
 
 int Statement::columnInt(int column) { return sqlite3_column_int(stmt_, column); }
+
+long long Statement::columnInt64(int column) { return sqlite3_column_int64(stmt_, column); }
 
 bool Statement::columnIsNull(int column) {
     return sqlite3_column_type(stmt_, column) == SQLITE_NULL;

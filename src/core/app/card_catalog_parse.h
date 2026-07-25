@@ -5,6 +5,8 @@
 #include <vector>
 
 #include "core/app/card_catalog_dto.h"
+#include "core/app/card_price_dto.h"
+#include "core/domain/types.h"
 
 namespace pokedex {
 
@@ -33,6 +35,20 @@ std::vector<CardSetInfo> parseSetsResponse(const std::string& json);
 // printedTotal is unknown); it is kept as a string since promos are non-numeric.
 std::vector<CardCandidate> parseCardSearchResponse(const std::string& json,
                                                    const std::vector<CardSetInfo>& sets);
+
+// Parse a /v2/cards/{id} single-card response into price observations, reading the
+// `tcgplayer` (USD, per-variant) and `cardmarket` (EUR, flat) blocks. Each numeric
+// price becomes one CardPrice row keyed by the card's own id; a non-positive value
+// (a zero/absent metric — e.g. cardmarket's germanProLow) is skipped as noise. The
+// returned rows have an empty `id` (the caller mints one on persist) and provenance
+// "tcgplayer"/"cardmarket". `observedAt` is the vendor block's printed `updatedAt`
+// date (format "YYYY/MM/DD", taken at midnight UTC); `fallbackObservedAt` is used
+// when that date is missing or malformed (the caller passes the fetch time, so the
+// parser stays clock-free and deterministic). A payload with neither block yields
+// no rows. Robust to `data` being an object (the single-card endpoint) or the first
+// element of a `data` array (a search response).
+std::vector<CardPrice> parseCardPrices(const std::string& json,
+                                       Timestamp fallbackObservedAt);
 
 // Resolve a user-typed set filter to the set ids it matches, for reliable
 // set.id-based search narrowing. Matches an exact printed code (e.g. "OBF") OR a

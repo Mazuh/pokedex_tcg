@@ -31,7 +31,7 @@ public:
     //   v5 — card_copy.foil (the card's foil treatment / finish; optional).
     //   v6 — card_set_cache + cache_meta (a TTL'd local cache of the external
     //        /v2/sets table; reference data, not collection source-of-truth).
-    static constexpr int kSchemaVersion = 6;
+    static constexpr int kSchemaVersion = 7;
 
     // Open (creating if absent) the database at `path`, or an in-memory database
     // when path == ":memory:". Throws StorageError on failure.

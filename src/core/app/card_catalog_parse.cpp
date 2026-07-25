@@ -1,6 +1,9 @@
 #include "core/app/card_catalog_parse.h"
 
 #include <cctype>
+#include <chrono>
+#include <cmath>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -69,6 +72,63 @@ std::string toLowerAscii(const std::string& s) {
         out += static_cast<char>(std::tolower(c));
     }
     return out;
+}
+
+// The single-card node: `data` is an object on the /v2/cards/{id} endpoint, but be
+// lenient and also accept the first element of a `data` array (a search response),
+// so the same parser serves either shape. Returns nullptr when neither is present.
+const json* cardNode(const json& root) {
+    if (!root.is_object()) {
+        return nullptr;
+    }
+    const auto it = root.find("data");
+    if (it == root.end()) {
+        return nullptr;
+    }
+    if (it->is_object()) {
+        return &*it;
+    }
+    if (it->is_array() && !it->empty() && it->front().is_object()) {
+        return &it->front();
+    }
+    return nullptr;
+}
+
+// A vendor block's printed update date ("YYYY/MM/DD") as a midnight-UTC Timestamp,
+// or nullopt when the field is absent or malformed. Kept clock-free (chrono
+// calendar math only) so the parser stays pure and testable.
+std::optional<Timestamp> vendorUpdatedAt(const json& block) {
+    const std::string d = strField(block, "updatedAt");
+    if (d.size() != 10 || d[4] != '/' || d[7] != '/') {
+        return std::nullopt;
+    }
+    for (const int i : {0, 1, 2, 3, 5, 6, 8, 9}) {
+        if (std::isdigit(static_cast<unsigned char>(d[i])) == 0) {
+            return std::nullopt;
+        }
+    }
+    const std::chrono::year_month_day ymd{
+        std::chrono::year{std::stoi(d.substr(0, 4))},
+        std::chrono::month{static_cast<unsigned>(std::stoi(d.substr(5, 2)))},
+        std::chrono::day{static_cast<unsigned>(std::stoi(d.substr(8, 2)))}};
+    if (!ymd.ok()) {
+        return std::nullopt;
+    }
+    return std::chrono::sys_days{ymd};
+}
+
+// Money (a JSON number of currency units) as integer minor units. A non-number, a
+// non-positive value, or a positive amount that rounds down to zero cents (a
+// sub-half-cent metric) yields nullopt — a zero/absent price is noise, not a price.
+std::optional<long long> priceCents(const json& value) {
+    if (!value.is_number()) {
+        return std::nullopt;
+    }
+    const long long cents = std::llround(value.get<double>() * 100.0);
+    if (cents <= 0) {
+        return std::nullopt;
+    }
+    return cents;
 }
 
 }  // namespace
@@ -162,6 +222,65 @@ std::vector<CardCandidate> parseCardSearchResponse(const std::string& jsonText,
         candidates.push_back(std::move(c));
     }
     return candidates;
+}
+
+std::vector<CardPrice> parseCardPrices(const std::string& jsonText,
+                                       Timestamp fallbackObservedAt) {
+    const json root = parseJson(jsonText);
+    std::vector<CardPrice> prices;
+    const json* card = cardNode(root);
+    if (card == nullptr) {
+        return prices;
+    }
+    const std::string cardKey = strField(*card, "id");
+
+    // tcgplayer (USD): prices are nested one level by variant ("holofoil",
+    // "normal"…), each variant an object of named metrics (low/mid/high/market…).
+    if (const auto tcg = card->find("tcgplayer");
+        tcg != card->end() && tcg->is_object()) {
+        const Timestamp observed = vendorUpdatedAt(*tcg).value_or(fallbackObservedAt);
+        if (const auto pricesObj = tcg->find("prices");
+            pricesObj != tcg->end() && pricesObj->is_object()) {
+            for (const auto& [variant, metrics] : pricesObj->items()) {
+                if (!metrics.is_object()) {
+                    continue;
+                }
+                for (const auto& [metric, value] : metrics.items()) {
+                    if (const auto cents = priceCents(value)) {
+                        prices.push_back(CardPrice{.cardKey = cardKey,
+                                                   .provenance = "tcgplayer",
+                                                   .variant = variant,
+                                                   .metric = metric,
+                                                   .amountCents = *cents,
+                                                   .currency = "USD",
+                                                   .observedAt = observed});
+                    }
+                }
+            }
+        }
+    }
+
+    // cardmarket (EUR): a single flat prices object, no per-variant split.
+    if (const auto cm = card->find("cardmarket");
+        cm != card->end() && cm->is_object()) {
+        const Timestamp observed = vendorUpdatedAt(*cm).value_or(fallbackObservedAt);
+        if (const auto pricesObj = cm->find("prices");
+            pricesObj != cm->end() && pricesObj->is_object()) {
+            for (const auto& [metric, value] : pricesObj->items()) {
+                if (const auto cents = priceCents(value)) {
+                    prices.push_back(CardPrice{.cardKey = cardKey,
+                                               .provenance = "cardmarket",
+                                               .variant = "",
+                                               .metric = metric,
+                                               .amountCents = *cents,
+                                               .currency = "EUR",
+                                               .observedAt = observed});
+                }
+            }
+        }
+    }
+
+    return prices;
 }
 
 std::vector<std::string> resolveSetFilterToIds(const std::string& typed,

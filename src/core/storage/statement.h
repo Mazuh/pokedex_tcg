@@ -30,6 +30,9 @@ public:
 
     void bindText(int index, const std::string& value);
     void bindInt(int index, int value);
+    // 64-bit integer bind, used for money stored as integer minor units (cents) —
+    // a card price in cents can exceed a 32-bit int for high-value cards.
+    void bindInt64(int index, long long value);
     void bindNull(int index);
 
     // Advance to the next row. Returns true when a row is available
@@ -39,6 +42,7 @@ public:
 
     std::string columnText(int column);
     int columnInt(int column);
+    long long columnInt64(int column);
     bool columnIsNull(int column);
 
 private:

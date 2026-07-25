@@ -6,15 +6,22 @@
 #include <vector>
 
 #include "core/app/card_catalog_dto.h"
+#include "core/app/card_price_dto.h"
+#include "core/storage/codecs.h"
 
 namespace {
 
 using pokedex::CardCandidate;
 using pokedex::CardCatalogParseError;
+using pokedex::CardPrice;
 using pokedex::CardSetInfo;
+using pokedex::parseCardPrices;
 using pokedex::parseCardSearchResponse;
 using pokedex::parseSetsResponse;
 using pokedex::resolveSetFilterToIds;
+using pokedex::Timestamp;
+
+Timestamp at(const char* iso) { return pokedex::timestampFromIso(iso); }
 
 // A /v2/sets payload exercising: a normal set, a duplicated printed code shared
 // by two sets (CEL), a set whose ptcgoCode is null, and a malformed entry with
@@ -192,6 +199,124 @@ TEST(ParseCardSearchResponseTest, UnknownSetLeavesBlankCodeAndNumberOnlyCollecto
 TEST(ParseCardSearchResponseTest, ThrowsOnInvalidJsonButEmptyDataIsFine) {
     EXPECT_THROW(parseCardSearchResponse("}{", sampleSets()), CardCatalogParseError);
     EXPECT_TRUE(parseCardSearchResponse(R"({"data": []})", sampleSets()).empty());
+}
+
+// ---- parseCardPrices --------------------------------------------------------
+
+// A /v2/cards/{id} payload: `data` is a single object carrying a tcgplayer block
+// (two variants, one with a zero metric to skip) and a cardmarket block (flat,
+// with zero-valued fields the parser must drop as noise).
+constexpr const char* kCardWithPrices = R"json({
+  "data": {
+    "id": "base1-4",
+    "name": "Charizard",
+    "tcgplayer": {
+      "url": "https://prices.pokemontcg.io/tcgplayer/base1-4",
+      "updatedAt": "2026/07/25",
+      "prices": {
+        "holofoil":  {"low": 510.0, "mid": 918.8, "high": 2550.35, "market": 800.43, "directLow": 0.0},
+        "reverseHolofoil": {"market": 12.5}
+      }
+    },
+    "cardmarket": {
+      "url": "https://prices.pokemontcg.io/cardmarket/base1-4",
+      "updatedAt": "2026/07/01",
+      "prices": {"averageSellPrice": 1531.0, "trendPrice": 4184.6, "germanProLow": 0.0, "suggestedPrice": 0.0}
+    }
+  }
+})json";
+
+// Find the one row matching (provenance, variant, metric); asserts it exists.
+const CardPrice& findPrice(const std::vector<CardPrice>& prices, const std::string& provenance,
+                           const std::string& variant, const std::string& metric) {
+    for (const CardPrice& p : prices) {
+        if (p.provenance == provenance && p.variant == variant && p.metric == metric) {
+            return p;
+        }
+    }
+    ADD_FAILURE() << "no price for " << provenance << "/" << variant << "/" << metric;
+    static const CardPrice kNone;
+    return kNone;
+}
+
+TEST(ParseCardPricesTest, ExtractsTcgplayerVariantsAsUsdCentsFromVendorDate) {
+    const std::vector<CardPrice> prices = parseCardPrices(kCardWithPrices, at("2000-01-01T00:00:00Z"));
+
+    const CardPrice& mid = findPrice(prices, "tcgplayer", "holofoil", "mid");
+    EXPECT_EQ(mid.cardKey, "base1-4");
+    EXPECT_EQ(mid.amountCents, 91880);  // 918.80 → cents
+    EXPECT_EQ(mid.currency, "USD");
+    EXPECT_EQ(mid.observedAt, at("2026-07-25T00:00:00Z"));  // vendor updatedAt, midnight UTC
+    EXPECT_TRUE(mid.id.empty());  // id is minted on persist, not by the parser
+
+    EXPECT_EQ(findPrice(prices, "tcgplayer", "holofoil", "high").amountCents, 255035);
+    EXPECT_EQ(findPrice(prices, "tcgplayer", "reverseHolofoil", "market").amountCents, 1250);
+}
+
+TEST(ParseCardPricesTest, SkipsNonPositiveMetrics) {
+    const std::vector<CardPrice> prices = parseCardPrices(kCardWithPrices, at("2000-01-01T00:00:00Z"));
+    // directLow (0.0), germanProLow (0.0) and suggestedPrice (0.0) are noise, dropped.
+    for (const CardPrice& p : prices) {
+        EXPECT_GT(p.amountCents, 0);
+        EXPECT_NE(p.metric, "directLow");
+        EXPECT_NE(p.metric, "germanProLow");
+        EXPECT_NE(p.metric, "suggestedPrice");
+    }
+}
+
+TEST(ParseCardPricesTest, ExtractsCardmarketAsFlatEurRows) {
+    const std::vector<CardPrice> prices = parseCardPrices(kCardWithPrices, at("2000-01-01T00:00:00Z"));
+
+    const CardPrice& trend = findPrice(prices, "cardmarket", "", "trendPrice");
+    EXPECT_EQ(trend.amountCents, 418460);
+    EXPECT_EQ(trend.currency, "EUR");
+    EXPECT_EQ(trend.observedAt, at("2026-07-01T00:00:00Z"));
+    EXPECT_EQ(findPrice(prices, "cardmarket", "", "averageSellPrice").amountCents, 153100);
+}
+
+TEST(ParseCardPricesTest, FallsBackToGivenTimestampWhenVendorDateMissing) {
+    constexpr const char* json = R"json({
+      "data": {"id": "sv3-125",
+               "tcgplayer": {"prices": {"normal": {"market": 1.0}}}}
+    })json";
+    const Timestamp fallback = at("2026-07-25T09:30:00Z");
+    const std::vector<CardPrice> prices = parseCardPrices(json, fallback);
+    ASSERT_EQ(prices.size(), 1u);
+    EXPECT_EQ(prices[0].observedAt, fallback);
+}
+
+TEST(ParseCardPricesTest, AlsoAcceptsFirstElementOfADataArray) {
+    // A search response (data is an array): the parser reads the first card.
+    constexpr const char* json = R"json({
+      "data": [{"id": "sv3-125", "cardmarket": {"prices": {"trendPrice": 2.0}}}]
+    })json";
+    const std::vector<CardPrice> prices = parseCardPrices(json, at("2000-01-01T00:00:00Z"));
+    ASSERT_EQ(prices.size(), 1u);
+    EXPECT_EQ(prices[0].cardKey, "sv3-125");
+    EXPECT_EQ(prices[0].amountCents, 200);
+}
+
+TEST(ParseCardPricesTest, DropsPositiveAmountsThatRoundToZeroCents) {
+    // A sub-half-cent value is positive but rounds to 0 cents; it must be dropped as
+    // noise, never stored as a bogus $0.00 price.
+    constexpr const char* json = R"json({
+      "data": {"id": "sv3-125",
+               "cardmarket": {"prices": {"trendPrice": 0.004, "lowPrice": 0.006}}}
+    })json";
+    const std::vector<CardPrice> prices = parseCardPrices(json, at("2000-01-01T00:00:00Z"));
+    ASSERT_EQ(prices.size(), 1u);  // 0.004 → 0 cents (dropped); 0.006 → 1 cent (kept)
+    EXPECT_EQ(prices[0].metric, "lowPrice");
+    EXPECT_EQ(prices[0].amountCents, 1);
+}
+
+TEST(ParseCardPricesTest, NoPriceBlocksYieldsNoRows) {
+    constexpr const char* json = R"json({"data": {"id": "sv3-125", "name": "Gardevoir ex"}})json";
+    EXPECT_TRUE(parseCardPrices(json, at("2000-01-01T00:00:00Z")).empty());
+}
+
+TEST(ParseCardPricesTest, ThrowsOnInvalidJsonButMissingDataIsFine) {
+    EXPECT_THROW(parseCardPrices("}{", at("2000-01-01T00:00:00Z")), CardCatalogParseError);
+    EXPECT_TRUE(parseCardPrices(R"({"foo": 1})", at("2000-01-01T00:00:00Z")).empty());
 }
 
 }  // namespace
