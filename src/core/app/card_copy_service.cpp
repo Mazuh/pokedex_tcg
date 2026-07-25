@@ -99,6 +99,14 @@ void CardCopyService::assignToBinder(const CardCopyId& id, std::optional<CardBin
     ++revision_;
 }
 
+void CardCopyService::linkCatalogCard(const CardCopyId& id, std::string externalCardId) {
+    CardCopy copy = require(id);
+    copy.externalCardId = trim(externalCardId);
+    copy.updatedAt = clock_();
+    repo_.update(copy);
+    ++revision_;
+}
+
 void CardCopyService::remove(const CardCopyId& id, const std::string& note) {
     CardCopy copy = require(id);
     copy.ownership = CardOwnership::Removed;

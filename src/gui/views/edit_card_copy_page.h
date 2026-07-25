@@ -70,6 +70,7 @@ private:
     void saveBinder();      // persist a binder pick via assignToBinder (revert combo on failure)
     void handleBack();      // guard Back on unsaved edits (save/discard/cancel), then leave
     void saveFromFinder();  // persist the picked card's (loaded) preview as the image
+    void linkFromFinder();  // link this copy to the picked catalog card (enables prices)
     void uploadPhoto();     // pick a local image file and persist it as the image
     void refreshCurrentImage();  // re-read the copy's stored image into the top-bar thumbnail
 
@@ -83,6 +84,7 @@ private:
     CardPricesPanel* prices_;  // the copy's market-prices block (keyed by externalCardId)
     QLabel* currentImage_;     // small thumbnail of the copy's current stored image
     QPushButton* useButton_;   // "Use this card's image" — enabled once the preview loads
+    QPushButton* linkButton_;  // "Link prices to this card" — enabled once a card is picked
     QPushButton* saveButton_;  // "Save changes" — enabled only while an edit diverges from the record
 };
 

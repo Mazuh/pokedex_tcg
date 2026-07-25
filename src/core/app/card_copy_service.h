@@ -71,6 +71,16 @@ public:
     // copy is soft-Removed — frozen history is not refiled.
     void assignToBinder(const CardCopyId& id, std::optional<CardBinderId> binderId);
 
+    // Attach (or replace) the copy's link to an external catalog card so its prices
+    // can be looked up — the way an existing, unlinked copy gets a link after the fact
+    // (copies added from the finder are linked at create time). `externalCardId` is
+    // trimmed; passing "" clears the link. Bumps updatedAt and persists immediately
+    // (like assignToBinder), independent of the details "Save". Unlike editDetails it
+    // is allowed on a Removed copy — a catalog link is benign reference metadata, not a
+    // mutation of the copy's collection state. Throws CardCopyError if no copy has that
+    // id.
+    void linkCatalogCard(const CardCopyId& id, std::string externalCardId);
+
     // Soft-remove: mark the copy Removed — kept for auditable history rather than
     // deleted — bumping updatedAt. An optional `note` (trimmed) is appended to the
     // copy's comments on its own line, so the reason it left the collection (sold,

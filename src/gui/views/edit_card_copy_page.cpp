@@ -117,13 +117,33 @@ EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardPriceLookupSer
     useButton_->setFont(useFont);
     useButton_->setMinimumHeight(38);
     connect(useButton_, &QPushButton::clicked, this, &EditCardCopyPage::saveFromFinder);
-    connect(finder_, &CardFinderPanel::cardSelected, this,
-            [this](const CardCandidate&) { useButton_->setEnabled(false); });
-    connect(finder_, &CardFinderPanel::selectionCleared, this,
-            [this]() { useButton_->setEnabled(false); });
+
+    // "Link prices to this card": how an existing copy (added before it was linked, or
+    // by hand) gets an external_card_id so its prices can be fetched. Enabled as soon
+    // as a card is picked (unlike the image button it needs no loaded preview), and
+    // persists immediately via CardCopyService::linkCatalogCard.
+    linkButton_ = new QPushButton(tr("Link prices to this card"), this);
+    linkButton_->setEnabled(false);
+    connect(linkButton_, &QPushButton::clicked, this, &EditCardCopyPage::linkFromFinder);
+
+    connect(finder_, &CardFinderPanel::cardSelected, this, [this](const CardCandidate&) {
+        useButton_->setEnabled(false);  // waits for the image to load (previewReady)
+        linkButton_->setEnabled(true);  // a pick is all linking needs
+    });
+    connect(finder_, &CardFinderPanel::selectionCleared, this, [this]() {
+        useButton_->setEnabled(false);
+        linkButton_->setEnabled(false);
+    });
     connect(finder_, &CardFinderPanel::previewReady, this,
             [this]() { useButton_->setEnabled(true); });
-    finder_->setPreviewFooter(useButton_);
+
+    // Both card-scoped actions sit under the preview, where the picture they apply to is.
+    auto* footer = new QWidget(this);
+    auto* footerLayout = new QVBoxLayout(footer);
+    footerLayout->setContentsMargins(0, 0, 0, 0);
+    footerLayout->addWidget(useButton_);
+    footerLayout->addWidget(linkButton_);
+    finder_->setPreviewFooter(footer);
 
     // --- Prices (below): the copy's market prices, on demand ---------------
     // Keyed by the copy's external catalog id; unlinked copies show a hint instead.
@@ -244,6 +264,25 @@ void EditCardCopyPage::saveFromFinder() {
     }
     images_.save(copy_.id, preview);  // emits CardImageStore::imageChanged → host refresh
     showToast(this, tr("Image updated from the selected card."));
+}
+
+void EditCardCopyPage::linkFromFinder() {
+    if (!finder_->hasSelection()) {
+        return;
+    }
+    const CardCandidate picked = finder_->selectedCandidate();
+    try {
+        copies_.linkCatalogCard(copy_.id, picked.id);
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, tr("Pokedex TCG"),
+                             tr("Could not link the card:\n%1").arg(QString::fromUtf8(e.what())));
+        return;
+    }
+    copy_.externalCardId = picked.id;
+    // Re-point the prices panel at the freshly-linked card; it shows the "Fetch prices"
+    // button now that there is an id to look up (still on-demand — no auto-fetch).
+    prices_->showCard(QString::fromStdString(copy_.externalCardId));
+    showToast(this, tr("Linked — you can now fetch this card's prices below."));
 }
 
 void EditCardCopyPage::uploadPhoto() {

@@ -43,11 +43,6 @@ public:
     // When we last fetched this card from the API, or nullopt if never — no network.
     std::optional<Timestamp> fetchedAt(const QString& externalCardId);
 
-    // Whether a fresh fetch is warranted (never fetched, or older than the TTL) — no
-    // network. A view uses it only as a hint (e.g. to label a Refresh button); it
-    // never triggers a fetch on its own.
-    bool needsRefresh(const QString& externalCardId);
-
     // Fetch this card's prices from the per-card endpoint, persist them (replacing the
     // API-sourced rows, keeping manual ones), and emit pricesReady(id). A blank id is
     // ignored (an unlinked copy). When `force` is false and the cache is still fresh,

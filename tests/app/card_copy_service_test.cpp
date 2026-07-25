@@ -85,6 +85,31 @@ TEST(CardCopyServiceTest, CreateWithoutAnExternalCardIdIsUnlinked) {
     EXPECT_EQ(f.repo.find("copy-1")->externalCardId, "");
 }
 
+// linkCatalogCard attaches/replaces the catalog link after the fact (trimmed), bumps
+// updatedAt, and is allowed even on a Removed copy (a link is benign reference data).
+TEST(CardCopyServiceTest, LinkCatalogCardAttachesReplacesAndClearsTheLink) {
+    Fixture f;
+    f.service.create(6, ref(), CardOwnership::Owned, std::nullopt, std::nullopt, std::nullopt,
+                     std::nullopt, "");  // starts unlinked
+    ASSERT_EQ(f.repo.find("copy-1")->externalCardId, "");
+
+    f.now = at("2026-07-17T10:00:00Z");
+    f.service.linkCatalogCard("copy-1", "  sv3-125  ");
+    EXPECT_EQ(f.repo.find("copy-1")->externalCardId, "sv3-125");  // trimmed
+    EXPECT_EQ(f.repo.find("copy-1")->updatedAt, f.now);           // bumped
+
+    // Re-linking replaces it; a removed copy can still be linked.
+    f.service.remove("copy-1");
+    f.service.linkCatalogCard("copy-1", "base1-4");
+    EXPECT_EQ(f.repo.find("copy-1")->externalCardId, "base1-4");
+
+    // "" clears the link.
+    f.service.linkCatalogCard("copy-1", "");
+    EXPECT_EQ(f.repo.find("copy-1")->externalCardId, "");
+
+    EXPECT_THROW(f.service.linkCatalogCard("nope", "x"), CardCopyError);
+}
+
 TEST(CardCopyServiceTest, CreateAcceptsASpeciesFreeCard) {
     Fixture f;
     // A Trainer/Energy card: no dex number, but a card name carried on the reference.

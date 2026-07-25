@@ -42,10 +42,6 @@ std::optional<Timestamp> CardPriceLookupService::fetchedAt(const QString& extern
     return prices_.fetchedAt(externalCardId.toStdString());
 }
 
-bool CardPriceLookupService::needsRefresh(const QString& externalCardId) {
-    return prices_.needsRefresh(externalCardId.toStdString(), kPriceTtl);
-}
-
 void CardPriceLookupService::fetch(const QString& externalCardId, bool force) {
     if (externalCardId.isEmpty()) {
         return;  // an unlinked copy has nothing to fetch

@@ -15,6 +15,7 @@
 #include "core/storage/codecs.h"
 #include "gui/services/card_price_lookup_service.h"
 #include "gui/views/price_labels.h"
+#include "gui/views/sortable_table.h"
 
 namespace pokedex {
 
@@ -60,6 +61,13 @@ CardPricesPanel::CardPricesPanel(CardPriceLookupService& lookup, QWidget* parent
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table_->setSelectionMode(QAbstractItemView::NoSelection);
     table_->setVisible(false);
+    // Header-click sorting (the repo convention for every table): a click reorders the
+    // cached rows_ in memory and refills — never Qt's setSortingEnabled.
+    installHeaderSort(table_, [this](int column, Qt::SortOrder order) {
+        sortColumn_ = column;
+        sortOrder_ = order;
+        repopulateTable();
+    });
 
     layout->addWidget(headline_);
     layout->addWidget(status_);
@@ -103,6 +111,7 @@ void CardPricesPanel::render() {
     }
 
     if (externalCardId_.isEmpty()) {
+        rows_.clear();
         headline_->hide();
         status_->setText(QStringLiteral("Not linked to a catalog card, so prices can't be looked "
                                         "up. Cards added from the card finder are linked."));
@@ -113,11 +122,11 @@ void CardPricesPanel::render() {
         return;
     }
 
-    const std::vector<CardPrice> prices = lookup_.cached(externalCardId_);
+    rows_ = lookup_.cached(externalCardId_);
     fetchButton_->show();
     fetchButton_->setEnabled(true);
 
-    if (prices.empty()) {
+    if (rows_.empty()) {
         headline_->hide();
         toggle_->hide();
         table_->hide();
@@ -132,13 +141,13 @@ void CardPricesPanel::render() {
         return;
     }
 
-    const QString headline = priceHeadline(prices);
+    const QString headline = priceHeadline(rows_);
     headline_->setText(headline.isEmpty() ? QStringLiteral("Market prices") : headline);
     headline_->show();
 
     // "as of" is the newest vendor date across the rows; also show when WE fetched.
-    Timestamp newest = prices.front().observedAt;
-    for (const CardPrice& p : prices) {
+    Timestamp newest = rows_.front().observedAt;
+    for (const CardPrice& p : rows_) {
         newest = std::max(newest, p.observedAt);
     }
     QString status = QStringLiteral("as of %1").arg(dateOf(newest));
@@ -149,9 +158,38 @@ void CardPricesPanel::render() {
     status_->show();
     fetchButton_->setText(QStringLiteral("Refresh"));
 
-    table_->setRowCount(static_cast<int>(prices.size()));
-    for (int row = 0; row < static_cast<int>(prices.size()); ++row) {
-        const CardPrice& p = prices[static_cast<std::size_t>(row)];
+    repopulateTable();
+    toggle_->show();
+    table_->setVisible(toggle_->isChecked());
+}
+
+void CardPricesPanel::repopulateTable() {
+    // A header click is a pure in-memory reorder of rows_ (never Qt's row sorting) —
+    // sortColumn_ < 0 keeps the natural (provenance, variant, metric) load order.
+    applyColumnSort(rows_, sortColumn_, sortOrder_,
+                    [](const CardPrice& a, const CardPrice& b, int col) -> int {
+                        switch (col) {
+                            case 0:
+                                return QString::fromStdString(a.provenance)
+                                    .localeAwareCompare(QString::fromStdString(b.provenance));
+                            case 1:
+                                return QString::fromStdString(a.variant)
+                                    .localeAwareCompare(QString::fromStdString(b.variant));
+                            case 2:
+                                return QString::fromStdString(a.metric)
+                                    .localeAwareCompare(QString::fromStdString(b.metric));
+                            case 3:
+                                return compareValues(a.amountCents, b.amountCents);
+                            case 4:
+                                return compareValues(a.observedAt, b.observedAt);
+                            default:
+                                return 0;
+                        }
+                    });
+
+    table_->setRowCount(static_cast<int>(rows_.size()));
+    for (int row = 0; row < static_cast<int>(rows_.size()); ++row) {
+        const CardPrice& p = rows_[static_cast<std::size_t>(row)];
         table_->setItem(row, 0, new QTableWidgetItem(QString::fromStdString(p.provenance)));
         table_->setItem(row, 1, new QTableWidgetItem(QString::fromStdString(p.variant)));
         table_->setItem(row, 2, new QTableWidgetItem(QString::fromStdString(p.metric)));
@@ -159,8 +197,6 @@ void CardPricesPanel::render() {
         table_->setItem(row, 4, new QTableWidgetItem(dateOf(p.observedAt)));
     }
     table_->resizeColumnsToContents();
-    toggle_->show();
-    table_->setVisible(toggle_->isChecked());
 }
 
 void CardPricesPanel::onFetchClicked() {

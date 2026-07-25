@@ -70,7 +70,9 @@ also external reference data, keyed by the pokemontcg.io card id and independent
 any `card_copy`, see the `CardPriceCache` note below; v8 added
 `card_copy.external_card_id`, the link from an owned copy to its catalog card [blank =
 unlinked] so the copy's prices can be looked up — set when a copy is added from the
-finder),
+finder, or attached later via the Edit page's "Link prices to this card"
+[`CardCopyService::linkCatalogCard`, the after-the-fact linker for copies that predate
+the link]),
 so a fresh DB runs the whole chain and an existing one
 only the tail — bump `kSchemaVersion` and add a step (never edit `kSchemaV1`) when
 the schema changes. `storage/` holds
@@ -129,7 +131,10 @@ prices via `resolveCardById` and persists them through `recordApiPrices`. It is 
 hits the API. The reusable `gui/views/CardPricesPanel` (keyed by a copy's
 `external_card_id`) renders the states [unlinked / linked-unfetched / has-prices
 (headline + "as of/fetched" line + expandable full table) / fetched-empty]; it appears on
-the Edit page and the My Cards detail. Prices ride along for free while **browsing**:
+the Edit page and the My Cards detail. An unlinked copy (added before the link existed, or
+by hand) gets a link from the Edit page: pick the matching printing in the finder and press
+"Link prices to this card" (persists immediately via `linkCatalogCard`, independent of the
+details Save), after which the panel offers the Fetch button. Prices ride along for free while **browsing**:
 `parseCardSearchResponse` extracts the same tcgplayer/cardmarket blocks the search payload
 already carries into `CardCandidate.prices` (display-only, never persisted), and
 `CardFinderPanel` shows a subtle headline under the preview — no extra HTTP for a card the

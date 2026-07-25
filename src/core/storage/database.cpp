@@ -196,9 +196,13 @@ void Database::transaction(const std::function<void()>& body) {
     exec("BEGIN;");
     try {
         body();
+        // COMMIT is inside the try so that a failing COMMIT (e.g. SQLITE_BUSY from a
+        // concurrent holder, or disk-full) also runs the ROLLBACK below — otherwise the
+        // BEGIN transaction would stay open on the connection and poison later writes.
+        exec("COMMIT;");
     } catch (...) {
-        // Best-effort rollback so a failed body leaves no half-applied write; the
-        // rollback's own failure must not mask the original error.
+        // Best-effort rollback so a failed body OR commit leaves no half-applied write
+        // and a clean connection; the rollback's own failure must not mask the original.
         try {
             exec("ROLLBACK;");
         } catch (...) {
@@ -206,7 +210,6 @@ void Database::transaction(const std::function<void()>& body) {
         }
         throw;
     }
-    exec("COMMIT;");
 }
 
 void Database::migrate() {
