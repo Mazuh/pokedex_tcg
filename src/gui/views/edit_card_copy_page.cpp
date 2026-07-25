@@ -149,8 +149,16 @@ EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardPriceLookupSer
     // Keyed by the copy's external catalog id; unlinked copies show a hint instead.
     // Strictly on-demand — the panel renders cached prices and only fetches when the
     // user clicks its button, so opening the edit page never hits the price API.
-    prices_ = new CardPricesPanel(priceLookup, this);
-    prices_->showCard(QString::fromStdString(copy_.externalCardId));
+    prices_ = new CardPricesPanel(priceLookup, search, copies, this);
+    prices_->showCopy(copy_);
+    // If the Fetch button auto-resolves this copy's catalog link, keep our copy_ in sync
+    // so a later save/refresh (and the manual-link button's enablement) sees it linked.
+    connect(prices_, &CardPricesPanel::cardLinked, this,
+            [this](const QString& copyId, const QString& externalCardId) {
+                if (copyId.toStdString() == copy_.id) {
+                    copy_.externalCardId = externalCardId.toStdString();
+                }
+            });
 
     // --- Assemble -----------------------------------------------------------
     auto* layout = new QVBoxLayout(this);
@@ -281,7 +289,7 @@ void EditCardCopyPage::linkFromFinder() {
     copy_.externalCardId = picked.id;
     // Re-point the prices panel at the freshly-linked card; it shows the "Fetch prices"
     // button now that there is an id to look up (still on-demand — no auto-fetch).
-    prices_->showCard(QString::fromStdString(copy_.externalCardId));
+    prices_->showCopy(copy_);
     showToast(this, tr("Linked — you can now fetch this card's prices below."));
 }
 
