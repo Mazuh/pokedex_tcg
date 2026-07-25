@@ -181,15 +181,33 @@ void Database::setUserVersion(int version) {
     exec("PRAGMA user_version = " + std::to_string(version) + ";");
 }
 
+void Database::transaction(const std::function<void()>& body) {
+    exec("BEGIN;");
+    try {
+        body();
+    } catch (...) {
+        // Best-effort rollback so a failed body leaves no half-applied write; the
+        // rollback's own failure must not mask the original error.
+        try {
+            exec("ROLLBACK;");
+        } catch (...) {
+            // The transaction is already doomed; surface the original failure.
+        }
+        throw;
+    }
+    exec("COMMIT;");
+}
+
 void Database::migrate() {
     const int from = userVersion();
     if (from >= kSchemaVersion) {
         return;
     }
     // Apply each step whose target version is newer than the file's, in order, so a
-    // fresh database (v0) runs the whole chain and an existing one only the tail.
-    exec("BEGIN;");
-    try {
+    // fresh database (v0) runs the whole chain and an existing one only the tail. The
+    // whole chain runs in one transaction so a failed migration leaves no half-built
+    // schema.
+    transaction([&] {
         if (from < 1) {
             exec(kSchemaV1);
         }
@@ -212,12 +230,7 @@ void Database::migrate() {
             exec(kMigrationV7);
         }
         setUserVersion(kSchemaVersion);
-        exec("COMMIT;");
-    } catch (...) {
-        // Best-effort rollback so a failed migration leaves no half-built schema.
-        sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
-        throw;
-    }
+    });
 }
 
 }  // namespace pokedex

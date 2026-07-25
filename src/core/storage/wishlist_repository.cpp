@@ -7,12 +7,10 @@
 namespace pokedex {
 
 void WishlistRepository::save(const Wishlist& wishlist) {
-    // The parent row and its source rows are one logical unit spread across
-    // several statements, so they run in a transaction. Without it, a failure
-    // mid-sequence could leave a committed parent with a stale source set. Mirror
-    // migrate()'s best-effort ROLLBACK on failure.
-    db_.exec("BEGIN;");
-    try {
+    // The parent row and its source rows are one logical unit spread across several
+    // statements, so they run in a transaction. Without it, a failure mid-sequence
+    // could leave a committed parent with a stale source set.
+    db_.transaction([&] {
         // Upsert the parent: a brand-new species takes the caller's insertedAt;
         // an existing one keeps its original insertedAt and only bumps updatedAt.
         Statement row(db_,
@@ -38,15 +36,7 @@ void WishlistRepository::save(const Wishlist& wishlist) {
             src.bindText(2, source);
             src.step();
         }
-    } catch (...) {
-        try {
-            db_.exec("ROLLBACK;");
-        } catch (...) {
-            // The transaction is already doomed; surface the original failure.
-        }
-        throw;
-    }
-    db_.exec("COMMIT;");
+    });
 }
 
 std::optional<Wishlist> WishlistRepository::find(PokemonDexNum pokemonDexNum) {

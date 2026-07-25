@@ -64,11 +64,9 @@ void CardPriceCache::storeApiPrices(const std::string& cardKey,
                                     const std::vector<CardPrice>& prices,
                                     Timestamp fetchedAt) {
     // The row replacement and its fetch stamp are one logical unit across several
-    // statements, so they run in a transaction with a best-effort ROLLBACK —
-    // mirroring CardSetCache::store and migrate(). A mid-write failure must not
-    // leave rows that disagree with the recorded fetch time.
-    db_.exec("BEGIN;");
-    try {
+    // statements, so they run in a transaction. A mid-write failure must not leave
+    // rows that disagree with the recorded fetch time.
+    db_.transaction([&] {
         // Drop only this card's API-sourced rows; manual rows survive a refetch.
         Statement clear(db_,
                         "DELETE FROM card_price WHERE card_key = ? AND provenance != ?;");
@@ -86,15 +84,7 @@ void CardPriceCache::storeApiPrices(const std::string& cardKey,
         meta.bindText(1, cardKey);
         meta.bindText(2, timestampToIso(fetchedAt));
         meta.step();
-    } catch (...) {
-        try {
-            db_.exec("ROLLBACK;");
-        } catch (...) {
-            // The transaction is already doomed; surface the original failure.
-        }
-        throw;
-    }
-    db_.exec("COMMIT;");
+    });
 }
 
 void CardPriceCache::add(const CardPrice& price) { insertPrice(db_, price); }

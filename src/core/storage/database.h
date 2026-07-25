@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
 #include <stdexcept>
 #include <string>
 
@@ -31,6 +32,8 @@ public:
     //   v5 — card_copy.foil (the card's foil treatment / finish; optional).
     //   v6 — card_set_cache + cache_meta (a TTL'd local cache of the external
     //        /v2/sets table; reference data, not collection source-of-truth).
+    //   v7 — card_price + card_price_fetch (on-demand cache of a card's market
+    //        prices, keyed by external card id; also reference data).
     static constexpr int kSchemaVersion = 7;
 
     // Open (creating if absent) the database at `path`, or an in-memory database
@@ -45,6 +48,13 @@ public:
 
     // Execute one or more statements that yield no rows (DDL, PRAGMA writes).
     void exec(const std::string& sql);
+
+    // Run `body` inside a BEGIN/COMMIT transaction, rolling back (best-effort) and
+    // re-throwing if it throws. The single home for the multi-statement-write guard
+    // that every repository needs — a mid-sequence failure must never leave a
+    // committed partial write. Not reentrant (SQLite has no nested transactions):
+    // never call from inside another transaction() body.
+    void transaction(const std::function<void()>& body);
 
     // PRAGMA user_version accessors — the schema version stamped in the file.
     int userVersion();

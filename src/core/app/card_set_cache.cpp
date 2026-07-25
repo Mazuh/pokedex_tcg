@@ -38,11 +38,9 @@ std::optional<Timestamp> CardSetCache::fetchedAt() {
 
 void CardSetCache::store(const std::vector<CardSetInfo>& sets, Timestamp fetchedAt) {
     // The row replacement and its timestamp are one logical unit spread across
-    // several statements, so they run in a transaction with a best-effort ROLLBACK
-    // — mirroring WishlistRepository::save and migrate(). Otherwise a mid-write
-    // failure could leave rows that disagree with the recorded fetch time.
-    db_.exec("BEGIN;");
-    try {
+    // several statements, so they run in a transaction. Otherwise a mid-write failure
+    // could leave rows that disagree with the recorded fetch time.
+    db_.transaction([&] {
         Statement clear(db_, "DELETE FROM card_set_cache;");
         clear.step();
 
@@ -63,15 +61,7 @@ void CardSetCache::store(const std::vector<CardSetInfo>& sets, Timestamp fetched
         meta.bindText(1, kFetchedAtKey);
         meta.bindText(2, timestampToIso(fetchedAt));
         meta.step();
-    } catch (...) {
-        try {
-            db_.exec("ROLLBACK;");
-        } catch (...) {
-            // The transaction is already doomed; surface the original failure.
-        }
-        throw;
-    }
-    db_.exec("COMMIT;");
+    });
 }
 
 }  // namespace pokedex

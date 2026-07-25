@@ -274,6 +274,19 @@ TEST(ParseCardPricesTest, ExtractsCardmarketAsFlatEurRows) {
     EXPECT_EQ(findPrice(prices, "cardmarket", "", "averageSellPrice").amountCents, 153100);
 }
 
+TEST(ParseCardPricesTest, ReadsTheDatePrefixEvenWithATrailingTimeComponent) {
+    // Defensive against a future format change: only the leading YYYY/MM/DD is read,
+    // so a trailing time still yields the real date rather than the fetch-time fallback.
+    constexpr const char* json = R"json({
+      "data": {"id": "sv3-125",
+               "tcgplayer": {"updatedAt": "2026/07/20 08:30:15",
+                             "prices": {"normal": {"market": 1.0}}}}
+    })json";
+    const std::vector<CardPrice> prices = parseCardPrices(json, at("2000-01-01T00:00:00Z"));
+    ASSERT_EQ(prices.size(), 1u);
+    EXPECT_EQ(prices[0].observedAt, at("2026-07-20T00:00:00Z"));
+}
+
 TEST(ParseCardPricesTest, FallsBackToGivenTimestampWhenVendorDateMissing) {
     constexpr const char* json = R"json({
       "data": {"id": "sv3-125",

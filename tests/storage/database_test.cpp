@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <stdexcept>
+
 #include "core/storage/database.h"
 #include "core/storage/statement.h"
 
@@ -95,6 +97,36 @@ TEST(DatabaseTest, TablesAcceptRowsAfterMigration) {
         " VALUES(1,'2026-07-14T00:00:00Z','2026-07-14T00:00:00Z');"));
     EXPECT_NO_THROW(db.exec(
         "INSERT INTO wishlist_source(pokemon_dex_num,source) VALUES(1,'https://example.test');"));
+}
+
+// transaction() commits the body's writes on success.
+TEST(DatabaseTest, TransactionCommitsOnSuccess) {
+    Database db(":memory:");
+    db.exec("CREATE TABLE t(id INTEGER PRIMARY KEY);");
+    db.transaction([&] {
+        db.exec("INSERT INTO t(id) VALUES(1);");
+        db.exec("INSERT INTO t(id) VALUES(2);");
+    });
+    Statement count(db, "SELECT COUNT(*) FROM t;");
+    ASSERT_TRUE(count.step());
+    EXPECT_EQ(count.columnInt(0), 2);
+}
+
+// A throwing body rolls the whole transaction back (no partial write) and re-throws.
+TEST(DatabaseTest, TransactionRollsBackAndRethrowsOnFailure) {
+    Database db(":memory:");
+    db.exec("CREATE TABLE t(id INTEGER PRIMARY KEY);");
+    EXPECT_THROW(db.transaction([&] {
+        db.exec("INSERT INTO t(id) VALUES(1);");
+        throw std::runtime_error("boom");  // abandon mid-transaction
+    }),
+                 std::runtime_error);
+    // The first insert must NOT have committed, and the connection must be usable
+    // (the transaction was rolled back, not left open).
+    Statement count(db, "SELECT COUNT(*) FROM t;");
+    ASSERT_TRUE(count.step());
+    EXPECT_EQ(count.columnInt(0), 0);
+    EXPECT_NO_THROW(db.exec("INSERT INTO t(id) VALUES(9);"));
 }
 
 // A card_copy pointing at a missing binder must be rejected — this confirms both

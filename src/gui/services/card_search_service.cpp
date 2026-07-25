@@ -12,6 +12,7 @@
 
 #include <chrono>
 
+#include "core/app/cache_ttl.h"
 #include "core/app/card_catalog_api.h"
 #include "core/app/card_catalog_parse.h"
 #include "core/app/card_set_cache.h"
@@ -155,14 +156,11 @@ bool CardSearchService::loadSetsFromCache(bool requireFresh) {
         if (!fetchedAt) {
             return false;  // never fetched
         }
-        if (requireFresh) {
-            const auto age = std::chrono::system_clock::now() - *fetchedAt;
-            // Treat a future stamp as stale too: a clock that was ahead at write time
-            // and later corrected backwards yields a negative age, which would read as
-            // "fresh forever" and never re-fetch. Age must be within [0, TTL).
-            if (age < std::chrono::system_clock::duration::zero() || age >= kSetCacheTtl) {
-                return false;  // stale (or future) — the caller will re-fetch
-            }
+        // The startup fast-path demands a fresh cache (within kSetCacheTtl, and not
+        // future-dated — see cacheIsFresh); the post-failure fallback accepts any age.
+        if (requireFresh &&
+            !cacheIsFresh(*fetchedAt, std::chrono::system_clock::now(), kSetCacheTtl)) {
+            return false;  // stale (or future) — the caller will re-fetch
         }
         std::vector<CardSetInfo> cached = cache_->load();
         if (cached.empty()) {

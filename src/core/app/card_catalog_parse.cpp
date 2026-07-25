@@ -95,11 +95,13 @@ const json* cardNode(const json& root) {
 }
 
 // A vendor block's printed update date ("YYYY/MM/DD") as a midnight-UTC Timestamp,
-// or nullopt when the field is absent or malformed. Kept clock-free (chrono
-// calendar math only) so the parser stays pure and testable.
+// or nullopt when the field is absent or malformed. Only the leading 10 chars are
+// read, so a value that ever carries a trailing time component ("YYYY/MM/DD hh:mm")
+// still yields the correct date rather than silently falling back. Kept clock-free
+// (chrono calendar math only) so the parser stays pure and testable.
 std::optional<Timestamp> vendorUpdatedAt(const json& block) {
     const std::string d = strField(block, "updatedAt");
-    if (d.size() != 10 || d[4] != '/' || d[7] != '/') {
+    if (d.size() < 10 || d[4] != '/' || d[7] != '/') {
         return std::nullopt;
     }
     for (const int i : {0, 1, 2, 3, 5, 6, 8, 9}) {

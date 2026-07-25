@@ -2,6 +2,7 @@
 
 #include <utility>
 
+#include "core/app/cache_ttl.h"
 #include "core/app/card_catalog_parse.h"
 #include "core/app/card_price_cache.h"
 #include "core/app/uuid.h"
@@ -29,18 +30,11 @@ std::optional<Timestamp> CardPriceService::fetchedAt(const std::string& cardKey)
 }
 
 bool CardPriceService::needsRefresh(const std::string& cardKey, std::chrono::seconds ttl) {
+    // Refresh when never fetched, expired, or the stamp is in the future (a clock
+    // moved backward) — the shared cacheIsFresh rule handles the last two, including
+    // the backward-clock guard the set cache uses too.
     const std::optional<Timestamp> last = cache_.fetchedAt(cardKey);
-    if (!last) {
-        return true;
-    }
-    // A stamp in the future (the clock moved backward since the fetch) reads as a
-    // negative age, which would otherwise look "fresh forever" — treat it as stale
-    // and refetch, mirroring the set cache's backward-clock guard.
-    const Timestamp::duration age = clock_() - *last;
-    if (age < Timestamp::duration::zero()) {
-        return true;
-    }
-    return age >= ttl;
+    return !last || !cacheIsFresh(*last, clock_(), ttl);
 }
 
 std::vector<CardPrice> CardPriceService::recordApiPrices(const std::string& cardKey,
