@@ -37,12 +37,14 @@ namespace pokedex {
 
 BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
                        WishlistService& wishlist, MediaService& media,
-                       CardSearchService& cardSearch, CardCopyService& cardCopies,
-                       CardImageStore& cardImages, BinderService& binders, QWidget* parent)
+                       CardSearchService& cardSearch, CardPriceLookupService& priceLookup,
+                       CardCopyService& cardCopies, CardImageStore& cardImages,
+                       BinderService& binders, QWidget* parent)
     : QWidget(parent),
       guide_(guide),
       binder_(binder),
       cardSearch_(cardSearch),
+      priceLookup_(priceLookup),
       cardCopies_(cardCopies),
       cardImages_(cardImages),
       binders_(binders) {
@@ -327,7 +329,8 @@ void BinderView::openAddCopy(int dexNumber, const QString& name) {
 }
 
 void BinderView::openEditCopy(const QString& copyId) {
-    openEditCopyFromBuckets(stack_, cardSearch_, cardImages_, cardCopies_, ownedHere_, shownDex_,
+    openEditCopyFromBuckets(stack_, cardSearch_, priceLookup_, cardImages_, cardCopies_,
+                            ownedHere_, shownDex_,
                             copyId, binders_.list(), [this, copyId]() {
                                 // Capture the shown species before refresh(), which may
                                 // clear shownDex_. An edit can change the guide (a comment, a

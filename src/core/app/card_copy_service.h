@@ -42,13 +42,16 @@ public:
     // card's printed identity and is required — a blank one throws CardCopyError;
     // the reference fields are trimmed. `pokemonDexNum` is optional: pass nullopt
     // for a card that depicts no species (a Trainer or Energy card). `rarity` and
-    // `foil` are the card's optional rarity classification and foil treatment. Both
-    // audit stamps are set to now(). Returns the persisted copy with its freshly
-    // minted id.
+    // `foil` are the card's optional rarity classification and foil treatment.
+    // `externalCardId` links the copy to its external catalog card (a pokemontcg.io
+    // id) so its prices can be looked up; pass "" when the copy is not linked (a
+    // hand-entered card, or one added without picking from the finder). Both audit
+    // stamps are set to now(). Returns the persisted copy with its freshly minted id.
     CardCopy create(std::optional<PokemonDexNum> pokemonDexNum, CardReference cardRef,
                     CardOwnership ownership, std::optional<CardCondition> condition,
                     std::optional<CardRarity> rarity, std::optional<CardFoil> foil,
-                    std::optional<CardBinderId> binderId, std::string comments);
+                    std::optional<CardBinderId> binderId, std::string comments,
+                    std::string externalCardId = "");
 
     // Edit a copy's mutable details — its printed reference (the copy's language is
     // the field the edit surface actually changes; the printing identity is otherwise

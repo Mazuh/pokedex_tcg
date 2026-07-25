@@ -43,6 +43,10 @@ struct CardCopy {
                                            // clearing it never affects the copy
     std::string comments;                  // multiline free text: capture story,
                                            // price, seller, imperfections, dates…
+    std::string externalCardId;            // link to the external catalog card (a
+                                           // pokemontcg.io id like "sv3-125") so this
+                                           // copy's market prices can be looked up;
+                                           // empty when the copy is not linked
     Timestamp insertedAt;                  // UTC, set by app
     Timestamp updatedAt;                   // UTC, set by app
 };

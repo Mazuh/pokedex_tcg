@@ -144,6 +144,8 @@ private:
     // Preview of the currently-selected card.
     QVBoxLayout* previewLayout_;  // holds preview_; a host may append a footer action
     QLabel* preview_;
+    QLabel* priceHint_;  // subtle market-price line under the preview (from the search
+                         // payload's embedded prices — no extra fetch); empty = hidden
     QPixmap previewPixmap_;      // full-res selected-card image; rescaled on resize
     QString previewCardId_;      // the thumbnail key we're awaiting for the preview
     int selectedIndex_ = -1;     // index into candidates_ of the picked card, or -1

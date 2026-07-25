@@ -12,6 +12,7 @@ class PokemonBrowseService;
 class WishlistService;
 class MediaService;
 class CardSearchService;
+class CardPriceLookupService;
 class CardCopyService;
 class CardImageStore;
 
@@ -32,8 +33,9 @@ public:
     MainWindow(BinderService& binderService, BinderGuideService& guide,
                PokemonBrowseService& browse, WishlistService& wishlist,
                MediaService& media, CardSearchService& cardSearch,
-               CardCopyService& cardCopies, CardImageStore& cardImages,
-               const QString& collectionPath, QWidget* parent = nullptr);
+               CardPriceLookupService& priceLookup, CardCopyService& cardCopies,
+               CardImageStore& cardImages, const QString& collectionPath,
+               QWidget* parent = nullptr);
 
 private:
     QStackedWidget* sections_;

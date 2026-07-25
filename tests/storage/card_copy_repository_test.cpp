@@ -116,6 +116,29 @@ TEST(CardCopyRepositoryTest, SpeciesFreeCopyIsIgnoredByOwnedElsewhere) {
     EXPECT_TRUE(repo.ownedCountsByDexNum().find(0) == repo.ownedCountsByDexNum().end());
 }
 
+// external_card_id (v8) links a copy to its catalog card. It round-trips, defaults
+// to empty (unlinked), and an update can set/change it.
+TEST(CardCopyRepositoryTest, ExternalCardIdRoundTripsAndUpdates) {
+    Database db(":memory:");
+    db.migrate();
+    CardCopyRepository repo(db);
+
+    CardCopy linked = makeCopy("c1", 6, CardOwnership::Owned, std::nullopt);
+    linked.externalCardId = "sv3-125";
+    repo.add(linked);
+    EXPECT_EQ(repo.find("c1")->externalCardId, "sv3-125");
+
+    // A copy that never set one is unlinked (empty).
+    repo.add(makeCopy("c2", 6, CardOwnership::Owned, std::nullopt));
+    EXPECT_EQ(repo.find("c2")->externalCardId, "");
+
+    // update() can attach/replace the link (e.g. linking a previously-unlinked copy).
+    CardCopy edited = *repo.find("c2");
+    edited.externalCardId = "base1-4";
+    repo.update(edited);
+    EXPECT_EQ(repo.find("c2")->externalCardId, "base1-4");
+}
+
 TEST(CardCopyRepositoryTest, UngradedConditionRoundTripsAsNullopt) {
     Database db(":memory:");
     db.migrate();

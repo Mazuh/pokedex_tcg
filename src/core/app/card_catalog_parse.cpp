@@ -133,6 +133,63 @@ std::optional<long long> priceCents(const json& value) {
     return cents;
 }
 
+// Extract every price observation from one card object — its `tcgplayer` (USD,
+// nested by variant) and `cardmarket` (EUR, flat) blocks — keyed by the card's own
+// id. Shared by parseCardPrices (the per-card endpoint) and parseCardSearchResponse
+// (the search endpoint embeds the same blocks, so a browse gets prices for free).
+// Non-positive/zero-rounding metrics are skipped as noise; a vendor block without a
+// printed date uses `fallbackObservedAt`. Rows carry an empty `id` (minted on persist).
+std::vector<CardPrice> extractCardPrices(const json& card, Timestamp fallbackObservedAt) {
+    std::vector<CardPrice> prices;
+    const std::string externalCardId = strField(card, "id");
+
+    // tcgplayer (USD): prices are nested one level by variant ("holofoil",
+    // "normal"…), each variant an object of named metrics (low/mid/high/market…).
+    if (const auto tcg = card.find("tcgplayer"); tcg != card.end() && tcg->is_object()) {
+        const Timestamp observed = vendorUpdatedAt(*tcg).value_or(fallbackObservedAt);
+        if (const auto pricesObj = tcg->find("prices");
+            pricesObj != tcg->end() && pricesObj->is_object()) {
+            for (const auto& [variant, metrics] : pricesObj->items()) {
+                if (!metrics.is_object()) {
+                    continue;
+                }
+                for (const auto& [metric, value] : metrics.items()) {
+                    if (const auto cents = priceCents(value)) {
+                        prices.push_back(CardPrice{.externalCardId = externalCardId,
+                                                   .provenance = "tcgplayer",
+                                                   .variant = variant,
+                                                   .metric = metric,
+                                                   .amountCents = *cents,
+                                                   .currency = "USD",
+                                                   .observedAt = observed});
+                    }
+                }
+            }
+        }
+    }
+
+    // cardmarket (EUR): a single flat prices object, no per-variant split.
+    if (const auto cm = card.find("cardmarket"); cm != card.end() && cm->is_object()) {
+        const Timestamp observed = vendorUpdatedAt(*cm).value_or(fallbackObservedAt);
+        if (const auto pricesObj = cm->find("prices");
+            pricesObj != cm->end() && pricesObj->is_object()) {
+            for (const auto& [metric, value] : pricesObj->items()) {
+                if (const auto cents = priceCents(value)) {
+                    prices.push_back(CardPrice{.externalCardId = externalCardId,
+                                               .provenance = "cardmarket",
+                                               .variant = "",
+                                               .metric = metric,
+                                               .amountCents = *cents,
+                                               .currency = "EUR",
+                                               .observedAt = observed});
+                }
+            }
+        }
+    }
+
+    return prices;
+}
+
 }  // namespace
 
 std::vector<CardSetInfo> parseSetsResponse(const std::string& jsonText) {
@@ -221,6 +278,13 @@ std::vector<CardCandidate> parseCardSearchResponse(const std::string& jsonText,
         // card (Trainer/Energy) it is the only human-readable title the copy keeps.
         c.cardRef.name = c.name;
 
+        // The search payload embeds the same price blocks as the per-card endpoint —
+        // extract them (display-only, never persisted) so the finder can show a price
+        // hint with no extra request. No "now" here (the parser is clock-free), so a
+        // vendor block missing its date falls back to the epoch; in practice the date
+        // is present and the finder shows amounts, not the fallback.
+        c.prices = extractCardPrices(card, Timestamp{});
+
         candidates.push_back(std::move(c));
     }
     return candidates;
@@ -229,60 +293,11 @@ std::vector<CardCandidate> parseCardSearchResponse(const std::string& jsonText,
 std::vector<CardPrice> parseCardPrices(const std::string& jsonText,
                                        Timestamp fallbackObservedAt) {
     const json root = parseJson(jsonText);
-    std::vector<CardPrice> prices;
     const json* card = cardNode(root);
     if (card == nullptr) {
-        return prices;
+        return {};
     }
-    const std::string externalCardId = strField(*card, "id");
-
-    // tcgplayer (USD): prices are nested one level by variant ("holofoil",
-    // "normal"…), each variant an object of named metrics (low/mid/high/market…).
-    if (const auto tcg = card->find("tcgplayer");
-        tcg != card->end() && tcg->is_object()) {
-        const Timestamp observed = vendorUpdatedAt(*tcg).value_or(fallbackObservedAt);
-        if (const auto pricesObj = tcg->find("prices");
-            pricesObj != tcg->end() && pricesObj->is_object()) {
-            for (const auto& [variant, metrics] : pricesObj->items()) {
-                if (!metrics.is_object()) {
-                    continue;
-                }
-                for (const auto& [metric, value] : metrics.items()) {
-                    if (const auto cents = priceCents(value)) {
-                        prices.push_back(CardPrice{.externalCardId = externalCardId,
-                                                   .provenance = "tcgplayer",
-                                                   .variant = variant,
-                                                   .metric = metric,
-                                                   .amountCents = *cents,
-                                                   .currency = "USD",
-                                                   .observedAt = observed});
-                    }
-                }
-            }
-        }
-    }
-
-    // cardmarket (EUR): a single flat prices object, no per-variant split.
-    if (const auto cm = card->find("cardmarket");
-        cm != card->end() && cm->is_object()) {
-        const Timestamp observed = vendorUpdatedAt(*cm).value_or(fallbackObservedAt);
-        if (const auto pricesObj = cm->find("prices");
-            pricesObj != cm->end() && pricesObj->is_object()) {
-            for (const auto& [metric, value] : pricesObj->items()) {
-                if (const auto cents = priceCents(value)) {
-                    prices.push_back(CardPrice{.externalCardId = externalCardId,
-                                               .provenance = "cardmarket",
-                                               .variant = "",
-                                               .metric = metric,
-                                               .amountCents = *cents,
-                                               .currency = "EUR",
-                                               .observedAt = observed});
-                }
-            }
-        }
-    }
-
-    return prices;
+    return extractCardPrices(*card, fallbackObservedAt);
 }
 
 std::vector<std::string> resolveSetFilterToIds(const std::string& typed,

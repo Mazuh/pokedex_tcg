@@ -16,6 +16,7 @@
 #include "core/app/card_catalog_api.h"
 #include "core/app/card_catalog_parse.h"
 #include "core/app/card_set_cache.h"
+#include "gui/services/http_status.h"
 #include "gui/services/network_log.h"
 
 namespace pokedex {
@@ -50,45 +51,6 @@ std::int64_t monotonicNowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::steady_clock::now().time_since_epoch())
         .count();
-}
-
-// A transient failure worth retrying: any network-layer error, or an HTTP 429 /
-// 5xx / 404. 404 counts because pokemontcg.io intermittently returns spurious
-// 404s (and 504s) under load for perfectly valid queries — a search never has a
-// legitimate 404 (no results is a 200 with an empty list), and an immediate retry
-// typically succeeds. A 4xx other than 404 is a real client error we don't hammer.
-bool isTransient(QNetworkReply* reply) {
-    if (reply->error() == QNetworkReply::NoError) {
-        return false;
-    }
-    const QVariant status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
-    if (!status.isValid()) {
-        return true;  // no HTTP status → a network-layer error (timeout, DNS, reset)
-    }
-    const int code = status.toInt();
-    return code == 404 || code == 429 || code >= 500;
-}
-
-// A human-readable one-liner naming the HTTP status (and what it usually means for
-// this API), so the logs distinguish rate-limiting from the API just flaking.
-QString httpStatusNote(QNetworkReply* reply) {
-    const QVariant status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
-    if (!status.isValid()) {
-        return QStringLiteral("network error (no HTTP status)");
-    }
-    const int code = status.toInt();
-    QString meaning;
-    switch (code) {
-        case 404: meaning = QStringLiteral("spurious — API flaking, retryable"); break;
-        case 429: meaning = QStringLiteral("RATE LIMITED"); break;
-        case 500:
-        case 502:
-        case 503: meaning = QStringLiteral("server error"); break;
-        case 504: meaning = QStringLiteral("gateway timeout — API busy"); break;
-        default: meaning = (code >= 200 && code < 300) ? QStringLiteral("ok")
-                                                       : QStringLiteral("error");
-    }
-    return QStringLiteral("HTTP %1 (%2)").arg(code).arg(meaning);
 }
 
 }  // namespace
@@ -239,8 +201,7 @@ void CardSearchService::fetchSets(int retriesLeft) {
                 fallBackToCache();
             }
         } else if (isTransient(reply) && retriesLeft > 0) {
-            const int attempt = kMaxSearchRetries - retriesLeft;
-            const int delay = kBackoffBaseMs * (1 << attempt);
+            const int delay = backoffDelayMs(retriesLeft, kMaxSearchRetries, kBackoffBaseMs);
             qWarning().noquote() << "CardSearchService: set list" << httpStatusNote(reply)
                                  << "— retrying in" << delay << "ms (" << retriesLeft << "left)";
             QTimer::singleShot(delay, this, [this, retriesLeft]() { fetchSets(retriesLeft - 1); });
@@ -337,8 +298,8 @@ void CardSearchService::startCardFetch(int dexNumber, std::uint64_t generation,
                 // in-flight request whenever a second page searched.
                 if (reply->error() != QNetworkReply::NoError) {
                     if (isTransient(reply) && retriesLeft > 0) {
-                        const int attempt = kMaxSearchRetries - retriesLeft;
-                        const int delay = kBackoffBaseMs * (1 << attempt);  // 400, 800, 1600…
+                        const int delay =
+                            backoffDelayMs(retriesLeft, kMaxSearchRetries, kBackoffBaseMs);
                         qWarning().noquote()
                             << "CardSearchService: dex" << dexNumber << httpStatusNote(reply)
                             << "— retrying in" << delay << "ms (" << retriesLeft << "left)";

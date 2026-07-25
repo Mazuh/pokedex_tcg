@@ -9,6 +9,8 @@
 #include "core/app/binder_guide_service.h"
 #include "core/app/binder_service.h"
 #include "core/app/card_copy_service.h"
+#include "core/app/card_price_cache.h"
+#include "core/app/card_price_service.h"
 #include "core/app/card_set_cache.h"
 #include "core/app/install_service.h"
 #include "core/app/poke_api.h"
@@ -20,6 +22,7 @@
 #include "core/storage/database.h"
 #include "core/storage/wishlist_repository.h"
 #include "gui/services/card_image_store.h"
+#include "gui/services/card_price_lookup_service.h"
 #include "gui/services/card_search_service.h"
 #include "gui/services/media_service.h"
 #include "gui/views/first_run_dialog.h"
@@ -106,9 +109,16 @@ int main(int argc, char *argv[]) {
         pokedex::CardSetCache setCache(db);
         pokedex::CardSearchService cardSearch(cardApi, &setCache);
 
+        // On-demand card prices: the Qt-free cache/service persist in the workspace DB,
+        // the GUI transport fetches per card via the same pokemontcg.io adapter. Prices
+        // are fetched only when the user asks (a Fetch/Refresh button), never on view.
+        pokedex::CardPriceCache priceCache(db);
+        pokedex::CardPriceService cardPrices(priceCache);
+        pokedex::CardPriceLookupService priceLookup(cardApi, cardPrices);
+
         pokedex::MainWindow window(
-            service, guide, browse, wishlist, media, cardSearch, cardCopies, cardImages,
-            QString::fromStdString(workspace->root().string()));
+            service, guide, browse, wishlist, media, cardSearch, priceLookup, cardCopies,
+            cardImages, QString::fromStdString(workspace->root().string()));
         window.show();
 
         return app.exec();

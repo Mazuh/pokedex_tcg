@@ -9,12 +9,12 @@ namespace pokedex {
 namespace {
 
 // The column list shared by every SELECT, in the order readCopy() expects.
-// ref_set_name (v2), ref_name (v3), rarity (v4) then foil (v5) are appended last,
-// so the earlier indices are unchanged.
+// ref_set_name (v2), ref_name (v3), rarity (v4), foil (v5) then external_card_id
+// (v8) are appended last, so the earlier indices are unchanged.
 constexpr const char* kCopyColumns =
     "id, pokemon_dex_num, ref_expansion, ref_language, ref_collector, ownership,"
     " condition, binder_id, comments, inserted_at, updated_at, ref_set_name,"
-    " ref_name, rarity, foil";
+    " ref_name, rarity, foil, external_card_id";
 
 // A species-free copy (no dex number) is stored as 0 in the NOT NULL
 // pokemon_dex_num column — real national dex numbers start at 1, so 0 is an
@@ -26,7 +26,7 @@ constexpr PokemonDexNum kNoDexNum = 0;
 // Read a full CardCopy from a row whose columns are, in order:
 // id, pokemon_dex_num, ref_expansion, ref_language, ref_collector, ownership,
 // condition, binder_id, comments, inserted_at, updated_at, ref_set_name, ref_name,
-// rarity, foil.
+// rarity, foil, external_card_id.
 CardCopy readCopy(Statement& stmt) {
     CardCopy copy;
     copy.id = stmt.columnText(0);
@@ -49,6 +49,7 @@ CardCopy readCopy(Statement& stmt) {
     copy.cardRef.name = stmt.columnText(12);
     copy.rarity = rarityFromText(stmt.columnText(13));
     copy.foil = foilFromText(stmt.columnText(14));
+    copy.externalCardId = stmt.columnText(15);
     return copy;
 }
 
@@ -59,8 +60,8 @@ void CardCopyRepository::add(const CardCopy& copy) {
                    "INSERT INTO card_copy(id, pokemon_dex_num, ref_expansion,"
                    " ref_language, ref_collector, ownership, condition, binder_id,"
                    " comments, inserted_at, updated_at, ref_set_name, ref_name,"
-                   " rarity, foil)"
-                   " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);");
+                   " rarity, foil, external_card_id)"
+                   " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);");
     stmt.bindText(1, copy.id);
     stmt.bindInt(2, copy.pokemonDexNum.value_or(kNoDexNum));
     stmt.bindText(3, copy.cardRef.expansionCode);
@@ -80,6 +81,7 @@ void CardCopyRepository::add(const CardCopy& copy) {
     stmt.bindText(13, copy.cardRef.name);
     stmt.bindText(14, rarityToText(copy.rarity));
     stmt.bindText(15, foilToText(copy.foil));
+    stmt.bindText(16, copy.externalCardId);
     stmt.step();
 }
 
@@ -108,7 +110,7 @@ void CardCopyRepository::update(const CardCopy& copy) {
                    "UPDATE card_copy SET pokemon_dex_num = ?, ref_expansion = ?,"
                    " ref_language = ?, ref_collector = ?, ownership = ?, condition = ?,"
                    " binder_id = ?, comments = ?, updated_at = ?, ref_set_name = ?,"
-                   " ref_name = ?, rarity = ?, foil = ?"
+                   " ref_name = ?, rarity = ?, foil = ?, external_card_id = ?"
                    " WHERE id = ?;");
     stmt.bindInt(1, copy.pokemonDexNum.value_or(kNoDexNum));
     stmt.bindText(2, copy.cardRef.expansionCode);
@@ -127,7 +129,8 @@ void CardCopyRepository::update(const CardCopy& copy) {
     stmt.bindText(11, copy.cardRef.name);
     stmt.bindText(12, rarityToText(copy.rarity));
     stmt.bindText(13, foilToText(copy.foil));
-    stmt.bindText(14, copy.id);
+    stmt.bindText(14, copy.externalCardId);
+    stmt.bindText(15, copy.id);
     stmt.step();
     if (db_.changes() == 0) {
         throw StorageError("no card copy with id " + copy.id);

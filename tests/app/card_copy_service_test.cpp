@@ -61,6 +61,30 @@ TEST(CardCopyServiceTest, CreateMintsIdStampsAndPersists) {
     EXPECT_EQ(stored->comments, "bought at a con");
 }
 
+// create() persists the external catalog link (trimmed); editDetails, which does not
+// take the link, must preserve it across an edit (load-modify-write round-trip).
+TEST(CardCopyServiceTest, CreateStoresExternalCardIdAndEditPreservesIt) {
+    Fixture f;
+    const CardCopy copy =
+        f.service.create(6, ref(), CardOwnership::Owned, CardCondition::NearMint, std::nullopt,
+                         std::nullopt, std::nullopt, "", "  sv3-125  ");
+    EXPECT_EQ(copy.externalCardId, "sv3-125");  // trimmed
+    EXPECT_EQ(f.repo.find("copy-1")->externalCardId, "sv3-125");
+
+    // editDetails changes other fields but leaves the link intact.
+    f.service.editDetails("copy-1", ref(), CardOwnership::Owned, CardCondition::LightlyPlayed,
+                          std::nullopt, std::nullopt, "now lightly played");
+    EXPECT_EQ(f.repo.find("copy-1")->externalCardId, "sv3-125");
+}
+
+// A copy added without picking from the finder is unlinked (default-empty).
+TEST(CardCopyServiceTest, CreateWithoutAnExternalCardIdIsUnlinked) {
+    Fixture f;
+    f.service.create(6, ref(), CardOwnership::Owned, std::nullopt, std::nullopt, std::nullopt,
+                     std::nullopt, "");
+    EXPECT_EQ(f.repo.find("copy-1")->externalCardId, "");
+}
+
 TEST(CardCopyServiceTest, CreateAcceptsASpeciesFreeCard) {
     Fixture f;
     // A Trainer/Energy card: no dex number, but a card name carried on the reference.

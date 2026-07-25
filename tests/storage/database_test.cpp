@@ -45,11 +45,15 @@ TEST(DatabaseTest, UpgradesAnExistingV1DatabaseThroughTheChain) {
 
     db.migrate();
     EXPECT_EQ(db.userVersion(), Database::kSchemaVersion);
-    // The pre-existing row survives and gains a blank set name and card name.
-    Statement stmt(db, "SELECT ref_set_name, ref_name FROM card_copy WHERE id = 'c1';");
+    // The pre-existing row survives and gains a blank set name, card name, and
+    // (v8) external card id — the whole additive tail applies without data loss.
+    Statement stmt(db,
+                   "SELECT ref_set_name, ref_name, external_card_id FROM card_copy"
+                   " WHERE id = 'c1';");
     ASSERT_TRUE(stmt.step());
     EXPECT_EQ(stmt.columnText(0), "");
     EXPECT_EQ(stmt.columnText(1), "");
+    EXPECT_EQ(stmt.columnText(2), "");  // unlinked by default
 }
 
 // The v2 → v3 upgrade adds card_copy.ref_name to an existing v2 file (one that

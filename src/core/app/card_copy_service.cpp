@@ -22,7 +22,8 @@ CardCopyService::CardCopyService(CardCopyRepository& repo, Clock clock, IdGenera
 CardCopy CardCopyService::create(std::optional<PokemonDexNum> pokemonDexNum, CardReference cardRef,
                                  CardOwnership ownership, std::optional<CardCondition> condition,
                                  std::optional<CardRarity> rarity, std::optional<CardFoil> foil,
-                                 std::optional<CardBinderId> binderId, std::string comments) {
+                                 std::optional<CardBinderId> binderId, std::string comments,
+                                 std::string externalCardId) {
     cardRef.expansionCode = trim(cardRef.expansionCode);
     cardRef.language = trim(cardRef.language);
     cardRef.collectorNumber = trim(cardRef.collectorNumber);
@@ -43,6 +44,7 @@ CardCopy CardCopyService::create(std::optional<PokemonDexNum> pokemonDexNum, Car
     copy.foil = foil;
     copy.binderId = std::move(binderId);
     copy.comments = std::move(comments);
+    copy.externalCardId = trim(externalCardId);
     copy.insertedAt = now;
     copy.updatedAt = now;
     repo_.add(copy);

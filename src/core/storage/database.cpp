@@ -132,6 +132,14 @@ CREATE TABLE card_price (
 CREATE INDEX idx_card_price_external_id ON card_price(external_card_id);
 )sql";
 
+// v7 → v8: link a copy to its external catalog card. `external_card_id` is the same
+// source-neutral id the price cache keys on (today a pokemontcg.io card id like
+// "sv3-125"), so an owned copy can look up its prices. Optional (blank default): a
+// hand-entered copy, or one added before this column existed, is simply unlinked —
+// no price lookup until a card id is attached.
+constexpr char kMigrationV8[] =
+    "ALTER TABLE card_copy ADD COLUMN external_card_id TEXT NOT NULL DEFAULT '';";
+
 }  // namespace
 
 Database::Database(const std::filesystem::path& path) {
@@ -231,6 +239,9 @@ void Database::migrate() {
         }
         if (from < 7) {
             exec(kMigrationV7);
+        }
+        if (from < 8) {
+            exec(kMigrationV8);
         }
         setUserVersion(kSchemaVersion);
     });

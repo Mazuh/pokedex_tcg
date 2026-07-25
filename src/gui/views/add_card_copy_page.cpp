@@ -295,11 +295,18 @@ void AddCardCopyPage::submitCopy() {
     // that binder is missing from the combo. Unscoped, the user's combo choice wins.
     const std::optional<CardBinderId> binderId =
         lockedBinder_ ? lockedBinder_ : form_->binderId();
+    // Link the copy to its catalog card only when a real printing is still picked in
+    // the finder (checkUnmatch drops the selection once the form is edited off-card),
+    // so the id always matches the recorded reference — same guard the image uses.
+    // Without a selection (hand-entered / photo-only) the copy is unlinked, and its
+    // prices simply can't be looked up.
+    const std::string externalCardId =
+        finder_->hasSelection() ? finder_->selectedCandidate().id : std::string();
     CardCopy created;
     try {
         created = copies_.create(dexNumber_, form_->cardReference(), form_->ownership(),
                                  form_->condition(), form_->rarity(), form_->foil(), binderId,
-                                 form_->comments());
+                                 form_->comments(), externalCardId);
     } catch (const std::exception& e) {
         QMessageBox::warning(this, tr("Pokedex TCG"),
                              tr("Could not add the copy:\n%1").arg(QString::fromUtf8(e.what())));

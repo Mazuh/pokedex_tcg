@@ -19,14 +19,15 @@
 #include "gui/views/card_copy_form.h"
 #include "gui/views/card_copy_splitter.h"
 #include "gui/views/card_finder_panel.h"
+#include "gui/views/card_prices_panel.h"
 #include "gui/views/photo_upload.h"
 #include "gui/views/scaled_pixmap.h"
 #include "gui/views/toast.h"
 
 namespace pokedex {
 
-EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardImageStore& images,
-                                   CardCopyService& copies, CardCopy copy,
+EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardPriceLookupService& priceLookup,
+                                   CardImageStore& images, CardCopyService& copies, CardCopy copy,
                                    const std::vector<CardBinder>& binders,
                                    const QString& title, QWidget* parent)
     : QWidget(parent),
@@ -124,11 +125,19 @@ EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardImageStore& im
             [this]() { useButton_->setEnabled(true); });
     finder_->setPreviewFooter(useButton_);
 
+    // --- Prices (below): the copy's market prices, on demand ---------------
+    // Keyed by the copy's external catalog id; unlinked copies show a hint instead.
+    // Strictly on-demand — the panel renders cached prices and only fetches when the
+    // user clicks its button, so opening the edit page never hits the price API.
+    prices_ = new CardPricesPanel(priceLookup, this);
+    prices_->showCard(QString::fromStdString(copy_.externalCardId));
+
     // --- Assemble -----------------------------------------------------------
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(16, 12, 16, 12);
     layout->addLayout(topBar);
     layout->addWidget(makeCardCopySplitter(form_, finder_), /*stretch=*/1);
+    layout->addWidget(prices_);
 
     refreshCurrentImage();  // show whatever picture the copy currently has
 }

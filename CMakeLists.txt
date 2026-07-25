@@ -183,6 +183,7 @@ qt_add_executable(pokedex_tcg
     src/gui/views/edit_card_copy_page.cpp
     src/gui/views/owned_cards_view.cpp
     src/gui/views/card_image_panel.cpp
+    src/gui/views/card_prices_panel.cpp
     src/gui/views/wishlist_sources_editor.cpp
     src/gui/views/wishlist_view.cpp
     src/gui/views/toast.cpp
@@ -190,6 +191,7 @@ qt_add_executable(pokedex_tcg
     src/gui/services/media_service.cpp
     src/gui/services/card_image_store.cpp
     src/gui/services/card_search_service.cpp
+    src/gui/services/card_price_lookup_service.cpp
 )
 target_link_libraries(pokedex_tcg PRIVATE pokedex_core pokedex_warnings pokedex_sanitizers Qt6::Widgets Qt6::Network)
 # The generated gui/version.h is under the build tree; make it includable and

@@ -19,6 +19,7 @@ namespace pokedex {
 
 struct CardBinder;
 class CardSearchService;
+class CardPriceLookupService;
 class CardImageStore;
 class CardCopyService;
 
@@ -34,10 +35,12 @@ class CardCopyService;
 // rows; the guide has them all) — stays with the host as the `onReturn` callback,
 // which runs after the page is gone.
 inline void pushEditCopyPage(QStackedWidget* stack, CardSearchService& search,
-                             CardImageStore& images, CardCopyService& copies,
-                             const CardCopy& copy, const std::vector<CardBinder>& binders,
+                             CardPriceLookupService& priceLookup, CardImageStore& images,
+                             CardCopyService& copies, const CardCopy& copy,
+                             const std::vector<CardBinder>& binders,
                              std::function<void()> onReturn) {
-    auto* page = new EditCardCopyPage(search, images, copies, copy, binders, titleFor(copy));
+    auto* page =
+        new EditCardCopyPage(search, priceLookup, images, copies, copy, binders, titleFor(copy));
     QObject::connect(page, &EditCardCopyPage::backRequested, page,
                      [stack, page, onReturn = std::move(onReturn)]() {
                          stack->setCurrentIndex(0);
@@ -57,8 +60,8 @@ inline void pushEditCopyPage(QStackedWidget* stack, CardSearchService& search,
 // map (owned_ vs ownedHere_) and in the per-host `onReturn` (how each re-reads its data
 // and restores the selection), which stay with the caller.
 inline void openEditCopyFromBuckets(
-    QStackedWidget* stack, CardSearchService& search, CardImageStore& images,
-    CardCopyService& copies,
+    QStackedWidget* stack, CardSearchService& search, CardPriceLookupService& priceLookup,
+    CardImageStore& images, CardCopyService& copies,
     const std::unordered_map<PokemonDexNum, std::vector<CardCopy>>& byDex, int dex,
     const QString& copyId, const std::vector<CardBinder>& binders,
     std::function<void()> onReturn) {
@@ -66,7 +69,8 @@ inline void openEditCopyFromBuckets(
     if (!copy) {
         return;
     }
-    pushEditCopyPage(stack, search, images, copies, *copy, binders, std::move(onReturn));
+    pushEditCopyPage(stack, search, priceLookup, images, copies, *copy, binders,
+                     std::move(onReturn));
 }
 
 }  // namespace pokedex

@@ -42,15 +42,16 @@ constexpr int kNameRole = Qt::UserRole + 1;
 
 BindersPage::BindersPage(BinderService& service, BinderGuideService& guide,
                          WishlistService& wishlist, MediaService& media,
-                         CardSearchService& cardSearch, CardCopyService& cardCopies,
-                         CardImageStore& cardImages, const QString& collectionPath,
-                         QWidget* parent)
+                         CardSearchService& cardSearch, CardPriceLookupService& priceLookup,
+                         CardCopyService& cardCopies, CardImageStore& cardImages,
+                         const QString& collectionPath, QWidget* parent)
     : QWidget(parent),
       service_(service),
       guide_(guide),
       wishlist_(wishlist),
       media_(media),
       cardSearch_(cardSearch),
+      priceLookup_(priceLookup),
       cardCopies_(cardCopies),
       cardImages_(cardImages) {
     // Page 0 of the stack: the binder table with its actions. Built into its own
@@ -292,8 +293,8 @@ void BindersPage::openSelected() {
     // returns to the list and disposes of the page, so each open starts fresh
     // (recomputing the guide) rather than showing a stale one.
     auto* view =
-        new BinderView(guide_, *it, wishlist_, media_, cardSearch_, cardCopies_, cardImages_,
-                       service_);
+        new BinderView(guide_, *it, wishlist_, media_, cardSearch_, priceLookup_, cardCopies_,
+                       cardImages_, service_);
     connect(view, &BinderView::backRequested, this, [this, view]() {
         stack_->setCurrentIndex(0);
         stack_->removeWidget(view);

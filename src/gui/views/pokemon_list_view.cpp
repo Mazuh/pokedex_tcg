@@ -45,11 +45,13 @@ constexpr int kPrefetchMargin = 64;
 
 PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService& wishlist,
                                  MediaService& media, CardSearchService& cardSearch,
-                                 CardCopyService& cardCopies, CardImageStore& cardImages,
-                                 BinderService& binders, QWidget* parent)
+                                 CardPriceLookupService& priceLookup, CardCopyService& cardCopies,
+                                 CardImageStore& cardImages, BinderService& binders,
+                                 QWidget* parent)
     : QWidget(parent),
       service_(service),
       cardSearch_(cardSearch),
+      priceLookup_(priceLookup),
       cardCopies_(cardCopies),
       cardImages_(cardImages),
       binders_(binders) {
@@ -334,7 +336,8 @@ void PokemonListView::openAddCopy(int dexNumber, const QString& name) {
 }
 
 void PokemonListView::openEditCopy(const QString& copyId) {
-    openEditCopyFromBuckets(stack_, cardSearch_, cardImages_, cardCopies_, owned_, shownDex_,
+    openEditCopyFromBuckets(stack_, cardSearch_, priceLookup_, cardImages_, cardCopies_, owned_,
+                            shownDex_,
                             copyId, binders_.list(), [this, copyId]() {
                                 // Capture the shown species before refresh(), which
                                 // re-renders from the top. An edit can change owned data (a

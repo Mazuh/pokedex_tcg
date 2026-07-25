@@ -14,10 +14,12 @@ class QPushButton;
 namespace pokedex {
 
 class CardSearchService;
+class CardPriceLookupService;
 class CardImageStore;
 class CardCopyService;
 class CardFinderPanel;
 class CardCopyForm;
+class CardPricesPanel;
 
 // GUI — the "Edit card" screen for one owned copy, opened from My Cards. Built from
 // the same two shared blocks as the "Add copy" page — CardCopyForm on the left and
@@ -47,12 +49,12 @@ class EditCardCopyPage : public QWidget {
     Q_OBJECT
 
 public:
-    // `search`, `images` and `copies` must outlive this page. `copy` is the copy being
-    // edited (its id keys the image and the comment save; its fields fill the form).
-    // `binders` populates the read-only binder field. `title` (species · printed
-    // identity) personalizes the heading.
-    EditCardCopyPage(CardSearchService& search, CardImageStore& images,
-                     CardCopyService& copies, CardCopy copy,
+    // `search`, `prices`, `images` and `copies` must outlive this page. `copy` is the
+    // copy being edited (its id keys the image and the comment save; its fields fill the
+    // form; its externalCardId keys the prices panel). `binders` populates the read-only
+    // binder field. `title` (species · printed identity) personalizes the heading.
+    EditCardCopyPage(CardSearchService& search, CardPriceLookupService& priceLookup,
+                     CardImageStore& images, CardCopyService& copies, CardCopy copy,
                      const std::vector<CardBinder>& binders, const QString& title,
                      QWidget* parent = nullptr);
 
@@ -78,6 +80,7 @@ private:
 
     CardCopyForm* form_;
     CardFinderPanel* finder_;
+    CardPricesPanel* prices_;  // the copy's market-prices block (keyed by externalCardId)
     QLabel* currentImage_;     // small thumbnail of the copy's current stored image
     QPushButton* useButton_;   // "Use this card's image" — enabled once the preview loads
     QPushButton* saveButton_;  // "Save changes" — enabled only while an edit diverges from the record

@@ -1,7 +1,9 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
+#include "core/app/card_price_dto.h"
 #include "core/domain/card_reference.h"
 
 namespace pokedex {
@@ -35,6 +37,13 @@ struct CardCandidate {
     std::string artist;
     std::string setName;
     std::string setId;
+    // The card's market prices, if the search payload embedded them (pokemontcg.io
+    // includes the tcgplayer/cardmarket blocks in each search result). DISPLAY-ONLY
+    // and memory-only: shown as a subtle hint while browsing, never persisted — so a
+    // price glance costs no extra HTTP for a card the user may not even own. A copy's
+    // stored prices come separately, on demand, via the per-card endpoint. Empty when
+    // the payload carried no price blocks.
+    std::vector<CardPrice> prices;
 };
 
 }  // namespace pokedex

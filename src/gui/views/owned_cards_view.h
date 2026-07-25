@@ -22,7 +22,9 @@ class CardCopyService;
 class BinderService;
 class CardImageStore;
 class CardSearchService;
+class CardPriceLookupService;
 class CardImagePanel;
+class CardPricesPanel;
 class EditCardCopyPage;
 class AddCardCopyPage;
 
@@ -45,7 +47,8 @@ class OwnedCardsView : public QWidget {
 
 public:
     OwnedCardsView(CardCopyService& copies, BinderService& binders, CardImageStore& images,
-                   CardSearchService& cardSearch, QWidget* parent = nullptr);
+                   CardSearchService& cardSearch, CardPriceLookupService& priceLookup,
+                   QWidget* parent = nullptr);
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -93,8 +96,10 @@ private:
     BinderService& binders_;
     CardImageStore& images_;
     CardSearchService& cardSearch_;   // transport for the edit page's card finder
+    CardPriceLookupService& priceLookup_;  // transport for the prices panel (edit + detail)
     QStackedWidget* stack_;   // page 0 = list ⇄ image panel; page 1 = the edit page
     CardImagePanel* panel_;   // right-hand card-image detail panel
+    CardPricesPanel* pricesPanel_;  // market-prices block below the image detail
     QLineEdit* search_;
     QTableWidget* table_;
     // Header-driven sort state, re-applied on every reload so it survives a refresh.

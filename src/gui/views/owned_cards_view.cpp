@@ -31,6 +31,7 @@
 #include "gui/views/binder_picker_dialog.h"
 #include "gui/views/card_copy_labels.h"
 #include "gui/views/card_image_panel.h"
+#include "gui/views/card_prices_panel.h"
 #include "gui/views/edit_card_copy_page.h"
 #include "gui/views/condition_labels.h"
 #include "gui/views/foil_labels.h"
@@ -87,12 +88,13 @@ int compareOptionalRank(std::optional<int> a, std::optional<int> b, bool ascendi
 
 OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
                                CardImageStore& images, CardSearchService& cardSearch,
-                               QWidget* parent)
+                               CardPriceLookupService& priceLookup, QWidget* parent)
     : QWidget(parent),
       copies_(copies),
       binders_(binders),
       images_(images),
-      cardSearch_(cardSearch) {
+      cardSearch_(cardSearch),
+      priceLookup_(priceLookup) {
     search_ = new SelectAllLineEdit(this);
     search_->setPlaceholderText(
         tr("Search copy by Pokémon, collector number, set or binder…"));
@@ -218,9 +220,20 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
         }
     });
 
+    // The right pane stacks the card image over its market-prices block. The prices
+    // panel is on-demand (see CardPricesPanel): selecting a card only renders cached
+    // prices; a fetch happens only when the user clicks its button.
+    pricesPanel_ = new CardPricesPanel(priceLookup_, this);
+    pricesPanel_->showCard(QString());  // nothing selected yet
+    auto* rightPane = new QWidget;
+    auto* rightLayout = new QVBoxLayout(rightPane);
+    rightLayout->setContentsMargins(0, 0, 0, 0);
+    rightLayout->addWidget(panel_, /*stretch=*/1);
+    rightLayout->addWidget(pricesPanel_);
+
     auto* splitter = new QSplitter(Qt::Horizontal);
     splitter->addWidget(listPane);
-    splitter->addWidget(panel_);
+    splitter->addWidget(rightPane);
     splitter->setStretchFactor(0, 1);
     splitter->setStretchFactor(1, 0);
     splitter->setSizes({560, 240});
@@ -540,6 +553,7 @@ void OwnedCardsView::showSelectedImage() {
     shownCopyId_ = target;
     if (!valid) {
         panel_->clear();
+        pricesPanel_->showCard(QString());
         return;
     }
     const CardCopy& copy = loaded_[row];
@@ -548,6 +562,8 @@ void OwnedCardsView::showSelectedImage() {
     // The copy's comments show beneath the image (hidden when blank).
     panel_->showImage(titleFor(copy), images_.load(copy.id),
                       QString::fromStdString(copy.comments));
+    // The prices block follows the selection (cached-only; no fetch on select).
+    pricesPanel_->showCard(QString::fromStdString(copy.externalCardId));
 }
 
 void OwnedCardsView::assignSelected() {
@@ -641,8 +657,8 @@ void OwnedCardsView::editSelectedCard() {
     }
     const CardCopy& copy = *selected;
     const std::string copyId = copy.id;
-    auto* page = new EditCardCopyPage(cardSearch_, images_, copies_, copy, binders_.list(),
-                                      titleFor(copy));
+    auto* page = new EditCardCopyPage(cardSearch_, priceLookup_, images_, copies_, copy,
+                                      binders_.list(), titleFor(copy));
     stack_->addWidget(page);
     // The image refresh is driven by CardImageStore::imageChanged (connected in the
     // ctor). On return, reload so an edited comment shows in the panel, and reselect

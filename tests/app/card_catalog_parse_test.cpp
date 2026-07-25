@@ -23,6 +23,19 @@ using pokedex::Timestamp;
 
 Timestamp at(const char* iso) { return pokedex::timestampFromIso(iso); }
 
+// Find the one price row matching (provenance, variant, metric); asserts it exists.
+const CardPrice& findPrice(const std::vector<CardPrice>& prices, const std::string& provenance,
+                           const std::string& variant, const std::string& metric) {
+    for (const CardPrice& p : prices) {
+        if (p.provenance == provenance && p.variant == variant && p.metric == metric) {
+            return p;
+        }
+    }
+    ADD_FAILURE() << "no price for " << provenance << "/" << variant << "/" << metric;
+    static const CardPrice kNone;
+    return kNone;
+}
+
 // A /v2/sets payload exercising: a normal set, a duplicated printed code shared
 // by two sets (CEL), a set whose ptcgoCode is null, and a malformed entry with
 // no id (must be skipped, since id is the lookup key).
@@ -196,6 +209,33 @@ TEST(ParseCardSearchResponseTest, UnknownSetLeavesBlankCodeAndNumberOnlyCollecto
     EXPECT_TRUE(orphan.setName.empty());
 }
 
+// The search payload embeds the same tcgplayer/cardmarket blocks as the per-card
+// endpoint, so each candidate carries its prices with no extra HTTP call. A card
+// without price blocks gets an empty list.
+TEST(ParseCardSearchResponseTest, EmbedsPerCardPricesWhenThePayloadCarriesThem) {
+    constexpr const char* json = R"json({
+      "data": [
+        {"id": "sv3-125", "name": "Gardevoir ex", "set": {"id": "sv3"},
+         "tcgplayer":  {"updatedAt": "2026/07/20", "prices": {"holofoil": {"market": 12.5}}},
+         "cardmarket": {"updatedAt": "2026/07/18", "prices": {"trendPrice": 9.99}}},
+        {"id": "sv3-5", "name": "No Prices Card", "set": {"id": "sv3"}}
+      ]
+    })json";
+    const std::vector<CardCandidate> cards = parseCardSearchResponse(json, sampleSets());
+    ASSERT_EQ(cards.size(), 2u);
+
+    // Both vendor rows rode along in the search response.
+    ASSERT_EQ(cards[0].prices.size(), 2u);
+    const CardPrice& tcg = findPrice(cards[0].prices, "tcgplayer", "holofoil", "market");
+    EXPECT_EQ(tcg.externalCardId, "sv3-125");
+    EXPECT_EQ(tcg.amountCents, 1250);
+    EXPECT_EQ(tcg.currency, "USD");
+    EXPECT_EQ(findPrice(cards[0].prices, "cardmarket", "", "trendPrice").amountCents, 999);
+
+    // A card with no price blocks simply has none.
+    EXPECT_TRUE(cards[1].prices.empty());
+}
+
 TEST(ParseCardSearchResponseTest, ThrowsOnInvalidJsonButEmptyDataIsFine) {
     EXPECT_THROW(parseCardSearchResponse("}{", sampleSets()), CardCatalogParseError);
     EXPECT_TRUE(parseCardSearchResponse(R"({"data": []})", sampleSets()).empty());
@@ -225,19 +265,6 @@ constexpr const char* kCardWithPrices = R"json({
     }
   }
 })json";
-
-// Find the one row matching (provenance, variant, metric); asserts it exists.
-const CardPrice& findPrice(const std::vector<CardPrice>& prices, const std::string& provenance,
-                           const std::string& variant, const std::string& metric) {
-    for (const CardPrice& p : prices) {
-        if (p.provenance == provenance && p.variant == variant && p.metric == metric) {
-            return p;
-        }
-    }
-    ADD_FAILURE() << "no price for " << provenance << "/" << variant << "/" << metric;
-    static const CardPrice kNone;
-    return kNone;
-}
 
 TEST(ParseCardPricesTest, ExtractsTcgplayerVariantsAsUsdCentsFromVendorDate) {
     const std::vector<CardPrice> prices = parseCardPrices(kCardWithPrices, at("2000-01-01T00:00:00Z"));

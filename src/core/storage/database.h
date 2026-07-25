@@ -34,7 +34,9 @@ public:
     //        /v2/sets table; reference data, not collection source-of-truth).
     //   v7 — card_price + card_price_fetch (on-demand cache of a card's market
     //        prices, keyed by external card id; also reference data).
-    static constexpr int kSchemaVersion = 7;
+    //   v8 — card_copy.external_card_id (links a copy to its external catalog card
+    //        so its prices can be looked up; optional/blank for unlinked copies).
+    static constexpr int kSchemaVersion = 8;
 
     // Open (creating if absent) the database at `path`, or an in-memory database
     // when path == ":memory:". Throws StorageError on failure.

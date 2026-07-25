@@ -67,7 +67,10 @@ v4 `card_copy.rarity`; v5 `card_copy.foil`; v6 added `card_set_cache` +
 data, not collection source-of-truth, see the `CardSetCache` note below; v7 added
 `card_price` + `card_price_fetch`, the on-demand cache of a card's market prices —
 also external reference data, keyed by the pokemontcg.io card id and independent of
-any `card_copy`, see the `CardPriceCache` note below),
+any `card_copy`, see the `CardPriceCache` note below; v8 added
+`card_copy.external_card_id`, the link from an owned copy to its catalog card [blank =
+unlinked] so the copy's prices can be looked up — set when a copy is added from the
+finder),
 so a fresh DB runs the whole chain and an existing one
 only the tail — bump `kSchemaVersion` and add a step (never edit `kSchemaV1`) when
 the schema changes. `storage/` holds
@@ -118,9 +121,21 @@ cents (`Statement::bindInt64`/`columnInt64`), and multi-statement writes go thro
 `Database::transaction(body)` (the shared BEGIN/ROLLBACK/COMMIT guard); the TTL
 freshness rule (incl. the backward-clock guard) is the shared `cacheIsFresh` helper
 (`core/app/cache_ttl.h`), used by both this cache and the GUI set cache. The transport
-GET stays GUI-side, as with search/sets. Not yet wired to any GUI — a `CardCopy` does
-not persist `external_card_id`, so surfacing a copy's price is a future step (edition
-modeling and the copy→price link are deferred until the price-viewing UI drives them).
+GET stays GUI-side: `gui/services/CardPriceLookupService` (mirrors `CardSearchService`,
+sharing the `gui/services/http_status.h` retry-classification helpers) fetches one card's
+prices via `resolveCardById` and persists them through `recordApiPrices`. It is strictly
+**on-demand** — `cached`/`fetchedAt`/`needsRefresh` never touch the network; only
+`fetch()` (behind an explicit Fetch/Refresh button) does — so merely viewing a card never
+hits the API. The reusable `gui/views/CardPricesPanel` (keyed by a copy's
+`external_card_id`) renders the states [unlinked / linked-unfetched / has-prices
+(headline + "as of/fetched" line + expandable full table) / fetched-empty]; it appears on
+the Edit page and the My Cards detail. Prices ride along for free while **browsing**:
+`parseCardSearchResponse` extracts the same tcgplayer/cardmarket blocks the search payload
+already carries into `CardCandidate.prices` (display-only, never persisted), and
+`CardFinderPanel` shows a subtle headline under the preview — no extra HTTP for a card the
+user may not own. Money→string display (currency symbols, the headline pick) is
+GUI-side in `gui/views/price_labels.h`, shared by the finder hint and the panel so they
+never diverge. Edition modeling and manual-price entry remain deferred.
 A `CardSearchQuery` is scoped EITHER by species
 (`dexNumber`, → `nationalPokedexNumbers:N`) OR by card name (`nameQuery`, →
 `name:"…"`) — the latter is how a species-free card is found; on the GUI side

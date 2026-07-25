@@ -18,6 +18,7 @@ class BinderGuideService;
 class WishlistService;
 class MediaService;
 class CardSearchService;
+class CardPriceLookupService;
 class CardCopyService;
 class CardImageStore;
 
@@ -41,7 +42,8 @@ public:
     // where their collection lives (it may be on a NAS, iCloud, etc.). `media` is
     // forwarded to each opened binder guide so its rows show a detail panel.
     BindersPage(BinderService& service, BinderGuideService& guide, WishlistService& wishlist,
-                MediaService& media, CardSearchService& cardSearch, CardCopyService& cardCopies,
+                MediaService& media, CardSearchService& cardSearch,
+                CardPriceLookupService& priceLookup, CardCopyService& cardCopies,
                 CardImageStore& cardImages, const QString& collectionPath,
                 QWidget* parent = nullptr);
 
@@ -71,6 +73,7 @@ private:
     WishlistService& wishlist_;
     MediaService& media_;
     CardSearchService& cardSearch_;
+    CardPriceLookupService& priceLookup_;
     CardCopyService& cardCopies_;
     CardImageStore& cardImages_;
     QStackedWidget* stack_;

@@ -19,6 +19,7 @@ namespace pokedex {
 
 class MediaService;
 class CardSearchService;
+class CardPriceLookupService;
 class CardCopyService;
 class CardImageStore;
 class BinderService;
@@ -48,8 +49,9 @@ class PokemonListView : public QWidget {
 public:
     PokemonListView(PokemonBrowseService& service, WishlistService& wishlist,
                     MediaService& media, CardSearchService& cardSearch,
-                    CardCopyService& cardCopies, CardImageStore& cardImages,
-                    BinderService& binders, QWidget* parent = nullptr);
+                    CardPriceLookupService& priceLookup, CardCopyService& cardCopies,
+                    CardImageStore& cardImages, BinderService& binders,
+                    QWidget* parent = nullptr);
 
 protected:
     // Watches the table viewport's resize so the list keeps filling a viewport
@@ -115,6 +117,7 @@ private:
 
     PokemonBrowseService& service_;
     CardSearchService& cardSearch_;
+    CardPriceLookupService& priceLookup_;
     CardCopyService& cardCopies_;
     CardImageStore& cardImages_;
     BinderService& binders_;

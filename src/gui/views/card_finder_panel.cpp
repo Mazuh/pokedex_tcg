@@ -19,6 +19,7 @@
 #include <utility>
 
 #include "gui/services/card_search_service.h"
+#include "gui/views/price_labels.h"
 #include "gui/views/scaled_pixmap.h"
 #include "gui/views/select_all_line_edit.h"
 #include "gui/views/splitter_style.h"
@@ -109,9 +110,15 @@ void CardFinderPanel::init(const QString& initialQuery) {
     preview_->setMinimumWidth(180);
     preview_->setWordWrap(true);
     preview_->installEventFilter(this);  // rescale the image when the pane resizes
+    priceHint_ = new QLabel(previewPane);
+    priceHint_->setAlignment(Qt::AlignCenter);
+    priceHint_->setWordWrap(true);
+    priceHint_->setStyleSheet(QStringLiteral("color: gray; font-size: 11px;"));
+    priceHint_->hide();
     previewLayout_ = new QVBoxLayout(previewPane);
     previewLayout_->setContentsMargins(0, 0, 0, 0);
     previewLayout_->addWidget(preview_, /*stretch=*/1);  // footer (if any) sits below
+    previewLayout_->addWidget(priceHint_);  // subtle price line, under the image
 
     // --- Assemble: list ⇄ preview, both draggable --------------------------
     auto* splitter = new QSplitter(Qt::Horizontal, this);
@@ -286,6 +293,12 @@ void CardFinderPanel::selectCandidate(int index) {
 
 void CardFinderPanel::showPreview(int index) {
     const CardCandidate& c = candidates_[index];
+    // A subtle price line from the prices the search payload already carried — no
+    // extra request for a card the user may not even own. Hidden when the payload
+    // had no price blocks.
+    const QString hint = priceHeadline(c.prices);
+    priceHint_->setText(hint);
+    priceHint_->setVisible(!hint.isEmpty());
     previewPixmap_ = QPixmap();
     const QString url = QString::fromStdString(c.imageUrlLarge.empty() ? c.imageUrlSmall
                                                                        : c.imageUrlLarge);
@@ -307,6 +320,8 @@ void CardFinderPanel::clearPreview() {
     selectedIndex_ = -1;
     previewCardId_.clear();
     previewPixmap_ = QPixmap();
+    priceHint_->clear();
+    priceHint_->hide();
     preview_->setText(tr("Select a card to preview it."));
     // Drop the list highlight; setCurrentItem(nullptr) fires currentItemChanged with a
     // null current, which selectCandidate ignores (guarded), so this does not recurse.
