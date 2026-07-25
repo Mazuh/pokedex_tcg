@@ -150,6 +150,11 @@ EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardPriceLookupSer
     // Strictly on-demand — the panel renders cached prices and only fetches when the
     // user clicks its button, so opening the edit page never hits the price API.
     prices_ = new CardPricesPanel(priceLookup, search, copies, this);
+    // The Edit page links through its own card finder (which shares this app-wide
+    // CardSearchService), so the panel here must not also auto-link on Fetch — that would
+    // be a second search consumer racing the finder. It shows prices for a linked copy;
+    // linking an unlinked one goes through "Link prices to this card" below.
+    prices_->setAutoLinkEnabled(false);
     prices_->showCopy(copy_);
     // If the Fetch button auto-resolves this copy's catalog link, keep our copy_ in sync
     // so a later save/refresh (and the manual-link button's enablement) sees it linked.

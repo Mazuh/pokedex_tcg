@@ -98,6 +98,11 @@ Q_SIGNALS:
     // The user asked to edit the copy currently shown in copy mode. Carries the
     // copy's id; the owning view opens the EditCardCopyPage for it.
     void editCopyRequested(const QString& copyId);
+    // The embedded prices panel auto-resolved and persisted this copy's catalog link (on
+    // a Fetch). Forwarded up so the host can write the new external id into its cached
+    // copy map — otherwise a re-selection would re-show the copy as unlinked and re-run
+    // the resolve, and value stats keyed on externalCardId would miss it.
+    void copyLinked(const QString& copyId, const QString& externalCardId);
 
 protected:
     // Rescale the image when the image label resizes (on a panel resize, but also

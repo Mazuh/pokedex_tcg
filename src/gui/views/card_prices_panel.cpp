@@ -3,6 +3,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QTableWidget>
 #include <QTimer>
@@ -240,10 +241,19 @@ void CardPricesPanel::showCopy(const CardCopy& copy) {
     cardRef_ = copy.cardRef;
     dexNumber_ = copy.pokemonDexNum;
     externalCardId_ = QString::fromStdString(copy.externalCardId);
+    copyRemoved_ = copy.ownership == CardOwnership::Removed;
     fetching_ = false;
     linking_ = false;
     linkWatchdog_->stop();
     toggle_->setChecked(false);
+    render();
+}
+
+void CardPricesPanel::setAutoLinkEnabled(bool enabled) {
+    if (autoLinkEnabled_ == enabled) {
+        return;
+    }
+    autoLinkEnabled_ = enabled;
     render();
 }
 
@@ -252,6 +262,7 @@ void CardPricesPanel::clear() {
     cardRef_ = CardReference{};
     dexNumber_.reset();
     externalCardId_.clear();
+    copyRemoved_ = false;
     fetching_ = false;
     linking_ = false;
     linkWatchdog_->stop();
@@ -260,7 +271,10 @@ void CardPricesPanel::clear() {
 }
 
 bool CardPricesPanel::canAutoLink() const {
-    if (!externalCardId_.isEmpty() || copyId_.empty()) {
+    // A soft-Removed copy is frozen history: never spend a search + link + fetch on a
+    // discarded card. When auto-link is disabled (the Edit page), its finder does the
+    // linking instead. Either way, only an unlinked copy with enough data qualifies.
+    if (!autoLinkEnabled_ || copyRemoved_ || !externalCardId_.isEmpty() || copyId_.empty()) {
         return false;
     }
     const bool hasSet = !cardRef_.setName.empty() || !cardRef_.expansionCode.empty();
@@ -295,26 +309,29 @@ void CardPricesPanel::render() {
     }
 
     if (externalCardId_.isEmpty()) {
-        if (!canAutoLink()) {
-            // Too little to resolve a catalog card — never a dead-end "not linked"; tell
-            // the user how to complete it. (Linking itself is never named.)
-            resetToMessage(QStringLiteral("Add this card's set and name (via “Edit card…”) "
-                                          "to look up its market prices."));
+        if (canAutoLink()) {
+            // Unlinked but resolvable: present exactly like a linked-unfetched card — a
+            // Fetch button. The first fetch resolves and persists the link invisibly
+            // (onFetchClicked). resetToMessage hides the rest; then reveal the button.
+            resetToMessage(QStringLiteral("Prices not fetched yet."));
+            fetchButton_->setText(QStringLiteral("Fetch prices"));
+            fetchButton_->show();
+            fetchButton_->setEnabled(true);
             return;
         }
-        // Unlinked but resolvable: present exactly like a linked-unfetched card — a Fetch
-        // button. The first fetch resolves and persists the link invisibly (onFetchClicked).
-        rows_.clear();
-        headline_->hide();
-        infoButton_->hide();
-        links_->hide();
-        toggle_->hide();
-        table_->hide();
-        status_->setText(QStringLiteral("Prices not fetched yet."));
-        status_->show();
-        fetchButton_->setText(QStringLiteral("Fetch prices"));
-        fetchButton_->show();
-        fetchButton_->setEnabled(true);
+        // Not resolvable. A Removed copy is frozen history — no price affordance at all.
+        // On the Edit page (auto-link disabled) the finder does the linking. Otherwise
+        // the copy simply lacks a set/name to resolve; point to Edit to complete it.
+        // (Linking itself is never named as a user action.)
+        if (copyRemoved_) {
+            resetToMessage(QString());
+        } else if (!autoLinkEnabled_) {
+            resetToMessage(QStringLiteral("Pick this card in the finder above to look up "
+                                          "its market prices."));
+        } else {
+            resetToMessage(QStringLiteral("Add this card's set and name (via “Edit card…”) "
+                                          "to look up its market prices."));
+        }
         return;
     }
 
@@ -499,12 +516,17 @@ void CardPricesPanel::onLinkResults(const std::vector<CardCandidate>& cards) {
 
     try {
         copies_.linkCatalogCard(copyId_, match->id);
-    } catch (const std::exception&) {
+    } catch (const std::exception& e) {
+        // A persist failure here (e.g. a storage write error) is unexpected and leaves
+        // the copy unlinked — surface it loudly with the detail, not just a transient
+        // status line the next render would wipe.
         linking_ = false;
         fetching_ = false;
         fetchButton_->setEnabled(true);
         status_->setText(QStringLiteral("Couldn't look up this card right now."));
         status_->show();
+        QMessageBox::warning(this, tr("Pokedex TCG"),
+                             tr("Could not link this card:\n%1").arg(QString::fromUtf8(e.what())));
         return;
     }
 

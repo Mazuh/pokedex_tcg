@@ -121,6 +121,26 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     connect(detail_, &PokemonDetailPanel::addCopyRequested, this, &BinderView::openAddCopy);
     // In copy mode, "Edit card" relays up to an in-place edit-page push.
     connect(detail_, &PokemonDetailPanel::editCopyRequested, this, &BinderView::openEditCopy);
+    // When the detail panel's Fetch auto-links a copy, write the id back into our cached
+    // copies so a re-selection shows it linked (not re-resolved) and the header value can
+    // count it once its prices land.
+    connect(detail_, &PokemonDetailPanel::copyLinked, this,
+            [this](const QString& copyId, const QString& externalCardId) {
+                applyLinkedCardToBuckets(ownedHere_, copyId, externalCardId);
+                const std::string id = copyId.toStdString();
+                for (CardCopy& copy : filedCopies_) {
+                    if (copy.id == id) {
+                        copy.externalCardId = externalCardId.toStdString();
+                        break;
+                    }
+                }
+                updateStats(filedCopies_);
+            });
+    // A price fetch (from the detail panel) can raise the binder's market-value total; the
+    // header is computed from cached prices at stat time, so recompute it when any card's
+    // prices land rather than only on a full reopen.
+    connect(&priceLookup_, &CardPriceLookupService::pricesReady, this,
+            [this](const QString&) { updateStats(filedCopies_); });
 
     // The list (top bar + search + table) on the left, the detail panel on the
     // right, in a draggable horizontal split. The list takes the slack.
@@ -180,7 +200,8 @@ void BinderView::refresh() {
         ownedHere_.clear();  // best-effort: fall back to artwork-only if the read fails
     }
 
-    updateStats(filed);
+    filedCopies_ = std::move(filed);
+    updateStats(filedCopies_);
     repopulate();
 }
 

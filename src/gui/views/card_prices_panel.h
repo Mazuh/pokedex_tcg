@@ -60,6 +60,12 @@ public:
     void showCopy(const CardCopy& copy);
     // Empty state: no copy selected. Hides the block.
     void clear();
+    // Whether the Fetch button may auto-resolve an unlinked copy's catalog card. Default
+    // true. The Edit page sets it false: it has its own card finder for linking (and
+    // shares this app-wide CardSearchService with it), so the panel there shows prices
+    // for an already-linked copy but routes linking through the finder — no second,
+    // racing search consumer.
+    void setAutoLinkEnabled(bool enabled);
 
 Q_SIGNALS:
     // A Fetch auto-resolved and persisted the catalog link for this copy. Hosts use it
@@ -90,7 +96,9 @@ private:
     CardReference cardRef_;
     std::optional<PokemonDexNum> dexNumber_;
     QString externalCardId_;
+    bool copyRemoved_ = false;  // a soft-Removed copy — frozen history, never auto-linked
 
+    bool autoLinkEnabled_ = true;  // see setAutoLinkEnabled (false on the Edit page)
     bool fetching_ = false;  // a Fetch (link and/or price fetch) is in flight
     bool linking_ = false;   // the auto-link search specifically is in flight
     std::uint64_t pendingLinkRequest_ = 0;  // the CardSearchService request we await

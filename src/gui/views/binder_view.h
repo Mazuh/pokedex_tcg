@@ -117,6 +117,10 @@ private:
     // refresh(). Drives copy mode in the detail panel: a species present here has at
     // least one owned copy filed in this binder to show.
     std::unordered_map<PokemonDexNum, std::vector<CardCopy>> ownedHere_;
+    // The full flat list of copies filed here (incl. species-free ones), cached from the
+    // last refresh() so the header value stat can be recomputed in-session — when a copy
+    // is auto-linked or its prices are fetched from the detail panel — without a re-query.
+    std::vector<CardCopy> filedCopies_;
     // Dex number currently shown in the detail panel (-1 = none), so a filter that
     // hides its row can clear the panel rather than leave stale artwork on screen.
     int shownDex_ = -1;

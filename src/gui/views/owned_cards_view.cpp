@@ -488,9 +488,8 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
     editButton_->setVisible(!empty);
     emptyLabel_->setVisible(empty);
     panel_->setVisible(!empty);
-    // Hide the prices block too when there are no cards — otherwise its "not linked to a
-    // catalog card" hint sits beneath the empty-state message, referring to a card that
-    // isn't (and can't be) selected.
+    // Hide the prices block too when there are no cards — otherwise its "nothing selected"
+    // state sits beneath the empty-state message with no card to refer to.
     pricesPanel_->setVisible(!empty);
 
     // Restore the selection at its new row (a no-op if the copy is gone).

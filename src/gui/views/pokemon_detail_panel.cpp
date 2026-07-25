@@ -122,6 +122,10 @@ PokemonDetailPanel::PokemonDetailPanel(MediaService& media, WishlistService& wis
     // (they always come together from the hosts); hidden outside copy mode.
     if (prices && search && copies) {
         pricesPanel_ = new CardPricesPanel(*prices, *search, *copies, this);
+        // Forward a Fetch-driven auto-link up to the host so it can refresh its cached
+        // copy (see the copyLinked docstring).
+        connect(pricesPanel_, &CardPricesPanel::cardLinked, this,
+                &PokemonDetailPanel::copyLinked);
     }
 
     // The wishlist sources editor sits below the art. The artwork keeps the

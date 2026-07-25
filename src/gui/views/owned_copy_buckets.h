@@ -52,6 +52,26 @@ inline const CardCopy* findOwnedCopy(
     return copyIt == it->second.end() ? nullptr : &*copyIt;
 }
 
+// GUI — after an in-panel Fetch auto-resolved a copy's catalog link, write the new
+// external card id back into the bucketed-by-dex copy map, so a later re-selection
+// renders the copy as linked (and value stats that key on externalCardId include it)
+// instead of re-running the resolve. No-op when the id isn't in the map. Both copy-mode
+// hosts (the browser over `owned_`, a binder guide over `ownedHere_`) call this from the
+// panel's cardLinked signal, so it lives here rather than duplicated per view.
+inline void applyLinkedCardToBuckets(
+    std::unordered_map<PokemonDexNum, std::vector<CardCopy>>& byDex, const QString& copyId,
+    const QString& externalCardId) {
+    const std::string id = copyId.toStdString();
+    for (auto& [dex, copies] : byDex) {
+        for (CardCopy& copy : copies) {
+            if (copy.id == id) {
+                copy.externalCardId = externalCardId.toStdString();
+                return;
+            }
+        }
+    }
+}
+
 // GUI — drive the detail panel for species `dex` from a bucketed-by-dex copy map:
 // copy mode (showing `preferCopyId`, else a random copy) when the species owns copies
 // on this surface, plain artwork otherwise. This owned_-lookup → showPokemon dispatch

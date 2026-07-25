@@ -111,6 +111,12 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService&
     connect(detail_, &PokemonDetailPanel::addCopyRequested, this, &PokemonListView::openAddCopy);
     // In copy mode, "Edit card" relays up to an in-place edit-page push.
     connect(detail_, &PokemonDetailPanel::editCopyRequested, this, &PokemonListView::openEditCopy);
+    // When the detail panel's Fetch auto-links a copy, write the id back into the cached
+    // owned_ map so a re-selection shows it linked rather than re-running the resolve.
+    connect(detail_, &PokemonDetailPanel::copyLinked, this,
+            [this](const QString& copyId, const QString& externalCardId) {
+                applyLinkedCardToBuckets(owned_, copyId, externalCardId);
+            });
     // Infinite scroll: append the next chunk as the user nears the bottom. The
     // complementary "viewport isn't full yet" case (first show, or the window
     // grew taller than the loaded rows, where no scrollbar exists) is handled by
