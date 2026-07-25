@@ -3,6 +3,7 @@
 #include <QString>
 #include <QWidget>
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,7 @@ class QPushButton;
 class QShowEvent;
 class QStackedWidget;
 class QTableWidget;
+class QTimer;
 
 namespace pokedex {
 
@@ -27,6 +29,7 @@ class CardImagePanel;
 class CardPricesPanel;
 class EditCardCopyPage;
 class AddCardCopyPage;
+struct CardCandidate;
 
 // GUI — the "My Cards" section: a flat, read-only inventory of every card copy the
 // user has recorded (Owned, Incoming, or soft-Removed), so they can keep track of
@@ -87,6 +90,17 @@ private:
     void deletePermanently();
     // Push the in-window "Edit card" page for the selected copy (to change its image).
     void editSelectedCard();
+    // Auto-link the selected unlinked copy to its catalog card so market prices become
+    // available, WITHOUT the long detour through the Edit page's finder: search the
+    // catalog scoped by the copy's recorded set + species/name and, if that identifies
+    // exactly one printing, link it immediately; otherwise report "no match" or
+    // "ambiguous — use Edit". Async (the shared CardSearchService debounces + fetches);
+    // the link is finished in onLinkResults() when the reply arrives.
+    void linkSelectedCard();
+    // Finish a pending linkSelectedCard(): from the catalog reply, pick the single
+    // matching printing (disambiguating by the copy's collector number when a set holds
+    // several) and persist the link via CardCopyService, or toast why it couldn't.
+    void onLinkResults(const std::vector<CardCandidate>& cards);
     // Push the in-window "Add a card" page for a species-free card (a Trainer/Energy
     // card that depicts no Pokémon) — the only place such a card can be recorded, since
     // the Pokémon browser's "Add copy" is always scoped to a species.
@@ -112,6 +126,7 @@ private:
     QPushButton* removeButton_;
     QPushButton* deleteButton_;   // "Delete permanently…" — enabled only for Removed copies
     QPushButton* editButton_;
+    QPushButton* linkButton_;   // "Link prices" — one-click auto-link for an unlinked copy
     QLabel* countLabel_;
     // The copies backing the current rows, in display order (row i ⇄ loaded_[i]);
     // filtering only hides rows, so this stays aligned with the table.
@@ -126,6 +141,23 @@ private:
     // showSelectedImage() can skip the disk read when the selection hasn't changed —
     // it fires on every keystroke via applyFilter().
     std::string shownCopyId_;
+    // A one-click "Link prices" auto-link is in flight. `pendingLinkCopyId_` is the copy
+    // being linked (empty == no link pending — the state is captured at click time
+    // because the reply is async and the selection may move before it lands);
+    // `pendingLinkCollector_` is that copy's collector number, kept to disambiguate a
+    // set that holds several printings of the species; `pendingLinkRequest_` is the
+    // CardSearchService request id we're waiting on — since that service is shared
+    // app-wide, a reply is ours only when its id matches.
+    std::string pendingLinkCopyId_;
+    std::string pendingLinkCollector_;
+    std::uint64_t pendingLinkRequest_ = 0;
+    // A watchdog that recovers the "Link prices" button from a lost reply: the shared,
+    // debounced CardSearchService is latest-wins, so a link's in-flight search could in
+    // principle be superseded before it dispatches and then never emit a
+    // printingsReady/printingsFailed for our request id — which would strand the button
+    // disabled on "Linking…" forever. If no reply lands in time this fires, clears the
+    // pending state, and re-enables the button. Started on click, stopped on any reply.
+    QTimer* linkWatchdog_;
 };
 
 }  // namespace pokedex

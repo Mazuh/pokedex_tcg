@@ -13,6 +13,7 @@
 #include <QString>
 #include <QStyle>
 #include <QTableWidget>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -27,6 +28,7 @@
 #include "core/domain/card_copy.h"
 #include "core/domain/pokemon.h"
 #include "gui/services/card_image_store.h"
+#include "gui/services/card_search_service.h"
 #include "gui/views/add_card_copy_page.h"
 #include "gui/views/binder_picker_dialog.h"
 #include "gui/views/card_copy_labels.h"
@@ -63,6 +65,31 @@ QString speciesRegionLabel(PokemonDexNum dexNumber) {
 // One predicate so the sort, the graying, the button gate, and the delete guard
 // can never drift apart.
 bool isRemoved(const CardCopy& copy) { return copy.ownership == CardOwnership::Removed; }
+
+// The bare printing number from a collector number, lowercased for comparison:
+// "125/197" and "125" both reduce to "125". Used to disambiguate an auto-link when a
+// set holds several printings of the same species — the number then singles one out.
+QString collectorKey(const std::string& raw) {
+    QString value = QString::fromStdString(raw).trimmed();
+    const int slash = value.indexOf(QLatin1Char('/'));
+    if (slash >= 0) {
+        value = value.left(slash);
+    }
+    return value.trimmed().toLower();
+}
+
+// Does the copy carry enough recorded data to attempt a one-click auto-link? It needs
+// a set to narrow by (name or printed code) and an identity to search on (a species or
+// a printed card name) — without a set, a search would return far too many printings to
+// single one out. An already-linked copy never qualifies (nothing to do).
+bool canAutoLink(const CardCopy& copy) {
+    if (!copy.externalCardId.empty()) {
+        return false;
+    }
+    const bool hasSet = !copy.cardRef.setName.empty() || !copy.cardRef.expansionCode.empty();
+    const bool hasIdentity = copy.pokemonDexNum.has_value() || !copy.cardRef.name.empty();
+    return hasSet && hasIdentity;
+}
 
 // Three-way compare (compareValues shape) for an optional-valued column
 // (Condition / Rarity / Foil) where an unset value must always sink to the
@@ -168,6 +195,58 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     editButton_->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
     connect(editButton_, &QPushButton::clicked, this, &OwnedCardsView::editSelectedCard);
 
+    // "Link prices" auto-links an unlinked copy to its catalog card straight from the
+    // inventory — the shortcut for the many copies that already carry a set + name, so
+    // the user need not open Edit and re-run the finder just to enable prices. Enabled
+    // only when the selected copy is unlinked and has enough data to identify one card
+    // (see canAutoLink / updateButtonState); it either links (one match) or explains why
+    // it couldn't (none / several).
+    linkButton_ = new QPushButton(tr("Link prices"), this);
+    linkButton_->setIcon(style()->standardIcon(QStyle::SP_FileLinkIcon));
+    linkButton_->setToolTip(
+        tr("Match this copy to its catalog card by its set and name, so market prices "
+           "become available — no need to open “Edit card…”. Works when the set and name "
+           "identify a single card."));
+    connect(linkButton_, &QPushButton::clicked, this, &OwnedCardsView::linkSelectedCard);
+
+    // The auto-link search runs on the shared CardSearchService and replies
+    // asynchronously; route only the reply whose request id we're waiting on (the
+    // service is app-wide, so other pages' replies also arrive here) to onLinkResults.
+    connect(&cardSearch_, &CardSearchService::printingsReady, this,
+            [this](std::uint64_t requestId, int, const std::vector<CardCandidate>& cards) {
+                if (pendingLinkCopyId_.empty() || requestId != pendingLinkRequest_) {
+                    return;  // no link pending, or not our request
+                }
+                linkWatchdog_->stop();
+                onLinkResults(cards);
+            });
+    connect(&cardSearch_, &CardSearchService::printingsFailed, this,
+            [this](std::uint64_t requestId, int) {
+                if (pendingLinkCopyId_.empty() || requestId != pendingLinkRequest_) {
+                    return;
+                }
+                linkWatchdog_->stop();
+                pendingLinkCopyId_.clear();
+                pendingLinkCollector_.clear();
+                updateButtonState();
+                showToast(this, tr("Couldn't reach the card catalog. Please try again."));
+            });
+
+    // Recover the button if a link's search reply never lands (see linkWatchdog_): the
+    // timeout must outlast the search service's own retry/backoff so it only fires on a
+    // genuinely lost reply, not a slow-but-arriving failure.
+    linkWatchdog_ = new QTimer(this);
+    linkWatchdog_->setSingleShot(true);
+    connect(linkWatchdog_, &QTimer::timeout, this, [this]() {
+        if (pendingLinkCopyId_.empty()) {
+            return;
+        }
+        pendingLinkCopyId_.clear();
+        pendingLinkCollector_.clear();
+        updateButtonState();
+        showToast(this, tr("Linking timed out. Please try again."));
+    });
+
     // "Add a card…" records a species-free card (a Trainer/Energy card) — needs no row
     // selection, so it stays available even when the collection is empty. Pokémon
     // copies are still added from "All Pokémon" (scoped to a species).
@@ -193,6 +272,7 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     buttons->addWidget(removeButton_);
     buttons->addWidget(deleteButton_);
     buttons->addWidget(editButton_);
+    buttons->addWidget(linkButton_);
     buttons->addStretch();
 
     // The list pane (left) holds everything the section had before; the card-image
@@ -474,8 +554,13 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
     removeButton_->setVisible(!empty);
     deleteButton_->setVisible(!empty);
     editButton_->setVisible(!empty);
+    linkButton_->setVisible(!empty);
     emptyLabel_->setVisible(empty);
     panel_->setVisible(!empty);
+    // Hide the prices block too when there are no cards — otherwise its "not linked to a
+    // catalog card" hint sits beneath the empty-state message, referring to a card that
+    // isn't (and can't be) selected.
+    pricesPanel_->setVisible(!empty);
 
     // Restore the selection at its new row (a no-op if the copy is gone).
     if (!keepSelectedId.empty()) {
@@ -537,6 +622,15 @@ void OwnedCardsView::updateButtonState() {
     const bool removedSelected = hasSelection && row < static_cast<int>(loaded_.size()) &&
                                  isRemoved(loaded_[row]);
     deleteButton_->setEnabled(removedSelected);
+
+    // "Link prices" is offered only for a live, unlinked copy that carries enough data
+    // to single out one catalog card (canAutoLink). While a link is in flight the button
+    // is disabled everywhere and reads "Linking…", so a second click can't overwrite the
+    // request id we're awaiting.
+    const bool linkPending = !pendingLinkCopyId_.empty();
+    linkButton_->setText(linkPending ? tr("Linking…") : tr("Link prices"));
+    linkButton_->setEnabled(liveSelection && !linkPending &&
+                            row < static_cast<int>(loaded_.size()) && canAutoLink(loaded_[row]));
 }
 
 void OwnedCardsView::showSelectedImage() {
@@ -702,6 +796,95 @@ void OwnedCardsView::addNewCard() {
     connect(page, &AddCardCopyPage::copyAdded, this, &OwnedCardsView::reload);
     connect(page, &AddCardCopyPage::backRequested, this, pop);
     stack_->setCurrentWidget(page);
+}
+
+void OwnedCardsView::linkSelectedCard() {
+    const CardCopy* selected = selectedVisibleCopy();
+    // Re-check the enable gate: the button could be stale (selection changed under a
+    // filter, an in-flight link, an already-linked copy).
+    if (!selected || isRemoved(*selected) || !canAutoLink(*selected) ||
+        !pendingLinkCopyId_.empty()) {
+        return;
+    }
+    const CardCopy& copy = *selected;
+    // Narrow by the human set name when present (the reliable disambiguator, and the
+    // only one for code-less sets), else the printed expansion code. The service
+    // resolves either against its set table (exact code or set-name substring).
+    const QString setFilter = QString::fromStdString(
+        !copy.cardRef.setName.empty() ? copy.cardRef.setName : copy.cardRef.expansionCode);
+
+    // Capture the context the async reply needs — the selection may move (or the table
+    // reload) before it lands, so onLinkResults() must not read the current row.
+    pendingLinkCopyId_ = copy.id;
+    pendingLinkCollector_ = copy.cardRef.collectorNumber;
+    if (copy.pokemonDexNum) {
+        pendingLinkRequest_ = cardSearch_.searchPrintings(*copy.pokemonDexNum, setFilter);
+    } else {
+        pendingLinkRequest_ =
+            cardSearch_.searchByName(QString::fromStdString(copy.cardRef.name), setFilter);
+    }
+    // 20s comfortably outlasts the search service's retry/backoff, so the watchdog only
+    // trips on a truly lost reply (a superseded request), never on a slow real failure.
+    linkWatchdog_->start(20000);
+    updateButtonState();  // disable + show "Linking…" until the reply arrives
+}
+
+void OwnedCardsView::onLinkResults(const std::vector<CardCandidate>& cards) {
+    const std::string copyId = pendingLinkCopyId_;
+    const QString wantNumber = collectorKey(pendingLinkCollector_);
+    pendingLinkCopyId_.clear();  // link no longer pending (re-enables the button)
+    pendingLinkCollector_.clear();
+
+    // Pick the one printing to link. A set + species/name usually yields exactly one;
+    // when a species has several printings in the set, the copy's collector number
+    // singles one out. Anything still ambiguous is reported, not guessed.
+    const CardCandidate* match = nullptr;
+    if (cards.size() == 1) {
+        match = &cards.front();
+    } else if (cards.size() > 1 && !wantNumber.isEmpty()) {
+        for (const CardCandidate& candidate : cards) {
+            if (collectorKey(candidate.cardRef.collectorNumber) != wantNumber) {
+                continue;
+            }
+            if (match) {
+                match = nullptr;  // two printings share the number — still ambiguous
+                break;
+            }
+            match = &candidate;
+        }
+    }
+
+    if (!match) {
+        updateButtonState();
+        showToast(this, cards.empty()
+                            ? tr("No catalog match for this card's set and name.")
+                            : tr("Found %1 possible cards — open “Edit card…” to pick "
+                                 "the right one.")
+                                  .arg(cards.size()));
+        return;
+    }
+
+    try {
+        copies_.linkCatalogCard(copyId, match->id);
+    } catch (const std::exception& e) {
+        updateButtonState();
+        QMessageBox::critical(this, tr("Pokedex TCG"),
+                              tr("Could not link the card:\n%1").arg(QString::fromUtf8(e.what())));
+        return;
+    }
+    showToast(this, tr("Linked — market prices are now available for this card."));
+    // Reflect the new link: reload picks up the persisted external id, then reselect the
+    // copy and force a panel re-render so the prices block shows its Fetch button (the
+    // copy id is unchanged, so the shownCopyId_ dedup guard would otherwise skip it).
+    reload();
+    for (int i = 0; i < static_cast<int>(loaded_.size()); ++i) {
+        if (loaded_[i].id == copyId) {
+            table_->selectRow(i);
+            break;
+        }
+    }
+    shownCopyId_.clear();
+    showSelectedImage();
 }
 
 }  // namespace pokedex

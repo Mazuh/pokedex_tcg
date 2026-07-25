@@ -134,7 +134,17 @@ hits the API. The reusable `gui/views/CardPricesPanel` (keyed by a copy's
 the Edit page and the My Cards detail. An unlinked copy (added before the link existed, or
 by hand) gets a link from the Edit page: pick the matching printing in the finder and press
 "Link prices to this card" (persists immediately via `linkCatalogCard`, independent of the
-details Save), after which the panel offers the Fetch button. The panel also carries an
+details Save), after which the panel offers the Fetch button. For a copy that already
+records a set + species/name, `OwnedCardsView` also offers a one-click **"Link prices"**
+button right in the inventory (no Edit-page detour): it searches the catalog scoped by the
+copy's set (name, else printed code) + species/name and, if that resolves to exactly one
+printing, links it immediately — disambiguating a set with several printings of the species
+by the copy's collector number; 0 or N matches is reported ("no match" / "open Edit to
+pick"), never guessed. It's gated to a live, unlinked copy with enough data (`canAutoLink`)
+and reuses the shared, debounced `CardSearchService`, so the link lands asynchronously in
+`onLinkResults` (the request id is matched before a reply is adopted, since the service is
+app-wide) with a watchdog `QTimer` recovering the button if a superseded search never
+replies. The panel also carries an
 "ⓘ" popover (same idiom as the card-attribute pickers) explaining the metrics, and
 per-vendor **listing links** ("TCGplayer ↗ / Cardmarket ↗") built deterministically as
 `prices.pokemontcg.io/<vendor>/<id>` — a stable redirect to the real marketplace page, so
