@@ -98,10 +98,13 @@ CREATE TABLE cache_meta (
 
 // v6 → v7: the on-demand cache of a card's market prices (pokemontcg.io per-card
 // tcgplayer/cardmarket blocks), plus manually-entered prices. Like the set cache
-// this is NOT collection source-of-truth — a card's price is keyed by the external
-// card id (e.g. "sv3-125"), NOT by any card_copy, so deleting a copy never removes
-// pricing and one card can carry many prices at once (several vendors × variants ×
-// metrics; there is no single true price). card_price_fetch records when WE last
+// this is NOT collection source-of-truth — a card's price is keyed by
+// `external_card_id`, a source-neutral card identity (today always a pokemontcg.io
+// card id, e.g. "sv3-125", the only source wired up — the name stays provider-
+// agnostic so another catalog can file prices here without a schema rename), NOT by
+// any card_copy, so deleting a copy never removes pricing and one card can carry
+// many prices at once (several vendors × variants × metrics; there is no single true
+// price). card_price_fetch records when WE last
 // hit the API for a given card so the caller can enforce a TTL and avoid hammering
 // the free API. Each card_price row is one observation: `provenance` is the source
 // ('tcgplayer'/'cardmarket'/'manual'), `variant`/`metric` locate it within a vendor
@@ -111,13 +114,13 @@ CREATE TABLE cache_meta (
 // card (provenance != 'manual'); manual rows survive. See core/app/card_price_cache.
 constexpr char kMigrationV7[] = R"sql(
 CREATE TABLE card_price_fetch (
-  card_key    TEXT PRIMARY KEY,
+  external_card_id    TEXT PRIMARY KEY,
   fetched_at  TEXT NOT NULL
 );
 
 CREATE TABLE card_price (
   id            TEXT PRIMARY KEY,
-  card_key      TEXT NOT NULL,
+  external_card_id      TEXT NOT NULL,
   provenance    TEXT NOT NULL,
   variant       TEXT NOT NULL DEFAULT '',
   metric        TEXT NOT NULL DEFAULT '',
@@ -126,7 +129,7 @@ CREATE TABLE card_price (
   observed_at   TEXT NOT NULL,
   note          TEXT NOT NULL DEFAULT ''
 );
-CREATE INDEX idx_card_price_key ON card_price(card_key);
+CREATE INDEX idx_card_price_external_id ON card_price(external_card_id);
 )sql";
 
 }  // namespace

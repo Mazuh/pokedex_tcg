@@ -106,12 +106,21 @@ mirroring `CardSetCache`), and `CardPriceService` (the verbs, with an injectable
 clock/uuid like `CardCopyService`: `recordApiPrices` [parse a fetched payload, replace
 the card's API-sourced rows, preserve `manual` rows, stamp the fetch], `addManualPrice`/
 `removeManualPrice`, `pricesFor`, `fetchedAt`, and `needsRefresh(key, ttl)` — the
-anti-hammer TTL gate the caller checks before the network GET). Prices are keyed by the
-external card id and are deliberately **independent of `card_copy`** (deleting a copy
-never removes pricing; a card carries many prices at once because there is no single
-true price); money is stored as integer cents (`Statement::bindInt64`/`columnInt64`).
-The transport GET stays GUI-side, as with search/sets. Not yet wired to any GUI — a
-`CardCopy` doesn't persist the card id, so surfacing a copy's price is a future step.
+anti-hammer TTL gate the caller checks before the network GET). Prices are keyed by
+`external_card_id` — a **source-neutral** card identity (named for what it is, an
+external catalog's card id, not for any one provider) that is deliberately
+**independent of `card_copy`** (deleting a copy never removes pricing; a card carries
+many prices at once because there is no single true price). Today that id is always a
+pokemontcg.io card id (`"sv3-125"` = setId+"-"+number), the only price source wired up;
+the naming keeps the schema open to another catalog without a rename (a source with a
+different id scheme would need a mapping to the same key). Money is stored as integer
+cents (`Statement::bindInt64`/`columnInt64`), and multi-statement writes go through
+`Database::transaction(body)` (the shared BEGIN/ROLLBACK/COMMIT guard); the TTL
+freshness rule (incl. the backward-clock guard) is the shared `cacheIsFresh` helper
+(`core/app/cache_ttl.h`), used by both this cache and the GUI set cache. The transport
+GET stays GUI-side, as with search/sets. Not yet wired to any GUI — a `CardCopy` does
+not persist `external_card_id`, so surfacing a copy's price is a future step (edition
+modeling and the copy→price link are deferred until the price-viewing UI drives them).
 A `CardSearchQuery` is scoped EITHER by species
 (`dexNumber`, → `nationalPokedexNumbers:N`) OR by card name (`nameQuery`, →
 `name:"…"`) — the latter is how a species-free card is found; on the GUI side

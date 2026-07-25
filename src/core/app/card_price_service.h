@@ -41,29 +41,29 @@ public:
 
     // Every stored price for a card (API-sourced + manual), the cached spread the
     // caller displays. Reads only — never hits the network.
-    std::vector<CardPrice> pricesFor(const std::string& cardKey);
+    std::vector<CardPrice> pricesFor(const std::string& externalCardId);
 
     // When we last fetched this card from the API, or nullopt if never.
-    std::optional<Timestamp> fetchedAt(const std::string& cardKey);
+    std::optional<Timestamp> fetchedAt(const std::string& externalCardId);
 
     // Whether a fresh API fetch is warranted: true when the card was never fetched
     // or its last fetch is at least `ttl` old. The anti-hammer gate the caller
     // checks before doing the (rate-limited, flaky) network GET.
-    bool needsRefresh(const std::string& cardKey, std::chrono::seconds ttl);
+    bool needsRefresh(const std::string& externalCardId, std::chrono::seconds ttl);
 
-    // Parse a /v2/cards/{id} payload and persist its prices for `cardKey`, replacing
+    // Parse a /v2/cards/{id} payload and persist its prices for `externalCardId`, replacing
     // that card's previously-cached API rows and stamping the fetch time to now();
-    // manual rows are preserved. The parsed rows are re-keyed to `cardKey` (the id we
+    // manual rows are preserved. The parsed rows are re-keyed to `externalCardId` (the id we
     // fetched) so a read finds them regardless of the payload's own id field. Returns
     // the freshly stored API prices. Throws CardCatalogParseError if the payload is
     // not valid JSON (a valid-but-empty payload simply stores no prices).
-    std::vector<CardPrice> recordApiPrices(const std::string& cardKey,
+    std::vector<CardPrice> recordApiPrices(const std::string& externalCardId,
                                            const std::string& jsonPayload);
 
     // Pin a manual price for a card. `amountCents` must be positive and `currency`
     // non-blank (trimmed) — else CardPriceError. observedAt is stamped to now().
     // Returns the persisted price with its minted id.
-    CardPrice addManualPrice(const std::string& cardKey, long long amountCents,
+    CardPrice addManualPrice(const std::string& externalCardId, long long amountCents,
                              std::string currency, std::string note = "");
 
     // Delete a manual price by id. A no-op if the id is unknown or names an

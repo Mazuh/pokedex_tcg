@@ -28,18 +28,18 @@ public:
 
     // Every stored price for a card — API-sourced and manual together — ordered
     // deterministically by (provenance, variant, metric). Empty when none stored.
-    std::vector<CardPrice> pricesFor(const std::string& cardKey);
+    std::vector<CardPrice> pricesFor(const std::string& externalCardId);
 
     // When WE last fetched this card's prices from the API, or nullopt if never —
     // the caller compares it against "now" to decide whether to refetch (TTL).
-    std::optional<Timestamp> fetchedAt(const std::string& cardKey);
+    std::optional<Timestamp> fetchedAt(const std::string& externalCardId);
 
     // Replace this card's API-sourced prices with `prices` and stamp `fetchedAt`, in
     // one transaction. Manual rows (provenance == kManualPriceProvenance) are left
     // untouched — a refetch never discards a hand-entered price. An empty `prices`
     // still records the fetch stamp (the card simply has no market price right now).
     // Each row's `id` must already be set (minted by the caller).
-    void storeApiPrices(const std::string& cardKey, const std::vector<CardPrice>& prices,
+    void storeApiPrices(const std::string& externalCardId, const std::vector<CardPrice>& prices,
                         Timestamp fetchedAt);
 
     // Insert one price row (used for a manual entry). Its `id` must already be set.

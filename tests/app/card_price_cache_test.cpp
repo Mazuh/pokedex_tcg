@@ -24,7 +24,7 @@ CardPrice makePrice(std::string id, std::string key, std::string provenance, std
                     const char* observed) {
     CardPrice p;
     p.id = std::move(id);
-    p.cardKey = std::move(key);
+    p.externalCardId = std::move(key);
     p.provenance = std::move(provenance);
     p.variant = std::move(variant);
     p.metric = std::move(metric);
@@ -116,7 +116,7 @@ TEST(CardPriceCacheTest, StoreEmptyClearsApiRowsButRecordsFetch) {
     EXPECT_EQ(*cache.fetchedAt("base1-4"), at("2026-07-26T12:00:00Z"));
 }
 
-TEST(CardPriceCacheTest, PricesAreScopedToTheirCardKey) {
+TEST(CardPriceCacheTest, PricesAreScopedToTheirExternalCardId) {
     Database db(":memory:");
     db.migrate();
     CardPriceCache cache(db);

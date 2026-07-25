@@ -11,8 +11,8 @@ namespace pokedex {
 // pokemontcg.io block names, carried through verbatim ("tcgplayer", "cardmarket").
 inline constexpr char kManualPriceProvenance[] = "manual";
 
-// APP — one price observation for a card, keyed by the external card id
-// (pokemontcg.io "sv3-125"), NOT by any owned CardCopy: a card's price lives
+// APP — one price observation for a card, keyed by `externalCardId` — a
+// source-neutral card identity, NOT by any owned CardCopy: a card's price lives
 // independent of whether we hold a copy, so deleting a copy never removes pricing
 // and a card can carry many observations at once. There is no single true price —
 // a card is quoted by several vendors, in several variants, under several metrics
@@ -31,9 +31,19 @@ inline constexpr char kManualPriceProvenance[] = "manual";
 // SOURCE last updated the price (the vendor's printed date, or the entry time for a
 // manual price) — distinct from card_price_fetch's "when WE fetched". `id` is a
 // uuid assigned when the row is persisted (empty on a freshly parsed row).
+//
+// `externalCardId` is deliberately named for what it IS — some external card
+// catalog's stable id for the card — not for any one provider, so the storage
+// stays source-agnostic. TODAY that id is always a pokemontcg.io card id (the
+// format "sv3-125": setId + "-" + collector number), because pokemontcg.io is the
+// only price source wired up; a different catalog would file its prices under its
+// own id here (and, if its id scheme differs, needs a mapping to reach the same
+// key). The column is `card_price.external_card_id`.
 struct CardPrice {
     std::string id;
-    std::string cardKey;
+    // The external card catalog's id for this card — currently always a
+    // pokemontcg.io card id ("sv3-125"). See the struct note.
+    std::string externalCardId;
     std::string provenance;
     std::string variant;
     std::string metric;

@@ -243,7 +243,7 @@ TEST(ParseCardPricesTest, ExtractsTcgplayerVariantsAsUsdCentsFromVendorDate) {
     const std::vector<CardPrice> prices = parseCardPrices(kCardWithPrices, at("2000-01-01T00:00:00Z"));
 
     const CardPrice& mid = findPrice(prices, "tcgplayer", "holofoil", "mid");
-    EXPECT_EQ(mid.cardKey, "base1-4");
+    EXPECT_EQ(mid.externalCardId, "base1-4");
     EXPECT_EQ(mid.amountCents, 91880);  // 918.80 → cents
     EXPECT_EQ(mid.currency, "USD");
     EXPECT_EQ(mid.observedAt, at("2026-07-25T00:00:00Z"));  // vendor updatedAt, midnight UTC
@@ -305,7 +305,7 @@ TEST(ParseCardPricesTest, AlsoAcceptsFirstElementOfADataArray) {
     })json";
     const std::vector<CardPrice> prices = parseCardPrices(json, at("2000-01-01T00:00:00Z"));
     ASSERT_EQ(prices.size(), 1u);
-    EXPECT_EQ(prices[0].cardKey, "sv3-125");
+    EXPECT_EQ(prices[0].externalCardId, "sv3-125");
     EXPECT_EQ(prices[0].amountCents, 200);
 }
 

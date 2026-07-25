@@ -11,11 +11,11 @@ namespace {
 // Insert one already-id'd price row into card_price.
 void insertPrice(Database& db, const CardPrice& p) {
     Statement ins(db,
-                  "INSERT INTO card_price(id, card_key, provenance, variant, metric,"
+                  "INSERT INTO card_price(id, external_card_id, provenance, variant, metric,"
                   " amount_cents, currency, observed_at, note)"
                   " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?);");
     ins.bindText(1, p.id);
-    ins.bindText(2, p.cardKey);
+    ins.bindText(2, p.externalCardId);
     ins.bindText(3, p.provenance);
     ins.bindText(4, p.variant);
     ins.bindText(5, p.metric);
@@ -28,17 +28,17 @@ void insertPrice(Database& db, const CardPrice& p) {
 
 }  // namespace
 
-std::vector<CardPrice> CardPriceCache::pricesFor(const std::string& cardKey) {
+std::vector<CardPrice> CardPriceCache::pricesFor(const std::string& externalCardId) {
     Statement stmt(db_,
-                   "SELECT id, card_key, provenance, variant, metric, amount_cents,"
-                   " currency, observed_at, note FROM card_price WHERE card_key = ?"
+                   "SELECT id, external_card_id, provenance, variant, metric, amount_cents,"
+                   " currency, observed_at, note FROM card_price WHERE external_card_id = ?"
                    " ORDER BY provenance, variant, metric;");
-    stmt.bindText(1, cardKey);
+    stmt.bindText(1, externalCardId);
     std::vector<CardPrice> prices;
     while (stmt.step()) {
         CardPrice p;
         p.id = stmt.columnText(0);
-        p.cardKey = stmt.columnText(1);
+        p.externalCardId = stmt.columnText(1);
         p.provenance = stmt.columnText(2);
         p.variant = stmt.columnText(3);
         p.metric = stmt.columnText(4);
@@ -51,16 +51,16 @@ std::vector<CardPrice> CardPriceCache::pricesFor(const std::string& cardKey) {
     return prices;
 }
 
-std::optional<Timestamp> CardPriceCache::fetchedAt(const std::string& cardKey) {
-    Statement stmt(db_, "SELECT fetched_at FROM card_price_fetch WHERE card_key = ?;");
-    stmt.bindText(1, cardKey);
+std::optional<Timestamp> CardPriceCache::fetchedAt(const std::string& externalCardId) {
+    Statement stmt(db_, "SELECT fetched_at FROM card_price_fetch WHERE external_card_id = ?;");
+    stmt.bindText(1, externalCardId);
     if (!stmt.step()) {
         return std::nullopt;
     }
     return timestampFromIso(stmt.columnText(0));
 }
 
-void CardPriceCache::storeApiPrices(const std::string& cardKey,
+void CardPriceCache::storeApiPrices(const std::string& externalCardId,
                                     const std::vector<CardPrice>& prices,
                                     Timestamp fetchedAt) {
     // The row replacement and its fetch stamp are one logical unit across several
@@ -69,8 +69,8 @@ void CardPriceCache::storeApiPrices(const std::string& cardKey,
     db_.transaction([&] {
         // Drop only this card's API-sourced rows; manual rows survive a refetch.
         Statement clear(db_,
-                        "DELETE FROM card_price WHERE card_key = ? AND provenance != ?;");
-        clear.bindText(1, cardKey);
+                        "DELETE FROM card_price WHERE external_card_id = ? AND provenance != ?;");
+        clear.bindText(1, externalCardId);
         clear.bindText(2, kManualPriceProvenance);
         clear.step();
 
@@ -79,9 +79,9 @@ void CardPriceCache::storeApiPrices(const std::string& cardKey,
         }
 
         Statement meta(db_,
-                       "INSERT INTO card_price_fetch(card_key, fetched_at) VALUES(?, ?)"
-                       " ON CONFLICT(card_key) DO UPDATE SET fetched_at = excluded.fetched_at;");
-        meta.bindText(1, cardKey);
+                       "INSERT INTO card_price_fetch(external_card_id, fetched_at) VALUES(?, ?)"
+                       " ON CONFLICT(external_card_id) DO UPDATE SET fetched_at = excluded.fetched_at;");
+        meta.bindText(1, externalCardId);
         meta.bindText(2, timestampToIso(fetchedAt));
         meta.step();
     });

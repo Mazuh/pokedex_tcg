@@ -21,23 +21,23 @@ CardPriceService::IdGenerator CardPriceService::uuidGenerator() {
 CardPriceService::CardPriceService(CardPriceCache& cache, Clock clock, IdGenerator idGenerator)
     : cache_(cache), clock_(std::move(clock)), idGenerator_(std::move(idGenerator)) {}
 
-std::vector<CardPrice> CardPriceService::pricesFor(const std::string& cardKey) {
-    return cache_.pricesFor(cardKey);
+std::vector<CardPrice> CardPriceService::pricesFor(const std::string& externalCardId) {
+    return cache_.pricesFor(externalCardId);
 }
 
-std::optional<Timestamp> CardPriceService::fetchedAt(const std::string& cardKey) {
-    return cache_.fetchedAt(cardKey);
+std::optional<Timestamp> CardPriceService::fetchedAt(const std::string& externalCardId) {
+    return cache_.fetchedAt(externalCardId);
 }
 
-bool CardPriceService::needsRefresh(const std::string& cardKey, std::chrono::seconds ttl) {
+bool CardPriceService::needsRefresh(const std::string& externalCardId, std::chrono::seconds ttl) {
     // Refresh when never fetched, expired, or the stamp is in the future (a clock
     // moved backward) — the shared cacheIsFresh rule handles the last two, including
     // the backward-clock guard the set cache uses too.
-    const std::optional<Timestamp> last = cache_.fetchedAt(cardKey);
+    const std::optional<Timestamp> last = cache_.fetchedAt(externalCardId);
     return !last || !cacheIsFresh(*last, clock_(), ttl);
 }
 
-std::vector<CardPrice> CardPriceService::recordApiPrices(const std::string& cardKey,
+std::vector<CardPrice> CardPriceService::recordApiPrices(const std::string& externalCardId,
                                                          const std::string& jsonPayload) {
     const Timestamp now = clock_();
     // A vendor block without a printed date falls back to the fetch time.
@@ -45,14 +45,14 @@ std::vector<CardPrice> CardPriceService::recordApiPrices(const std::string& card
     for (CardPrice& p : prices) {
         // Key every row to the id we fetched (authoritative for the cache lookup) and
         // mint its persistence id.
-        p.cardKey = cardKey;
+        p.externalCardId = externalCardId;
         p.id = idGenerator_();
     }
-    cache_.storeApiPrices(cardKey, prices, now);
+    cache_.storeApiPrices(externalCardId, prices, now);
     return prices;
 }
 
-CardPrice CardPriceService::addManualPrice(const std::string& cardKey, long long amountCents,
+CardPrice CardPriceService::addManualPrice(const std::string& externalCardId, long long amountCents,
                                            std::string currency, std::string note) {
     if (amountCents <= 0) {
         throw CardPriceError("A price must be a positive amount.");
@@ -64,7 +64,7 @@ CardPrice CardPriceService::addManualPrice(const std::string& cardKey, long long
 
     CardPrice price;
     price.id = idGenerator_();
-    price.cardKey = cardKey;
+    price.externalCardId = externalCardId;
     price.provenance = kManualPriceProvenance;
     price.variant = "";
     price.metric = "";

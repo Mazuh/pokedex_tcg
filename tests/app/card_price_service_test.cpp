@@ -51,7 +51,7 @@ TEST(CardPriceServiceTest, RecordApiPricesParsesPersistsAndStampsFetch) {
 
     ASSERT_EQ(stored.size(), 2u);
     for (const CardPrice& p : stored) {
-        EXPECT_EQ(p.cardKey, "base1-4");
+        EXPECT_EQ(p.externalCardId, "base1-4");
         EXPECT_FALSE(p.id.empty());  // minted by the service
     }
     // Persisted and readable back; fetch stamped to now().
@@ -70,7 +70,7 @@ TEST(CardPriceServiceTest, RecordApiPricesReKeysToTheRequestedId) {
 
     EXPECT_TRUE(f.service.pricesFor("WRONG").empty());
     ASSERT_EQ(f.service.pricesFor("sv3-125").size(), 1u);
-    EXPECT_EQ(f.service.pricesFor("sv3-125")[0].cardKey, "sv3-125");
+    EXPECT_EQ(f.service.pricesFor("sv3-125")[0].externalCardId, "sv3-125");
 }
 
 TEST(CardPriceServiceTest, RecordApiPricesPreservesManualAcrossRefetch) {

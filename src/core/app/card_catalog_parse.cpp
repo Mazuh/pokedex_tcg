@@ -234,7 +234,7 @@ std::vector<CardPrice> parseCardPrices(const std::string& jsonText,
     if (card == nullptr) {
         return prices;
     }
-    const std::string cardKey = strField(*card, "id");
+    const std::string externalCardId = strField(*card, "id");
 
     // tcgplayer (USD): prices are nested one level by variant ("holofoil",
     // "normal"…), each variant an object of named metrics (low/mid/high/market…).
@@ -249,7 +249,7 @@ std::vector<CardPrice> parseCardPrices(const std::string& jsonText,
                 }
                 for (const auto& [metric, value] : metrics.items()) {
                     if (const auto cents = priceCents(value)) {
-                        prices.push_back(CardPrice{.cardKey = cardKey,
+                        prices.push_back(CardPrice{.externalCardId = externalCardId,
                                                    .provenance = "tcgplayer",
                                                    .variant = variant,
                                                    .metric = metric,
@@ -270,7 +270,7 @@ std::vector<CardPrice> parseCardPrices(const std::string& jsonText,
             pricesObj != cm->end() && pricesObj->is_object()) {
             for (const auto& [metric, value] : pricesObj->items()) {
                 if (const auto cents = priceCents(value)) {
-                    prices.push_back(CardPrice{.cardKey = cardKey,
+                    prices.push_back(CardPrice{.externalCardId = externalCardId,
                                                .provenance = "cardmarket",
                                                .variant = "",
                                                .metric = metric,
