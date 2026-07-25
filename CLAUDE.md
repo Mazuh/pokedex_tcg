@@ -232,6 +232,19 @@ ctest --test-dir build --output-on-failure
   an enum's value count.
 - After nontrivial changes, build and run the tests before considering the
   work done.
+- **Never open the user's real workspace from tests or verification runs.** The
+  app resolves its data directory (SQLite DB + media) from
+  `~/.config/pokedex-tcg` — or `$XDG_CONFIG_HOME`, or `$POKEDEX_TCG_CONFIG_DIR`
+  (see `storage/workspace.cpp`) — which is a real collection someone may be
+  using. So every test must isolate its storage: an in-memory `Database`
+  (`Database{":memory:"}`), a `TempDir`, or a `POKEDEX_TCG_CONFIG_DIR` /
+  `XDG_CONFIG_HOME` override into a temp dir (see `tests/storage/workspace_test.cpp`
+  and `tests/app/install_service_test.cpp` for the `ScopedEnv` pattern) — the
+  suite must never write to the default location. Likewise, when driving the
+  built GUI to verify a change, launch it with
+  `POKEDEX_TCG_CONFIG_DIR=<throwaway dir>` so you exercise a scratch workspace,
+  not the user's — two instances writing the same DB also contend on SQLite's
+  file lock.
 
 **GUI navigation.** The app is a macOS-style shell: `MainWindow` has a left
 sidebar (a `QListWidget` source list, Finder/Settings-style) selecting sections
