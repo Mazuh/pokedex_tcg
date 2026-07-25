@@ -10,6 +10,7 @@
 #include "core/domain/card_copy.h"
 #include "core/domain/types.h"
 
+class QLabel;
 class QLineEdit;
 class QStackedWidget;
 class QTableWidget;
@@ -63,6 +64,11 @@ private:
     // populates the rows. A negative sortColumn_ keeps the guide's natural (dex)
     // order (the initial, unsorted state).
     void sortEntries();
+    // Recompute the header stats line (Listed / Captured / % / market $ value) from
+    // the freshly computed entries_ and the binder's filed copies, and set stats_.
+    // Called from refresh() once both are loaded — never from repopulate(), since a
+    // header-sort is a pure reorder that changes neither the counts nor the value.
+    void updateStats(const std::vector<CardCopy>& filedCopies);
     // Show only the rows whose Pokémon name contains `filter` (case-insensitive);
     // an empty filter shows all. Rows are toggled, not rebuilt.
     void applyFilter(const QString& filter);
@@ -99,6 +105,7 @@ private:
     BinderService& binders_;
     QStackedWidget* stack_;
     QTableWidget* table_;
+    QLabel* stats_;
     QLineEdit* search_;
     PokemonDetailPanel* detail_;
     std::vector<CardBinderEntry> entries_;

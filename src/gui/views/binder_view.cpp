@@ -15,11 +15,16 @@
 #include <QVBoxLayout>
 
 #include <exception>
+#include <map>
+#include <string>
+#include <unordered_map>
 
 #include "core/app/binder_guide_service.h"
 #include "core/app/binder_service.h"
 #include "core/app/card_copy_service.h"
+#include "core/domain/card_ownership.h"
 #include "gui/services/card_image_store.h"
+#include "gui/services/card_price_lookup_service.h"
 #include "gui/views/add_card_copy_page.h"
 #include "gui/views/back_button.h"
 #include "gui/views/binder_combo.h"
@@ -27,6 +32,7 @@
 #include "gui/views/edit_copy_page_host.h"
 #include "gui/views/owned_copy_buckets.h"
 #include "gui/views/pokemon_detail_panel.h"
+#include "gui/views/price_labels.h"
 #include "gui/views/select_all_line_edit.h"
 #include "gui/views/sortable_table.h"
 #include "gui/views/splitter_style.h"
@@ -58,6 +64,12 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     topBar->addWidget(backButton);
     topBar->addWidget(heading);
     topBar->addStretch();
+
+    // A muted subtitle line under the top bar carrying the binder's stats:
+    // how many species are listed, how many captured (+%), and the market $ value
+    // of the captured cards. Filled by updateStats() on every refresh().
+    stats_ = new QLabel(this);
+    stats_->setStyleSheet(QStringLiteral("color: gray;"));
 
     search_ = new SelectAllLineEdit(this);
     search_->setPlaceholderText(tr("Search Pokémon…"));
@@ -115,6 +127,7 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     auto* listLayout = new QVBoxLayout(listPane);
     listLayout->setContentsMargins(16, 12, 16, 12);  // match the other sections' padding
     listLayout->addLayout(topBar);
+    listLayout->addWidget(stats_);
     listLayout->addWidget(search_);
     listLayout->addWidget(table_);
 
@@ -154,14 +167,72 @@ void BinderView::refresh() {
     // panel the copies to display (copy mode). bucketOwnedCopiesByDex applies the shared
     // "owned + species-tied" predicate (mirroring the "Completed" status). Scoped read
     // (listByBinder), not a whole-inventory scan — unlike the Pokémon browser's listAll.
+    // The full filed list is kept to also drive the header value stat (which includes
+    // species-free owned copies, so it reads the list rather than the bucketed map).
     ownedHere_.clear();
+    std::vector<CardCopy> filed;
     try {
-        ownedHere_ = bucketOwnedCopiesByDex(cardCopies_.listByBinder(binder_.id));
+        filed = cardCopies_.listByBinder(binder_.id);
+        ownedHere_ = bucketOwnedCopiesByDex(filed);
     } catch (const std::exception&) {
+        filed.clear();
         ownedHere_.clear();  // best-effort: fall back to artwork-only if the read fails
     }
 
+    updateStats(filed);
     repopulate();
+}
+
+void BinderView::updateStats(const std::vector<CardCopy>& filedCopies) {
+    // Listed = every species the guide lists. Captured = species with at least one Owned
+    // copy filed here; ownedHere_ is exactly that set (bucketOwnedCopiesByDex keeps only
+    // Owned, species-tied copies), so its size is the count directly. Counting
+    // CollectionStatus::Completed would undercount: a species that ALSO has an Incoming
+    // copy filed here resolves to Incoming (higher precedence) yet is genuinely owned here.
+    const int listed = static_cast<int>(entries_.size());
+    const int captured = static_cast<int>(ownedHere_.size());
+
+    // Market value of the Owned cards filed in this binder (species-free ones too — they
+    // are cards in the binder), totalled per currency; no FX conversion, so USD (TCGplayer)
+    // and EUR (Cardmarket) stay separate. Reads are network-free local-cache lookups, so a
+    // copy contributes only once its prices were fetched (and it is linked); the figure is
+    // therefore a lower bound over what has been priced. Cache each id's rows so repeated
+    // printings aren't re-read (every copy still counts — three of a card is worth 3×). The
+    // read is best-effort like the rest of refresh(): a storage failure omits the $ rather
+    // than crashing the binder open.
+    std::map<std::string, long long> totals;
+    try {
+        std::unordered_map<std::string, std::vector<CardPrice>> priceCache;
+        for (const CardCopy& copy : filedCopies) {
+            if (copy.ownership != CardOwnership::Owned || copy.externalCardId.empty()) {
+                continue;
+            }
+            auto it = priceCache.find(copy.externalCardId);
+            if (it == priceCache.end()) {
+                it = priceCache
+                         .emplace(copy.externalCardId,
+                                  priceLookup_.cached(QString::fromStdString(copy.externalCardId)))
+                         .first;
+            }
+            accumulateBestPrices(totals, it->second);
+        }
+    } catch (const std::exception&) {
+        totals.clear();  // best-effort: show the counts without a value rather than crash
+    }
+
+    QString text = tr("Listed %1").arg(listed);
+    if (listed > 0) {
+        const int percent = qRound(100.0 * captured / listed);
+        // Never pair a positive Captured count with "0%": round a tiny nonzero ratio up to
+        // "<1%" so the figure never reads as contradictory.
+        const QString pct = (percent == 0 && captured > 0) ? tr("<1%") : tr("%1%").arg(percent);
+        text += tr(" · Captured %1 (%2)").arg(captured).arg(pct);
+    }
+    const QString value = formatMoneyTotals(totals);
+    if (!value.isEmpty()) {
+        text += QStringLiteral(" · ") + value;
+    }
+    stats_->setText(text);
 }
 
 void BinderView::repopulate() {

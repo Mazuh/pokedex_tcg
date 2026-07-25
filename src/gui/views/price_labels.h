@@ -3,6 +3,7 @@
 #include <QString>
 #include <QStringList>
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -64,21 +65,71 @@ inline const CardPrice* bestPrice(const std::vector<CardPrice>& prices, const ch
     return nullptr;
 }
 
+// The representative TCGplayer + Cardmarket figure for one card (either may be null when
+// that vendor carries none of its metrics), using the app-wide metric preference:
+// TCGplayer market → mid → low, Cardmarket trendPrice → averageSell → low. The SINGLE
+// source both the per-card headline and the binder value total draw from, so the two can
+// never pick a different figure — extracting it here keeps that promise structurally
+// rather than by two copies of the same literal lists staying in sync by hand.
+struct VendorBest {
+    const CardPrice* tcg;
+    const CardPrice* cm;
+};
+inline VendorBest vendorBest(const std::vector<CardPrice>& prices) {
+    return {bestPrice(prices, kTcgplayerProvenance, {"market", "mid", "low"}),
+            bestPrice(prices, kCardmarketProvenance,
+                      {"trendPrice", "averageSellPrice", "lowPrice"})};
+}
+
 // A compact one-line summary of the spread: one representative figure per vendor —
-// TCGplayer's market price (falling back to mid/low) and Cardmarket's trend price
-// (falling back to average-sell/low) — e.g. "TCGplayer $800.43 · Cardmarket €1531.00".
-// Empty only when a card truly has no usable price, so callers can hide the hint. The
-// full list is the panel's expandable table.
+// e.g. "TCGplayer $800.43 · Cardmarket €1531.00". Empty only when a card truly has no
+// usable price, so callers can hide the hint. The full list is the panel's expandable
+// table.
 inline QString priceHeadline(const std::vector<CardPrice>& prices) {
-    const CardPrice* tcg = bestPrice(prices, kTcgplayerProvenance, {"market", "mid", "low"});
-    const CardPrice* cm =
-        bestPrice(prices, kCardmarketProvenance, {"trendPrice", "averageSellPrice", "lowPrice"});
+    const VendorBest best = vendorBest(prices);
     QStringList parts;
-    if (tcg != nullptr) {
-        parts << QStringLiteral("TCGplayer ") + formatMoney(tcg->amountCents, tcg->currency);
+    if (best.tcg != nullptr) {
+        parts << QStringLiteral("TCGplayer ") +
+                     formatMoney(best.tcg->amountCents, best.tcg->currency);
     }
-    if (cm != nullptr) {
-        parts << QStringLiteral("Cardmarket ") + formatMoney(cm->amountCents, cm->currency);
+    if (best.cm != nullptr) {
+        parts << QStringLiteral("Cardmarket ") +
+                     formatMoney(best.cm->amountCents, best.cm->currency);
+    }
+    return parts.join(QStringLiteral(" · "));
+}
+
+// Add one card's representative per-vendor figures into running per-currency totals
+// (keyed by ISO currency code), via the SAME vendorBest pick as priceHeadline. Currencies
+// stay separate — no FX rate is invented (USD from TCGplayer, EUR from Cardmarket
+// accumulate independently). A card with no usable price adds nothing. Used to total a
+// binder's value across many copies; note this is the headline's "notable figure" per
+// vendor (the highest across a card's finishes), so a summed total is a rough estimate of
+// worth, not a precise per-finish valuation — like the headline it can't tell which finish
+// a given copy is.
+inline void accumulateBestPrices(std::map<std::string, long long>& totalsByCurrency,
+                                 const std::vector<CardPrice>& prices) {
+    const VendorBest best = vendorBest(prices);
+    if (best.tcg != nullptr) {
+        totalsByCurrency[best.tcg->currency] += best.tcg->amountCents;
+    }
+    if (best.cm != nullptr) {
+        totalsByCurrency[best.cm->currency] += best.cm->amountCents;
+    }
+}
+
+// Per-currency cent totals → a compact string like "$120.50 · €35.00" (empty when
+// there are no totals). USD is emitted first to match the finder/panel's
+// TCGplayer-then-Cardmarket ordering; any other currencies follow in code order.
+inline QString formatMoneyTotals(const std::map<std::string, long long>& totalsByCurrency) {
+    QStringList parts;
+    if (const auto it = totalsByCurrency.find("USD"); it != totalsByCurrency.end()) {
+        parts << formatMoney(it->second, "USD");
+    }
+    for (const auto& [currency, cents] : totalsByCurrency) {
+        if (currency != "USD") {
+            parts << formatMoney(cents, currency);
+        }
     }
     return parts.join(QStringLiteral(" · "));
 }
