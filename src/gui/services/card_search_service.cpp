@@ -14,6 +14,7 @@
 
 #include "core/app/card_catalog_api.h"
 #include "core/app/card_catalog_parse.h"
+#include "core/app/card_set_cache.h"
 #include "gui/services/network_log.h"
 
 namespace pokedex {
@@ -39,6 +40,10 @@ constexpr int kBackoffBaseMs = 400;
 // would OR that many set.id clauses into the query URL (risking the API's length
 // limit), so treat it as unnarrowed.
 constexpr std::size_t kMaxNarrowSets = 12;
+// How long a cached set table stays fresh. The set table changes only a few times a
+// year (a new expansion), so a day is plenty — it means at most one /v2/sets fetch
+// per day rather than one per launch, sparing the daily-flaky public API.
+constexpr auto kSetCacheTtl = std::chrono::hours(24);
 
 std::int64_t monotonicNowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -87,9 +92,11 @@ QString httpStatusNote(QNetworkReply* reply) {
 
 }  // namespace
 
-CardSearchService::CardSearchService(const CardCatalogApi& api, QObject* parent)
+CardSearchService::CardSearchService(const CardCatalogApi& api, CardSetCache* cache,
+                                     QObject* parent)
     : QObject(parent),
       api_(api),
+      cache_(cache),
       nam_(new QNetworkAccessManager(this)),
       searchDebounce_(new QTimer(this)),
       limiter_(kBurst, kSustainedPerSecond),
@@ -99,10 +106,13 @@ CardSearchService::CardSearchService(const CardCatalogApi& api, QObject* parent)
     thumbPump_->setSingleShot(true);
     connect(thumbPump_, &QTimer::timeout, this, &CardSearchService::pumpThumbnails);
 
-    // Warm the set table immediately (the GET dispatches once the event loop runs),
-    // so it is cached in memory before the user ever opens "Add copy" — no wait on
-    // first use. The service outlives the window, so this happens once per session.
-    ensureSetsLoading();
+    // Warm the set table so it is ready in memory before the user ever opens "Add
+    // copy" — no wait on first use. Prefer a fresh on-disk cache (skipping the
+    // network entirely); only reach for /v2/sets when the cache is missing or stale.
+    // The service outlives the window, so this happens once per session.
+    if (!loadSetsFromCache(/*requireFresh=*/true)) {
+        ensureSetsLoading();
+    }
 }
 
 std::uint64_t CardSearchService::searchPrintings(int dexNumber, const QString& setCodeFilter) {
@@ -134,6 +144,48 @@ void CardSearchService::ensureSetsLoading() {
     fetchSets(kMaxSearchRetries);
 }
 
+bool CardSearchService::loadSetsFromCache(bool requireFresh) {
+    if (cache_ == nullptr) {
+        return false;
+    }
+    // A cache read failure (corrupt/locked DB) must never break search — treat it as
+    // "no cache" and let the network path take over.
+    try {
+        const std::optional<Timestamp> fetchedAt = cache_->fetchedAt();
+        if (!fetchedAt) {
+            return false;  // never fetched
+        }
+        if (requireFresh) {
+            const auto age = std::chrono::system_clock::now() - *fetchedAt;
+            // Treat a future stamp as stale too: a clock that was ahead at write time
+            // and later corrected backwards yields a negative age, which would read as
+            // "fresh forever" and never re-fetch. Age must be within [0, TTL).
+            if (age < std::chrono::system_clock::duration::zero() || age >= kSetCacheTtl) {
+                return false;  // stale (or future) — the caller will re-fetch
+            }
+        }
+        std::vector<CardSetInfo> cached = cache_->load();
+        if (cached.empty()) {
+            return false;  // an empty table is no better than no table
+        }
+        sets_ = std::move(cached);
+        setsLoading_ = false;
+        // A FRESH cache is authoritative for the session (the daily-TTL skip), so it
+        // marks the table loaded and no fetch runs. A STALE fallback (requireFresh ==
+        // false, adopted after a failed fetch) instead leaves setsLoaded_ false: it
+        // narrows searches now, but a later search still re-attempts the fetch once the
+        // API recovers — mirroring the pre-cache "failed load → retry next search".
+        setsLoaded_ = requireFresh;
+        qInfo().noquote() << "CardSearchService: loaded" << sets_.size()
+                          << (requireFresh ? "sets from cache" : "sets from stale cache");
+        Q_EMIT setsReady();
+        return true;
+    } catch (const std::exception& e) {
+        qWarning() << "CardSearchService: set cache read failed:" << e.what();
+        return false;
+    }
+}
+
 void CardSearchService::fetchSets(int retriesLeft) {
     QNetworkRequest request{QUrl(QString::fromStdString(api_.resolveSets().url))};
     QNetworkReply* reply = loggedGet(nam_, request);
@@ -142,12 +194,37 @@ void CardSearchService::fetchSets(int retriesLeft) {
         if (reply->error() == QNetworkReply::NoError) {
             setsLoading_ = false;
             try {
-                sets_ = parseSetsResponse(reply->readAll().toStdString());
-                setsLoaded_ = true;
-                qInfo().noquote() << "CardSearchService: loaded" << sets_.size() << "sets";
-                Q_EMIT setsReady();
+                std::vector<CardSetInfo> parsed =
+                    parseSetsResponse(reply->readAll().toStdString());
+                if (parsed.empty()) {
+                    // A 200 carrying an empty table is a degraded-mode response, not a
+                    // real set list — never overwrite the last-good cache with it (that
+                    // would destroy the outage fallback). Treat it like a failed fetch:
+                    // keep the cache and fall back to it (even if stale).
+                    qWarning() << "CardSearchService: set list came back empty — keeping cache";
+                    loadSetsFromCache(/*requireFresh=*/false);
+                } else {
+                    sets_ = std::move(parsed);
+                    setsLoaded_ = true;
+                    qInfo().noquote() << "CardSearchService: loaded" << sets_.size() << "sets";
+                    // Persist the fresh table so the next launch (within the TTL) can skip
+                    // this fetch. A cache write failure is non-fatal — the in-memory table
+                    // is already good for this session.
+                    if (cache_ != nullptr) {
+                        try {
+                            cache_->store(sets_, std::chrono::system_clock::now());
+                        } catch (const std::exception& e) {
+                            qWarning() << "CardSearchService: could not cache set list:"
+                                       << e.what();
+                        }
+                    }
+                    Q_EMIT setsReady();
+                }
             } catch (const std::exception& e) {
+                // A parse failure likewise leaves the good cache intact and falls back
+                // to it, rather than dropping set narrowing for the session.
                 qWarning() << "CardSearchService: could not parse set list:" << e.what();
+                loadSetsFromCache(/*requireFresh=*/false);
             }
         } else if (isTransient(reply) && retriesLeft > 0) {
             const int attempt = kMaxSearchRetries - retriesLeft;
@@ -157,12 +234,16 @@ void CardSearchService::fetchSets(int retriesLeft) {
             QTimer::singleShot(delay, this, [this, retriesLeft]() { fetchSets(retriesLeft - 1); });
             return;  // keep setsLoading_ true across the retry
         } else {
-            // Not fatal: searches proceed without the table (no narrowing, and
-            // expansion codes fall back to each card's embedded set). The next
-            // search will attempt the load again, since setsLoaded_ stays false.
+            // Not fatal: fall back to a stale cache if we have one, so searches keep
+            // narrowing from the last good table while the API is down. Failing that,
+            // searches proceed without the table (no narrowing, and expansion codes
+            // fall back to each card's embedded set). Either way setsLoaded_ stays
+            // false (loadSetsFromCache's stale path leaves it so), so the next search
+            // re-attempts the fetch once the API recovers.
             setsLoading_ = false;
             qWarning().noquote() << "CardSearchService: set list fetch failed —"
                                  << httpStatusNote(reply) << ":" << reply->errorString();
+            loadSetsFromCache(/*requireFresh=*/false);
         }
         // On a terminal outcome (loaded, parse-fail, or exhausted), let any pending
         // search proceed now that the load is no longer in flight.

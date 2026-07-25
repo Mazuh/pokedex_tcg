@@ -129,6 +129,7 @@ add_library(pokedex_core STATIC
     src/core/app/poke_api.cpp
     src/core/app/pokemon_tcg_io_api.cpp
     src/core/app/card_catalog_parse.cpp
+    src/core/app/card_set_cache.cpp
     src/core/app/media_cache_layout.cpp
     src/core/app/rate_limiter.cpp
 )
@@ -257,6 +258,7 @@ if(BUILD_TESTING)
         tests/app/pokemon_external_api_test.cpp
         tests/app/pokemon_tcg_io_api_test.cpp
         tests/app/card_catalog_parse_test.cpp
+        tests/app/card_set_cache_test.cpp
         tests/app/rate_limiter_test.cpp
     )
     target_link_libraries(pokedex_tests PRIVATE pokedex_core pokedex_warnings pokedex_sanitizers GTest::gtest_main)

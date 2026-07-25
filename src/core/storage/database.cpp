@@ -75,6 +75,27 @@ constexpr char kMigrationV4[] =
 constexpr char kMigrationV5[] =
     "ALTER TABLE card_copy ADD COLUMN foil TEXT NOT NULL DEFAULT '';";
 
+// v5 → v6: a local cache of the external card-catalog set table (pokemontcg.io
+// /v2/sets). This is NOT collection source-of-truth — it is external reference
+// data — but SQLite is this app's sole persistence format, so the cache lives here
+// rather than as a JSON sidecar. It lets the app skip the daily-flaky /v2/sets
+// fetch on most launches and still narrow searches when the API is down. The
+// generic cache_meta(key,value) table records when the set table was last fetched
+// (and is reusable for any future TTL'd cache). See core/app/card_set_cache.
+constexpr char kMigrationV6[] = R"sql(
+CREATE TABLE card_set_cache (
+  id             TEXT PRIMARY KEY,
+  ptcgo_code     TEXT NOT NULL,
+  name           TEXT NOT NULL,
+  printed_total  INTEGER NOT NULL
+);
+
+CREATE TABLE cache_meta (
+  key    TEXT PRIMARY KEY,
+  value  TEXT NOT NULL
+);
+)sql";
+
 }  // namespace
 
 Database::Database(const std::filesystem::path& path) {
@@ -150,6 +171,9 @@ void Database::migrate() {
         }
         if (from < 5) {
             exec(kMigrationV5);
+        }
+        if (from < 6) {
+            exec(kMigrationV6);
         }
         setUserVersion(kSchemaVersion);
         exec("COMMIT;");

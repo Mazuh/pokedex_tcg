@@ -29,7 +29,9 @@ public:
     //        species-free Trainer/Energy card has).
     //   v4 — card_copy.rarity (the card's rarity classification; optional).
     //   v5 — card_copy.foil (the card's foil treatment / finish; optional).
-    static constexpr int kSchemaVersion = 5;
+    //   v6 — card_set_cache + cache_meta (a TTL'd local cache of the external
+    //        /v2/sets table; reference data, not collection source-of-truth).
+    static constexpr int kSchemaVersion = 6;
 
     // Open (creating if absent) the database at `path`, or an in-memory database
     // when path == ":memory:". Throws StorageError on failure.

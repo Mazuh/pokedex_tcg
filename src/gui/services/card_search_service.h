@@ -19,6 +19,7 @@ class QPixmap;
 namespace pokedex {
 
 class CardCatalogApi;
+class CardSetCache;
 
 // GUI — the transport half of the card-catalog module: a QObject that searches a
 // species' printings on the external card API and streams the results (and their
@@ -31,9 +32,14 @@ class CardCatalogApi;
 // large images for nothing — search results are display/memory-only. (Persisting
 // the one image a committed copy keeps is a separate, future concern.)
 //
-// The set table (/v2/sets) is fetched once, lazily, on the first search and kept in
-// memory for the app's lifetime — it backs both the expansion-code picker and the
-// set.id-based search narrowing (the printed ptcgoCode search index is unreliable).
+// The set table (/v2/sets) backs both the expansion-code picker and the set.id-based
+// search narrowing (the printed ptcgoCode search index is unreliable). It is loaded
+// once and kept in memory for the app's lifetime. When a CardSetCache is supplied,
+// that load prefers the on-disk cache: a cache younger than kSetCacheTtl is used as
+// is (NO network fetch — the daily-flaky /v2/sets is skipped on most launches), and
+// a fresh network fetch overwrites the cache. If the fetch fails outright, a stale
+// cache is loaded as a fallback so search narrowing still works while the API is
+// down. Without a cache (e.g. a bare test construction) it always fetches, as before.
 //
 // The network path is throttled like MediaService — a latest-wins debounce (so
 // typing an expansion-code filter doesn't fire a request per keystroke) plus a
@@ -46,8 +52,10 @@ class CardSearchService : public QObject {
     Q_OBJECT
 
 public:
-    // `api` must outlive this service.
-    explicit CardSearchService(const CardCatalogApi& api, QObject* parent = nullptr);
+    // `api` must outlive this service. `cache`, when non-null, persists the set
+    // table across launches (see the class note); it too must outlive this service.
+    explicit CardSearchService(const CardCatalogApi& api, CardSetCache* cache = nullptr,
+                               QObject* parent = nullptr);
 
     // Search `dexNumber`'s printings, optionally narrowed to the set whose printed
     // code is `setCodeFilter` (blank = every printing). Debounced; returns a unique
@@ -90,6 +98,10 @@ private:
     };
 
     void ensureSetsLoading();                 // kick off the one-time /v2/sets GET
+    // Adopt the persisted set table into memory. `requireFresh` demands the cache be
+    // younger than kSetCacheTtl (the startup fast-path); false accepts any cache (the
+    // post-fetch-failure fallback). Returns true when a non-empty table was adopted.
+    bool loadSetsFromCache(bool requireFresh);
     void fetchSets(int retriesLeft);          // the GET itself, with transient-retry
     void dispatchSearch();                     // debounce/limiter gate → startCardFetch
     void startCardFetch(int dexNumber, std::uint64_t generation, const QString& url,
@@ -97,6 +109,7 @@ private:
     void pumpThumbnails();                      // drain the thumbnail queue under the limiter
 
     const CardCatalogApi& api_;
+    CardSetCache* cache_;  // optional cross-launch set-table cache; may be null
     QNetworkAccessManager* nam_;
 
     // The lazily-loaded set table and its load state.

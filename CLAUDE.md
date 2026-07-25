@@ -61,7 +61,10 @@ Folders are created as real code lands; the tree above is the target
 shape, not a scaffold to pre-create. `domain/` is populated. Schema migrations are
 **incremental and additive**: `Database::migrate()` applies each step whose target
 version exceeds the file's `user_version` (v1 = initial schema; v2 added
-`card_copy.ref_set_name`; v3 added `card_copy.ref_name`, the printed card name),
+`card_copy.ref_set_name`; v3 added `card_copy.ref_name`, the printed card name;
+v4 `card_copy.rarity`; v5 `card_copy.foil`; v6 added `card_set_cache` +
+`cache_meta`, the TTL'd local cache of the external `/v2/sets` table — reference
+data, not collection source-of-truth, see the `CardSetCache` note below),
 so a fresh DB runs the whole chain and an existing one
 only the tail — bump `kSchemaVersion` and add a step (never edit `kSchemaV1`) when
 the schema changes. `storage/` holds
@@ -84,8 +87,12 @@ id generator like `BinderService`), `WishlistService` (the manage-sources verbs)
 **card-catalog seam** — `CardCatalogApi` (Qt-free interface, parallel to
 `PokemonExternalApi` but for *cards*), its concrete `PokemonTcgIoApi` (pokemontcg.io
 URL/Lucene query building), the DTOs (`card_catalog_dto.h`: `CardSetInfo`,
-`CardCandidate`), and `card_catalog_parse` (nlohmann/json parsers/mappers — see the
-JSON note in the tech stack). A `CardSearchQuery` is scoped EITHER by species
+`CardCandidate`), `card_catalog_parse` (nlohmann/json parsers/mappers — see the
+JSON note in the tech stack), and `CardSetCache` (the cross-launch persistence of
+the `/v2/sets` table — a `vector<CardSetInfo>` — in the `card_set_cache`/`cache_meta`
+tables; it lives in `app/` rather than `storage/` precisely because its row type
+`CardSetInfo` is an app projection, so a storage-layer repo would invert the
+layering: `app/` may use `storage/`, not vice versa). A `CardSearchQuery` is scoped EITHER by species
 (`dexNumber`, → `nationalPokedexNumbers:N`) OR by card name (`nameQuery`, →
 `name:"…"`) — the latter is how a species-free card is found; on the GUI side
 `CardSearchService::searchByName` and `CardFinderPanel`'s name-search mode drive it. `gui/views/` holds the
@@ -139,7 +146,12 @@ single place that sees and tallies every call we make to a free public API (answ
 hammering some API"). Silence it with `QT_LOGGING_RULES="pokedex.net.info=false"`. Each service
 keeps its own `QNetworkAccessManager` (ownership/abort semantics unchanged); `loggedGet` only wraps
 the `get`. `gui/services/` holds `MediaService` (Pokémon artwork fetch+cache), `CardSearchService`
-(card search transport — **no disk cache**: search results are display/memory-only),
+(card search transport — search results/thumbnails are **display/memory-only, never
+cached to disk**; the lone exception is the small, near-static set table, which — when a
+`CardSetCache` is injected — is loaded from disk on startup if younger than a 24h TTL
+[skipping the daily-flaky `/v2/sets` fetch entirely on most launches], overwritten after a
+fresh fetch, and loaded *stale* as a fallback when the fetch fails so narrowing survives an
+API outage),
 and `CardImageStore` (the on-disk store for the one image a committed copy keeps,
 `cards/<copyId>.png`; `save`/`fetchAndSave`/`load`, and an `imageChanged(copyId)`
 signal so a view re-reads the file after a deferred download or an override lands).

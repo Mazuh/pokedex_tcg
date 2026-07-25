@@ -9,6 +9,7 @@
 #include "core/app/binder_guide_service.h"
 #include "core/app/binder_service.h"
 #include "core/app/card_copy_service.h"
+#include "core/app/card_set_cache.h"
 #include "core/app/install_service.h"
 #include "core/app/poke_api.h"
 #include "core/app/pokemon_browse_service.h"
@@ -97,10 +98,13 @@ int main(int argc, char *argv[]) {
 
         // The card-catalog adapter (swap this line to change card sources) and the
         // search/transport service backing the "Add copy" flow. Locals here so they
-        // outlive app.exec(); one shared instance serves every section. It caches
-        // nothing to disk — search results are display-only.
+        // outlive app.exec(); one shared instance serves every section. Search results
+        // and thumbnails are display-only (never cached to disk); the one exception is
+        // the small, near-static set table, which the CardSetCache persists in the
+        // workspace DB so the daily-flaky /v2/sets fetch is skipped on most launches.
         pokedex::PokemonTcgIoApi cardApi;
-        pokedex::CardSearchService cardSearch(cardApi);
+        pokedex::CardSetCache setCache(db);
+        pokedex::CardSearchService cardSearch(cardApi, &setCache);
 
         pokedex::MainWindow window(
             service, guide, browse, wishlist, media, cardSearch, cardCopies, cardImages,
