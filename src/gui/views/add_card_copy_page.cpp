@@ -30,6 +30,9 @@
 
 namespace pokedex {
 
+// Set once per successful add, read by the next page's "Same set as last…" button.
+AddCardCopyPage::LastAdded AddCardCopyPage::lastAdded_;
+
 AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& copies,
                                  BinderService& binders, CardImageStore& cardImages,
                                  std::optional<PokemonDexNum> dexNumber, const QString& speciesName,
@@ -79,6 +82,18 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
     uploadButton_ = new QPushButton(tr("Upload a photo…"), this);
     connect(uploadButton_, &QPushButton::clicked, this, &AddCardCopyPage::uploadPhoto);
     form_->addAction(uploadButton_);
+
+    // Refill the set fields (expansion code + set name) and the comments from the last
+    // copy added this session — the common case of entering several cards from one
+    // booster, which share a set and often a note. Disabled until there is a last add
+    // to reuse (the static memory survives this page being disposed on each Back).
+    reuseButton_ = new QPushButton(tr("Same set as last…"), this);
+    reuseButton_->setToolTip(
+        tr("Copy the set name, expansion code, and comments from the last card you "
+           "added — handy when entering a whole booster."));
+    reuseButton_->setEnabled(lastAdded_.has);
+    connect(reuseButton_, &QPushButton::clicked, this, &AddCardCopyPage::reuseLastFields);
+    form_->addAction(reuseButton_);
 
     // --- Finder (right): the shared search + preview widget ----------------
     // Scoped: search the species' printings by set. Species-free: search by card name
@@ -140,6 +155,27 @@ void AddCardCopyPage::chooseSet(const CardSetInfo& set) {
     ref.expansionCode = set.ptcgoCode;
     ref.setName = set.name;
     form_->setCardReference(ref);
+}
+
+void AddCardCopyPage::reuseLastFields() {
+    if (!lastAdded_.has) {
+        return;  // button is disabled in this case, but guard anyway
+    }
+    // Fill only the shared-across-a-booster fields: the set (expansion code + set name)
+    // and the comments. The per-card identity (card name, collector number) and the
+    // physical attributes stay untouched — each card in the pack differs there.
+    CardReference ref = form_->cardReference();
+    ref.expansionCode = lastAdded_.expansionCode;
+    ref.setName = lastAdded_.setName;
+    form_->setCardReference(ref);
+    // Only carry the comment over into an empty box — never clobber a note the user has
+    // already typed for this card (nor blank it out when the last add had no comment).
+    if (form_->comments().empty()) {
+        form_->setComments(lastAdded_.comments);
+    }
+    // setCardReference is silent, so drop a now-stale finder pick by hand (its preview
+    // no longer matches the freshly filled set).
+    checkUnmatch();
 }
 
 void AddCardCopyPage::checkUnmatch() {
@@ -289,6 +325,11 @@ void AddCardCopyPage::submitCopy() {
             cardImages_.fetchAndSave(created.id, url);  // no-ops on a blank url
         }
     }
+    // Remember this copy's set + comments so the next add page (a fresh instance) can
+    // refill them in one click — the same-booster flow. Kept in memory only.
+    lastAdded_ = LastAdded{/*has=*/true, created.cardRef.expansionCode,
+                           created.cardRef.setName, created.comments};
+
     // Confirm before navigating away: the toast is parented to the window, so it
     // outlives this page once backRequested() disposes of it. A species-free card has
     // no species to name — fall back to its card name, or a generic line.

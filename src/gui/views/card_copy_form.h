@@ -73,6 +73,9 @@ public:
     // and the user can still change it.
     void setRarity(std::optional<CardRarity> rarity);
 
+    // Overwrite the comments box (e.g. reusing the last card's note across a booster).
+    void setComments(const std::string& comments);
+
     // Fill every stored field from an existing copy (the edit case): identity,
     // language, condition, rarity, foil, ownership, and comments. Does not touch the
     // binder combo (use setupBinderPicker for that). Silent — emits no signals.

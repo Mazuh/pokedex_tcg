@@ -313,6 +313,10 @@ void CardCopyForm::setRarity(std::optional<CardRarity> rarity) {
     rarity_->setCurrentIndex(index >= 0 ? index : 0);
 }
 
+void CardCopyForm::setComments(const std::string& comments) {
+    comments_->setPlainText(QString::fromStdString(comments));
+}
+
 void CardCopyForm::loadCopy(const CardCopy& copy) {
     cardName_->setText(QString::fromStdString(copy.cardRef.name));
     expansionCode_->setText(QString::fromStdString(copy.cardRef.expansionCode));

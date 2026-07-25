@@ -5,6 +5,7 @@
 #include <QWidget>
 
 #include <optional>
+#include <string>
 
 #include "core/domain/types.h"
 
@@ -94,6 +95,7 @@ private:
     void checkUnmatch();                       // drop the finder selection once the form diverges
     void updateSubmitEnabled();                // enable submit once the form is valid
     void submitCopy();                         // create the copy from the form fields
+    void reuseLastFields();                    // fill set + comments from the last added copy
     void uploadPhoto();                        // pick a local image → hold it, replace the search
     void removeUploadedPhoto();                // drop the held photo → the finder returns
     void refreshUploadedPreview();             // render the held photo into the preview pane
@@ -112,7 +114,21 @@ private:
     CardCopyForm* form_;      // the shared details pane (editable, with a submit action)
     QPushButton* submit_;     // "Add copy" — lives in the form's action row
     QPushButton* uploadButton_;  // "Upload a photo…" — also in the form's action row
+    QPushButton* reuseButton_;   // "Same set as last…" — set + comments from the last add
     CardFinderPanel* finder_;  // the shared search field + printings list + preview
+
+    // Session-lived memory of the last successfully added copy's set fields and
+    // comments, so opening a fresh add page for the next card from the same booster can
+    // refill them in one click (the "Same set as last…" button). Static because each
+    // add is a brand-new page instance — it must outlive any one page. In-memory only:
+    // never persisted, so it resets when the app is closed.
+    struct LastAdded {
+        bool has = false;
+        std::string expansionCode;
+        std::string setName;
+        std::string comments;
+    };
+    static LastAdded lastAdded_;
 
     // The right side of the split is a stack: the finder (search + preview) on index 0,
     // and the uploaded-photo preview on index 1. Uploading a photo swaps to index 1
