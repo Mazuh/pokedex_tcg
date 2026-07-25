@@ -16,6 +16,10 @@ class QPushButton;
 namespace pokedex {
 
 class CardImageStore;
+class CardPriceLookupService;
+class CardPricesPanel;
+class CardSearchService;
+class CardCopyService;
 class MediaService;
 class WishlistService;
 class WishlistSourcesEditor;
@@ -52,8 +56,15 @@ class PokemonDetailPanel : public QWidget {
     Q_OBJECT
 
 public:
+    // `prices`/`search`/`copies`, when all three are supplied (alongside `images`),
+    // add a market-prices block to copy mode — the same reusable CardPricesPanel the
+    // Edit page and My Cards use, so a copy seen in a binder/browser can be priced (and
+    // invisibly linked on first Fetch) without opening the Edit page. Passing any of
+    // them null (or no image store) omits the block, leaving the artwork-only behavior.
     PokemonDetailPanel(MediaService& media, WishlistService& wishlist,
-                       CardImageStore* images = nullptr, QWidget* parent = nullptr);
+                       CardImageStore* images = nullptr, CardPriceLookupService* prices = nullptr,
+                       CardSearchService* search = nullptr, CardCopyService* copies = nullptr,
+                       QWidget* parent = nullptr);
 
     // Show `name` now and request its artwork. Not named show() so it doesn't
     // hide QWidget::show().
@@ -115,6 +126,7 @@ private:
     MediaService& media_;
     WishlistService& wishlist_;
     CardImageStore* images_;  // null in the Pokémon browser → copy mode disabled
+    CardPricesPanel* pricesPanel_ = nullptr;  // null when the price services weren't supplied
     int currentDex_ = -1;  // the dex we currently want shown; guards stale results
     QString shownCopyId_;  // id of the copy shown in copy mode ("" = not in copy mode)
     bool showingCopyImage_ = false;  // the image is a copy scan, not artwork → keep

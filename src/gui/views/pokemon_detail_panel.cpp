@@ -10,8 +10,12 @@
 #include <QStyle>
 #include <QVBoxLayout>
 
+#include "core/app/card_copy_service.h"
 #include "gui/services/card_image_store.h"
+#include "gui/services/card_price_lookup_service.h"
+#include "gui/services/card_search_service.h"
 #include "gui/services/media_service.h"
+#include "gui/views/card_prices_panel.h"
 #include "gui/views/condition_labels.h"
 #include "gui/views/foil_labels.h"
 #include "gui/views/rarity_labels.h"
@@ -21,7 +25,9 @@
 namespace pokedex {
 
 PokemonDetailPanel::PokemonDetailPanel(MediaService& media, WishlistService& wishlist,
-                                       CardImageStore* images, QWidget* parent)
+                                       CardImageStore* images, CardPriceLookupService* prices,
+                                       CardSearchService* search, CardCopyService* copies,
+                                       QWidget* parent)
     : QWidget(parent), media_(media), wishlist_(wishlist), images_(images) {
     name_ = new QLabel(this);
     name_->setAlignment(Qt::AlignHCenter | Qt::AlignVCenter);
@@ -110,6 +116,14 @@ PokemonDetailPanel::PokemonDetailPanel(MediaService& media, WishlistService& wis
         }
     });
 
+    // Market-prices block (copy mode only): the same reusable panel the Edit page and My
+    // Cards use, so a copy seen here can be priced — and invisibly linked on first Fetch —
+    // without opening the Edit page. Built only when all three services were supplied
+    // (they always come together from the hosts); hidden outside copy mode.
+    if (prices && search && copies) {
+        pricesPanel_ = new CardPricesPanel(*prices, *search, *copies, this);
+    }
+
     // The wishlist sources editor sits below the art. The artwork keeps the
     // stretch so it takes the slack; the editor stays at its natural height.
     wishlistEditor_ = new WishlistSourcesEditor(wishlist_, this);
@@ -119,6 +133,9 @@ PokemonDetailPanel::PokemonDetailPanel(MediaService& media, WishlistService& wis
     layout->addWidget(name_);
     layout->addWidget(image_, /*stretch=*/1);
     layout->addWidget(copyDetail_);
+    if (pricesPanel_) {
+        layout->addWidget(pricesPanel_);
+    }
     layout->addWidget(editButton_);
     layout->addWidget(addCopyButton_);
     layout->addWidget(wishlistEditor_);
@@ -211,6 +228,12 @@ void PokemonDetailPanel::showCopy(const CardCopy& copy, int total) {
 
     copyDetail_->show();
     editButton_->show();
+    // Prices for this copy (cached-only on show; the Fetch button spends the network and
+    // invisibly resolves the catalog link when the copy isn't linked yet).
+    if (pricesPanel_) {
+        pricesPanel_->showCopy(copy);
+        pricesPanel_->show();
+    }
 
     // Image: the copy's card scan when it has one, else fall back to the Pokémon
     // artwork (request it and let onReady fill in; showingCopyImage_ stays false).
@@ -245,6 +268,10 @@ void PokemonDetailPanel::hideCopy() {
     shownCopyId_.clear();
     copyDetail_->hide();
     editButton_->hide();
+    if (pricesPanel_) {
+        pricesPanel_->clear();
+        pricesPanel_->hide();
+    }
 }
 
 void PokemonDetailPanel::clear() {

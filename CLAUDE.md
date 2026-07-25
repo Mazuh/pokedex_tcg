@@ -128,23 +128,28 @@ sharing the `gui/services/http_status.h` retry-classification helpers) fetches o
 prices via `resolveCardById` and persists them through `recordApiPrices`. It is strictly
 **on-demand** — `cached`/`fetchedAt`/`needsRefresh` never touch the network; only
 `fetch()` (behind an explicit Fetch/Refresh button) does — so merely viewing a card never
-hits the API. The reusable `gui/views/CardPricesPanel` (keyed by a copy's
-`external_card_id`) renders the states [unlinked / linked-unfetched / has-prices
-(headline + "as of/fetched" line + expandable full table) / fetched-empty]; it appears on
-the Edit page and the My Cards detail. An unlinked copy (added before the link existed, or
-by hand) gets a link from the Edit page: pick the matching printing in the finder and press
-"Link prices to this card" (persists immediately via `linkCatalogCard`, independent of the
-details Save), after which the panel offers the Fetch button. For a copy that already
-records a set + species/name, `OwnedCardsView` also offers a one-click **"Link prices"**
-button right in the inventory (no Edit-page detour): it searches the catalog scoped by the
-copy's set (name, else printed code) + species/name and, if that resolves to exactly one
-printing, links it immediately — disambiguating a set with several printings of the species
-by the copy's collector number; 0 or N matches is reported ("no match" / "open Edit to
-pick"), never guessed. It's gated to a live, unlinked copy with enough data (`canAutoLink`)
-and reuses the shared, debounced `CardSearchService`, so the link lands asynchronously in
-`onLinkResults` (the request id is matched before a reply is adopted, since the service is
-app-wide) with a watchdog `QTimer` recovering the button if a superseded search never
-replies. The panel also carries an
+hits the API. The reusable `gui/views/CardPricesPanel` is driven by `showCopy(copy)` /
+`clear()` (it carries the copy's link context — id, `CardReference`, species — not just an
+`external_card_id`) and renders the states [nothing-selected / unresolvable (unlinked, too
+little data) / ready-to-fetch (linked OR auto-resolvable) / has-prices (headline +
+"as of/fetched" line + expandable full table) / fetched-empty]. It appears on **every**
+owned-copy surface: the Edit page, the My Cards detail (`OwnedCardsView`), and the
+binder-guide / Pokémon-browser copy detail (`PokemonDetailPanel` copy mode, fed by
+`BinderView` and `PokemonListView`, which pass it `CardPriceLookupService` +
+`CardSearchService` + `CardCopyService`).
+**Linking is invisible — never a UI verb.** A copy that isn't yet linked but records enough
+identity (a set + species/name) still shows a "Fetch prices" button; the first Fetch
+resolves the catalog card itself (`onFetchClicked` → search scoped by the copy's set [name,
+else printed code] + species/name → single match, disambiguated by collector number →
+`linkCatalogCard`), persists the link, then fetches — all as one action, emitting
+`cardLinked` so the host updates its cached copy. 0 or N matches is reported ("couldn't
+find" / "open Edit to pick"), never guessed; only a copy with too little data to resolve
+(no set) shows a hint to complete it in Edit — the dead-end "not linked" message is gone.
+The auto-link runs on the shared, debounced `CardSearchService` (request id matched before a
+reply is adopted, since the service is app-wide) with a watchdog `QTimer` recovering the
+Fetch button if a superseded search never replies. The Edit page keeps its finder-based
+manual "Link prices to this card" as the disambiguation fallback for the ambiguous case.
+The panel also carries an
 "ⓘ" popover (same idiom as the card-attribute pickers) explaining the metrics, and
 per-vendor **listing links** ("TCGplayer ↗ / Cardmarket ↗") built deterministically as
 `prices.pokemontcg.io/<vendor>/<id>` — a stable redirect to the real marketplace page, so

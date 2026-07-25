@@ -93,7 +93,8 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     // Cell padding so content clears the edges and the overlay scrollbar.
     table_->setStyleSheet("QTableView::item { padding-left: 8px; padding-right: 16px; }");
 
-    detail_ = new PokemonDetailPanel(media, wishlist, &cardImages_, this);
+    detail_ = new PokemonDetailPanel(media, wishlist, &cardImages_, &priceLookup_, &cardSearch_,
+                                     &cardCopies_, this);
 
     connect(search_, &QLineEdit::textChanged, this, &BinderView::applyFilter);
     // Show the current row's Pokémon in the detail panel. currentCellChanged

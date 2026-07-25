@@ -91,7 +91,8 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService&
     // owns copies shows one, so the double-click shortcut can offer to edit it. The
     // copies are aggregated across every binder (loadOwnedCopies), so tell the panel to
     // drop the counter's binder-scoped "filed here" wording.
-    detail_ = new PokemonDetailPanel(media, wishlist, &cardImages_, this);
+    detail_ = new PokemonDetailPanel(media, wishlist, &cardImages_, &priceLookup_, &cardSearch_,
+                                     &cardCopies_, this);
     detail_->setCountedAcrossBinders(true);
 
     connect(search_, &QLineEdit::textChanged, this, &PokemonListView::applyFilter);
