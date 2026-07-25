@@ -257,8 +257,25 @@ sidebar (a `QListWidget` source list, Finder/Settings-style) selecting sections
 in an outer `QStackedWidget`. Prefer navigating *within* the window — swap pages
 in a `QStackedWidget` (as `BindersPage` does: binder table ⇄ binder guide, with
 a Back button) — over opening a second top-level window. A separate window or
-modal dialog is a deliberate, rare exception (the first-run setup and the
-new-binder form are two), not the default for showing more detail. Display
+modal dialog is a deliberate, rare exception (the first-run setup, the
+new-binder form, and the About box are three), not the default for showing more
+detail. The one menu bar lives on `MainWindow` (attached via `layout->setMenuBar`,
+since the shell is a plain `QWidget`, not a `QMainWindow`); its single "About"
+`QAction` carries `QAction::AboutRole` so macOS relocates it into the application
+menu. Because that native menu is easy to miss, the same dialog is also reachable
+in-window from a muted "ⓘ About" footer button pinned at the bottom of the sidebar
+(the sidebar list is wrapped in a `sidebarPanel` `QWidget` that carries the pane's
+width bounds and stacks list-over-footer); the menu action and the button both fire
+one shared `showAbout` lambda. The `AboutDialog` (`gui/views/about_dialog`) shows the app heading + "by
+Mazuh", the build version, the description, and the repo/MIT-license links plus the
+fan-project legal disclaimer (verbatim from the README). Its version string comes
+from `gui/version.h`, generated **at build time** by the `pokedex_version_header`
+target (`cmake/GenerateVersion.cmake`) as `pokedex::kAppVersion` = the last commit's
+7-char short hash, with a `-dev` suffix on any non-`Release` build (dev.sh / a bare
+configure) and none on the `Release` install (install.sh); it degrades to
+`"unknown"` outside a git checkout. Build-time (not configure-time) generation is
+deliberate so the hash tracks HEAD across commits without a reconfigure — dev.sh
+only reconfigures when `build.ninja` is absent. Display
 strings stay out of Qt-free core: a GUI-side helper maps enums to labels
 (`region_labels.h`, `status_labels.h`), kept separate from the storage tokens.
 

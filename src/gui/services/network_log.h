@@ -15,13 +15,17 @@ namespace pokedex {
 Q_DECLARE_LOGGING_CATEGORY(lcNet)
 
 // The single chokepoint every GUI service routes its external GETs through. It
-// issues `request` on `nam` via GET, but first logs the outbound URL and bumps a
-// per-host session counter (also logged) — so there is exactly one place that
-// sees, and tallies, every call we make to a free public API. Returns the reply
-// exactly as `nam->get(request)` would, so callers wire up `finished` unchanged.
+// logs the outbound URL and bumps a per-host session counter (also logged) — so
+// there is exactly one place that sees, and tallies, every call we make to a free
+// public API — then issues `request` on `nam` via GET, returning the reply exactly
+// as `nam->get(request)` would (callers wire up `finished` unchanged). It also
+// *owns* the safe-redirect policy (`NoLessSafeRedirectPolicy`), applying it to
+// every request here so no call site can forget it — hence `request` is taken by
+// value. Callers pass a bare `QNetworkRequest{url}` (plus any other attributes/
+// headers they need).
 //
 // GUI-thread only (like the QNetworkAccessManager it wraps): the per-host tally is
 // a plain static map with no locking, matching how these services are used.
-QNetworkReply* loggedGet(QNetworkAccessManager* nam, const QNetworkRequest& request);
+QNetworkReply* loggedGet(QNetworkAccessManager* nam, QNetworkRequest request);
 
 }  // namespace pokedex

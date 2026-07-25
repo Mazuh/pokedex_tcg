@@ -143,12 +143,33 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 
 qt_standard_project_setup()
 
+# --- Build version (short commit hash shown in the About box) ----------------
+# Generate gui/version.h at *build* time (not configure) so the hash tracks HEAD
+# across commits without a reconfigure; dev.sh only reconfigures when build.ninja
+# is absent. GenerateVersion.cmake writes the header only when the value changes,
+# so an unchanged hash never triggers a rebuild. A Release build (install.sh) is
+# prod; anything else gets a -dev suffix.
+find_package(Git QUIET)
+set(POKEDEX_VERSION_DIR "${CMAKE_BINARY_DIR}/generated")
+set(POKEDEX_VERSION_HEADER "${POKEDEX_VERSION_DIR}/gui/version.h")
+add_custom_target(pokedex_version_header
+    BYPRODUCTS "${POKEDEX_VERSION_HEADER}"
+    COMMAND ${CMAKE_COMMAND}
+        -DGIT_EXECUTABLE=${GIT_EXECUTABLE}
+        -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -DOUTPUT_FILE=${POKEDEX_VERSION_HEADER}
+        -DBUILD_TYPE=$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateVersion.cmake
+    COMMENT "Resolving build version from git"
+    VERBATIM)
+
 qt_add_executable(pokedex_tcg
     src/main.cpp
     src/gui/views/first_run_dialog.cpp
     src/gui/views/binder_editor_dialog.cpp
     src/gui/views/binder_picker_dialog.cpp
     src/gui/views/main_window.cpp
+    src/gui/views/about_dialog.cpp
     src/gui/views/binders_page.cpp
     src/gui/views/binder_view.cpp
     src/gui/views/pokemon_list_view.cpp
@@ -168,6 +189,10 @@ qt_add_executable(pokedex_tcg
     src/gui/services/card_search_service.cpp
 )
 target_link_libraries(pokedex_tcg PRIVATE pokedex_core pokedex_warnings pokedex_sanitizers Qt6::Widgets Qt6::Network)
+# The generated gui/version.h is under the build tree; make it includable and
+# ensure it's (re)generated before the GUI compiles.
+add_dependencies(pokedex_tcg pokedex_version_header)
+target_include_directories(pokedex_tcg PRIVATE ${POKEDEX_VERSION_DIR})
 
 # --- Install (drop a `pokedex` command onto PATH) ----------------------------
 # install.sh runs `cmake --install` after a Release build so the app is

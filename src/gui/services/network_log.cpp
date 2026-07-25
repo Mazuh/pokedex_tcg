@@ -13,7 +13,12 @@ namespace pokedex {
 // Q_LOGGING_CATEGORY would leave qCInfo filtered on some Qt builds).
 Q_LOGGING_CATEGORY(lcNet, "pokedex.net", QtInfoMsg)
 
-QNetworkReply* loggedGet(QNetworkAccessManager* nam, const QNetworkRequest& request) {
+QNetworkReply* loggedGet(QNetworkAccessManager* nam, QNetworkRequest request) {
+    // Owned here so every outbound GET gets safe-redirect handling and no call
+    // site has to remember it.
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
+
     const QUrl url = request.url();
     const QString host = url.host();
 

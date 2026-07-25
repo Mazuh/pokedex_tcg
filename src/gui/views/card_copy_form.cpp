@@ -1,6 +1,5 @@
 #include "gui/views/card_copy_form.h"
 
-#include <QColor>
 #include <QComboBox>
 #include <QEvent>
 #include <QFormLayout>
@@ -18,6 +17,7 @@
 #include "gui/views/binder_combo.h"
 #include "gui/views/condition_labels.h"
 #include "gui/views/foil_labels.h"
+#include "gui/views/muted_text.h"
 #include "gui/views/ownership_labels.h"
 #include "gui/views/rarity_labels.h"
 
@@ -286,11 +286,7 @@ void CardCopyForm::setReferenceEditable(bool editable) {
         if (editable) {
             field->setPalette(QPalette());  // inherit defaults (normal, bright text)
         } else {
-            QPalette pal = field->palette();
-            const QColor muted = pal.color(QPalette::Disabled, QPalette::Text);
-            pal.setColor(QPalette::Active, QPalette::Text, muted);
-            pal.setColor(QPalette::Inactive, QPalette::Text, muted);
-            field->setPalette(pal);
+            applyMutedText(field);  // greyed read-only look, still selectable/copyable
         }
     }
     // Only the printing identity locks here. language / condition / rarity / foil /

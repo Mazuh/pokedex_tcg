@@ -136,8 +136,6 @@ void CardSearchService::ensureSetsLoading() {
 
 void CardSearchService::fetchSets(int retriesLeft) {
     QNetworkRequest request{QUrl(QString::fromStdString(api_.resolveSets().url))};
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                         QNetworkRequest::NoLessSafeRedirectPolicy);
     QNetworkReply* reply = loggedGet(nam_, request);
     connect(reply, &QNetworkReply::finished, this, [this, reply, retriesLeft]() {
         reply->deleteLater();
@@ -235,8 +233,6 @@ void CardSearchService::dispatchSearch() {
 void CardSearchService::startCardFetch(int dexNumber, std::uint64_t generation,
                                        const QString& url, int retriesLeft) {
     QNetworkRequest request{QUrl(url)};
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                         QNetworkRequest::NoLessSafeRedirectPolicy);
     QNetworkReply* reply = loggedGet(nam_, request);
     connect(reply, &QNetworkReply::finished, this,
             [this, reply, dexNumber, generation, url, retriesLeft]() {
@@ -302,8 +298,6 @@ void CardSearchService::pumpThumbnails() {
     inFlightThumbs_.insert(req.cardId);
 
     QNetworkRequest request{QUrl(req.url)};
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                         QNetworkRequest::NoLessSafeRedirectPolicy);
     QNetworkReply* reply = loggedGet(nam_, request);
     connect(reply, &QNetworkReply::finished, this, [this, reply, cardId = req.cardId]() {
         reply->deleteLater();

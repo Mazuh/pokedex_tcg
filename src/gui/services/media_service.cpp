@@ -120,8 +120,6 @@ void MediaService::startFetch(int dexNumber, MediaKind kind, const QString& url,
     }
 
     QNetworkRequest request{QUrl(url)};
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                         QNetworkRequest::NoLessSafeRedirectPolicy);
     QNetworkReply* reply = loggedGet(nam_, request);
     inFlight_.insert(relPath, reply);
 
