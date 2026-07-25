@@ -353,7 +353,15 @@ void PokemonListView::refresh() {
     // mode) and the Owned column's counts, derived from the bucket sizes rather
     // than a second aggregate scan of card_copy. applyFilter() re-renders from the
     // top, preserving the current search text (it reads search_->text()).
-    loadOwnedCopies();
+    if (!loadOwnedCopies() && !entries_.empty()) {
+        // The read failed on a refresh that already has a rendered catalog. Deriving
+        // the Owned column from the now-empty buckets would show a full collection as
+        // all-zeros; keep the last good render instead. loadOwnedCopies held the
+        // revision sentinel, so the next showEvent retries the read. (On the very
+        // first load entries_ is empty, so we still fall through to render the catalog
+        // — with zero counts — rather than leave a blank table.)
+        return;
+    }
     std::unordered_map<PokemonDexNum, int> counts;
     counts.reserve(owned_.size());
     for (const auto& [dex, copies] : owned_) {
@@ -363,7 +371,7 @@ void PokemonListView::refresh() {
     applyFilter();
 }
 
-void PokemonListView::loadOwnedCopies() {
+bool PokemonListView::loadOwnedCopies() {
     // Bucket every owned, species-tied copy by dex so showRow() can hand the detail
     // panel a species' copies (copy mode). Unscoped by binder — this is the whole
     // Pokédex browser — so it reads the full inventory (listAll), unlike the binder
@@ -377,6 +385,7 @@ void PokemonListView::loadOwnedCopies() {
         // whether the inventory has moved on and skip an unchanged re-read. The single
         // owned_-read site, so both the ctor and refresh() get it.
         ownedRevision_ = cardCopies_.revision();
+        return true;
     } catch (const std::exception&) {
         owned_.clear();  // best-effort: fall back to artwork-only if the read fails
         // Hold the sentinel (not the current revision): stamping it here would let the
@@ -384,6 +393,7 @@ void PokemonListView::loadOwnedCopies() {
         // on the next visit, silently freezing every species at "0 owned". -1 never
         // matches a real revision, so the next showEvent re-attempts the read.
         ownedRevision_ = -1;
+        return false;
     }
 }
 

@@ -108,8 +108,10 @@ private:
     void refresh();
     // (Re)bucket every owned, species-tied copy by dex number into owned_ — the
     // whole-inventory read (unscoped by binder) behind copy mode. Rebuilt on
-    // construction and on every refresh().
-    void loadOwnedCopies();
+    // construction and on every refresh(). Returns false if the inventory read
+    // failed (owned_ left empty, the revision sentinel held) so refresh() can
+    // preserve the rendered table rather than rebuild it to all-zeros.
+    bool loadOwnedCopies();
 
     PokemonBrowseService& service_;
     CardSearchService& cardSearch_;
