@@ -374,14 +374,14 @@ void CardPricesPanel::render() {
 
     // Drop the TCGplayer "high" (a single top listing, a routinely unrealistic outlier)
     // — but only when that still leaves a price to show; if "high" is the sole cached
-    // metric, showing it beats claiming the card has no price. (std::erase_if — C++20.)
+    // metric, showing it beats claiming the card has no price. Erase in place (no aside
+    // copy) once we've confirmed a non-"high" row survives. (std::erase_if — C++20.)
     rows_ = std::move(cached);
-    std::vector<CardPrice> withoutHigh = rows_;
-    std::erase_if(withoutHigh, [](const CardPrice& p) {
+    const auto isHigh = [](const CardPrice& p) {
         return p.provenance == kTcgplayerProvenance && p.metric == "high";
-    });
-    if (!withoutHigh.empty()) {
-        rows_ = std::move(withoutHigh);
+    };
+    if (std::any_of(rows_.begin(), rows_.end(), [&](const CardPrice& p) { return !isHigh(p); })) {
+        std::erase_if(rows_, isHigh);
     }
 
     const QString headline = priceHeadline(rows_);

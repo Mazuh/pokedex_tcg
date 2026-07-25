@@ -2,6 +2,7 @@
 
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "core/app/card_price_dto.h"
@@ -29,6 +30,13 @@ public:
     // Every stored price for a card — API-sourced and manual together — ordered
     // deterministically by (provenance, variant, metric). Empty when none stored.
     std::vector<CardPrice> pricesFor(const std::string& externalCardId);
+
+    // The stored prices for many cards at once, keyed by external card id (a card with
+    // no rows is simply absent from the map) — one batched query instead of N calls to
+    // pricesFor, for callers that total or display a whole collection's prices. Each
+    // card's rows keep pricesFor's (provenance, variant, metric) order.
+    std::unordered_map<std::string, std::vector<CardPrice>> pricesForMany(
+        const std::vector<std::string>& externalCardIds);
 
     // When WE last fetched this card's prices from the API, or nullopt if never —
     // the caller compares it against "now" to decide whether to refetch (TTL).

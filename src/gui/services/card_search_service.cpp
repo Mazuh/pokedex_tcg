@@ -177,6 +177,12 @@ void CardSearchService::fetchSets(int retriesLeft) {
                     // re-fetching for the session.
                     qWarning() << "CardSearchService: set list came back empty — keeping cache";
                     fallBackToCache();
+                    // An empty 200 is the server's (degraded) answer, not a transient
+                    // failure worth retrying: mark the table loaded even with NO cache to
+                    // adopt, so we don't re-fire /v2/sets on every subsequent search
+                    // (hammering a responsive-but-degraded free API). Narrowing is simply
+                    // unavailable this session; the TTL retries next launch.
+                    setsLoaded_ = true;
                 } else {
                     sets_ = std::move(parsed);
                     setsLoaded_ = true;

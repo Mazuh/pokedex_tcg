@@ -5,6 +5,8 @@
 #include <QString>
 
 #include <optional>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "core/app/card_price_dto.h"
@@ -39,6 +41,12 @@ public:
 
     // The prices already cached for a card (empty if none) — no network.
     std::vector<CardPrice> cached(const QString& externalCardId);
+
+    // The cached prices for many cards at once, keyed by external card id — one batched
+    // query instead of N cached() calls, for a caller totalling a collection's value
+    // (e.g. a binder header). No network.
+    std::unordered_map<std::string, std::vector<CardPrice>> cachedMany(
+        const std::vector<std::string>& externalCardIds);
 
     // When we last fetched this card from the API, or nullopt if never — no network.
     std::optional<Timestamp> fetchedAt(const QString& externalCardId);

@@ -16,6 +16,7 @@
 
 #include <exception>
 #include <map>
+#include <unordered_set>
 #include <string>
 #include <unordered_map>
 
@@ -224,19 +225,28 @@ void BinderView::updateStats(const std::vector<CardCopy>& filedCopies) {
     // than crashing the binder open.
     std::map<std::string, long long> totals;
     try {
-        std::unordered_map<std::string, std::vector<CardPrice>> priceCache;
+        // Gather the distinct linked ids, then read every one's prices in a single
+        // batched query (cachedMany) rather than one SELECT per card — opening or
+        // re-statting a large binder must not be N synchronous round-trips. Each copy
+        // still contributes (three of a card counts 3×), by looking its id up in the map.
+        std::vector<std::string> ids;
+        std::unordered_set<std::string> seen;
+        for (const CardCopy& copy : filedCopies) {
+            if (copy.ownership == CardOwnership::Owned && !copy.externalCardId.empty() &&
+                seen.insert(copy.externalCardId).second) {
+                ids.push_back(copy.externalCardId);
+            }
+        }
+        const std::unordered_map<std::string, std::vector<CardPrice>> byId =
+            priceLookup_.cachedMany(ids);
         for (const CardCopy& copy : filedCopies) {
             if (copy.ownership != CardOwnership::Owned || copy.externalCardId.empty()) {
                 continue;
             }
-            auto it = priceCache.find(copy.externalCardId);
-            if (it == priceCache.end()) {
-                it = priceCache
-                         .emplace(copy.externalCardId,
-                                  priceLookup_.cached(QString::fromStdString(copy.externalCardId)))
-                         .first;
+            const auto it = byId.find(copy.externalCardId);
+            if (it != byId.end()) {
+                accumulateBestPrices(totals, it->second);
             }
-            accumulateBestPrices(totals, it->second);
         }
     } catch (const std::exception&) {
         totals.clear();  // best-effort: show the counts without a value rather than crash
@@ -245,9 +255,17 @@ void BinderView::updateStats(const std::vector<CardCopy>& filedCopies) {
     QString text = tr("Listed %1").arg(listed);
     if (listed > 0) {
         const int percent = qRound(100.0 * captured / listed);
-        // Never pair a positive Captured count with "0%": round a tiny nonzero ratio up to
-        // "<1%" so the figure never reads as contradictory.
-        const QString pct = (percent == 0 && captured > 0) ? tr("<1%") : tr("%1%").arg(percent);
+        // Guard both rounding extremes so the figure never contradicts the count: a tiny
+        // nonzero ratio shows "<1%" rather than "0%", and a nearly-complete-but-not one
+        // (e.g. 997/1000 → qRound(99.7) == 100) shows ">99%" rather than a false "100%".
+        QString pct;
+        if (percent == 0 && captured > 0) {
+            pct = tr("<1%");
+        } else if (percent == 100 && captured < listed) {
+            pct = tr(">99%");
+        } else {
+            pct = tr("%1%").arg(percent);
+        }
         text += tr(" · Captured %1 (%2)").arg(captured).arg(pct);
     }
     const QString value = formatMoneyTotals(totals);

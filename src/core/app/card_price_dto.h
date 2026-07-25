@@ -54,6 +54,8 @@ struct CardPrice {
     std::string currency;
     Timestamp observedAt{};
     std::string note;
+
+    bool operator==(const CardPrice&) const = default;
 };
 
 }  // namespace pokedex

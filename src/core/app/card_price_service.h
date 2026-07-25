@@ -5,6 +5,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "core/app/card_price_dto.h"
@@ -42,6 +43,12 @@ public:
     // Every stored price for a card (API-sourced + manual), the cached spread the
     // caller displays. Reads only — never hits the network.
     std::vector<CardPrice> pricesFor(const std::string& externalCardId);
+
+    // The cached prices for many cards at once, keyed by external card id — one batched
+    // query rather than N pricesFor calls, for a caller totalling a whole collection's
+    // value. Reads only.
+    std::unordered_map<std::string, std::vector<CardPrice>> pricesForMany(
+        const std::vector<std::string>& externalCardIds);
 
     // When we last fetched this card from the API, or nullopt if never.
     std::optional<Timestamp> fetchedAt(const std::string& externalCardId);

@@ -154,4 +154,40 @@ TEST(CardPriceCacheTest, RemoveManualDeletesOnlyManualRows) {
     EXPECT_EQ(loaded[0].provenance, "tcgplayer");
 }
 
+TEST(CardPriceCacheTest, PricesForManyGroupsByCardAndMatchesPerCardOrder) {
+    Database db(":memory:");
+    db.migrate();
+    CardPriceCache cache(db);
+
+    cache.storeApiPrices("sv3-125",
+                         {makePrice("a1", "sv3-125", "tcgplayer", "holofoil", "market", 561,
+                                    "USD", "2026-07-25T00:00:00Z"),
+                          makePrice("a2", "sv3-125", "cardmarket", "", "trendPrice", 357, "EUR",
+                                    "2026-07-25T00:00:00Z")},
+                         at("2026-07-25T12:00:00Z"));
+    cache.storeApiPrices("sv3-26",
+                         {makePrice("b1", "sv3-26", "tcgplayer", "normal", "market", 36, "USD",
+                                    "2026-07-25T00:00:00Z")},
+                         at("2026-07-25T12:00:00Z"));
+
+    // A card with no stored rows is simply absent — never an empty entry.
+    const auto byId = cache.pricesForMany({"sv3-125", "sv3-26", "sv3-999"});
+    EXPECT_EQ(byId.size(), 2u);
+    ASSERT_TRUE(byId.count("sv3-125"));
+    ASSERT_TRUE(byId.count("sv3-26"));
+    EXPECT_FALSE(byId.count("sv3-999"));
+
+    // Same rows, same per-card ordering as the single-card read.
+    EXPECT_EQ(byId.at("sv3-125"), cache.pricesFor("sv3-125"));
+    EXPECT_EQ(byId.at("sv3-26"), cache.pricesFor("sv3-26"));
+    EXPECT_EQ(byId.at("sv3-26").size(), 1u);
+}
+
+TEST(CardPriceCacheTest, PricesForManyEmptyInputIsEmpty) {
+    Database db(":memory:");
+    db.migrate();
+    CardPriceCache cache(db);
+    EXPECT_TRUE(cache.pricesForMany({}).empty());
+}
+
 }  // namespace

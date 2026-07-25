@@ -26,6 +26,11 @@ std::vector<CardPrice> CardPriceService::pricesFor(const std::string& externalCa
     return cache_.pricesFor(externalCardId);
 }
 
+std::unordered_map<std::string, std::vector<CardPrice>> CardPriceService::pricesForMany(
+    const std::vector<std::string>& externalCardIds) {
+    return cache_.pricesForMany(externalCardIds);
+}
+
 std::optional<Timestamp> CardPriceService::fetchedAt(const std::string& externalCardId) {
     return cache_.fetchedAt(externalCardId);
 }

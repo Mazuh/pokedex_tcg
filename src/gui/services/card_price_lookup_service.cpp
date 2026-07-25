@@ -38,6 +38,11 @@ std::vector<CardPrice> CardPriceLookupService::cached(const QString& externalCar
     return prices_.pricesFor(externalCardId.toStdString());
 }
 
+std::unordered_map<std::string, std::vector<CardPrice>> CardPriceLookupService::cachedMany(
+    const std::vector<std::string>& externalCardIds) {
+    return prices_.pricesForMany(externalCardIds);
+}
+
 std::optional<Timestamp> CardPriceLookupService::fetchedAt(const QString& externalCardId) {
     return prices_.fetchedAt(externalCardId.toStdString());
 }

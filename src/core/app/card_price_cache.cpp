@@ -1,5 +1,7 @@
 #include "core/app/card_price_cache.h"
 
+#include <algorithm>
+
 #include "core/storage/codecs.h"
 #include "core/storage/database.h"
 #include "core/storage/statement.h"
@@ -7,6 +9,27 @@
 namespace pokedex {
 
 namespace {
+
+// The nine SELECTed columns of one card_price row, in the order every read query below
+// projects them — one place so the single-card and batch reads can't drift.
+constexpr const char* kPriceColumns =
+    "id, external_card_id, provenance, variant, metric, amount_cents, currency, observed_at,"
+    " note";
+
+// Map the current row of a stepped SELECT (projecting kPriceColumns) into a CardPrice.
+CardPrice readPriceRow(Statement& stmt) {
+    CardPrice p;
+    p.id = stmt.columnText(0);
+    p.externalCardId = stmt.columnText(1);
+    p.provenance = stmt.columnText(2);
+    p.variant = stmt.columnText(3);
+    p.metric = stmt.columnText(4);
+    p.amountCents = stmt.columnInt64(5);
+    p.currency = stmt.columnText(6);
+    p.observedAt = timestampFromIso(stmt.columnText(7));
+    p.note = stmt.columnText(8);
+    return p;
+}
 
 // Insert one already-id'd price row into card_price.
 void insertPrice(Database& db, const CardPrice& p) {
@@ -29,26 +52,43 @@ void insertPrice(Database& db, const CardPrice& p) {
 }  // namespace
 
 std::vector<CardPrice> CardPriceCache::pricesFor(const std::string& externalCardId) {
-    Statement stmt(db_,
-                   "SELECT id, external_card_id, provenance, variant, metric, amount_cents,"
-                   " currency, observed_at, note FROM card_price WHERE external_card_id = ?"
-                   " ORDER BY provenance, variant, metric;");
+    Statement stmt(db_, std::string("SELECT ") + kPriceColumns +
+                            " FROM card_price WHERE external_card_id = ?"
+                            " ORDER BY provenance, variant, metric;");
     stmt.bindText(1, externalCardId);
     std::vector<CardPrice> prices;
     while (stmt.step()) {
-        CardPrice p;
-        p.id = stmt.columnText(0);
-        p.externalCardId = stmt.columnText(1);
-        p.provenance = stmt.columnText(2);
-        p.variant = stmt.columnText(3);
-        p.metric = stmt.columnText(4);
-        p.amountCents = stmt.columnInt64(5);
-        p.currency = stmt.columnText(6);
-        p.observedAt = timestampFromIso(stmt.columnText(7));
-        p.note = stmt.columnText(8);
-        prices.push_back(std::move(p));
+        prices.push_back(readPriceRow(stmt));
     }
     return prices;
+}
+
+std::unordered_map<std::string, std::vector<CardPrice>> CardPriceCache::pricesForMany(
+    const std::vector<std::string>& externalCardIds) {
+    // One query for the whole set (chunked to stay under SQLite's bound-parameter limit)
+    // instead of one SELECT per id — so a caller totalling a binder's value reads every
+    // card's prices in a couple of round-trips, not N. Rows are grouped by card id; the
+    // per-card order matches pricesFor (provenance, variant, metric).
+    std::unordered_map<std::string, std::vector<CardPrice>> byId;
+    constexpr std::size_t kChunk = 500;
+    for (std::size_t start = 0; start < externalCardIds.size(); start += kChunk) {
+        const std::size_t count = std::min(kChunk, externalCardIds.size() - start);
+        std::string sql = std::string("SELECT ") + kPriceColumns +
+                          " FROM card_price WHERE external_card_id IN (";
+        for (std::size_t i = 0; i < count; ++i) {
+            sql += (i == 0) ? "?" : ",?";
+        }
+        sql += ") ORDER BY external_card_id, provenance, variant, metric;";
+        Statement stmt(db_, sql);
+        for (std::size_t i = 0; i < count; ++i) {
+            stmt.bindText(static_cast<int>(i + 1), externalCardIds[start + i]);
+        }
+        while (stmt.step()) {
+            CardPrice p = readPriceRow(stmt);
+            byId[p.externalCardId].push_back(std::move(p));
+        }
+    }
+    return byId;
 }
 
 std::optional<Timestamp> CardPriceCache::fetchedAt(const std::string& externalCardId) {
