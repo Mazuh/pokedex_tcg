@@ -102,6 +102,14 @@ private:
     // younger than kSetCacheTtl (the startup fast-path); false accepts any cache (the
     // post-fetch-failure fallback). Returns true when a non-empty table was adopted.
     bool loadSetsFromCache(bool requireFresh);
+    // After a set fetch yields no usable list (empty 200, parse failure, or network
+    // failure), fall back to the last-good cache. When a cache exists it is adopted
+    // AND the table is marked loaded for the session, so we stop re-fetching /v2/sets
+    // on every search while the API is degraded (the set list changes rarely; a stale
+    // table narrows fine and the TTL refreshes it next launch). With NO cache to fall
+    // back to, the table stays unloaded so a later search retries — we have nothing to
+    // narrow with and must keep trying.
+    void fallBackToCache();
     void fetchSets(int retriesLeft);          // the GET itself, with transient-retry
     void dispatchSearch();                     // debounce/limiter gate → startCardFetch
     void startCardFetch(int dexNumber, std::uint64_t generation, const QString& url,

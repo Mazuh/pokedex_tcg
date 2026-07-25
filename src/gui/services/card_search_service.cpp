@@ -170,19 +170,32 @@ bool CardSearchService::loadSetsFromCache(bool requireFresh) {
         }
         sets_ = std::move(cached);
         setsLoading_ = false;
-        // A FRESH cache is authoritative for the session (the daily-TTL skip), so it
-        // marks the table loaded and no fetch runs. A STALE fallback (requireFresh ==
-        // false, adopted after a failed fetch) instead leaves setsLoaded_ false: it
-        // narrows searches now, but a later search still re-attempts the fetch once the
-        // API recovers — mirroring the pre-cache "failed load → retry next search".
-        setsLoaded_ = requireFresh;
+        // Adopting a cache does not by itself finalize the load state: the startup
+        // fast-path (requireFresh) marks the table loaded, and so does the
+        // degraded-mode fallback (see fallBackToCache, which sets setsLoaded_ after a
+        // successful adopt). This method only reports success; the caller decides
+        // whether the adopt ends further fetching.
         qInfo().noquote() << "CardSearchService: loaded" << sets_.size()
                           << (requireFresh ? "sets from cache" : "sets from stale cache");
+        if (requireFresh) {
+            setsLoaded_ = true;
+        }
         Q_EMIT setsReady();
         return true;
     } catch (const std::exception& e) {
         qWarning() << "CardSearchService: set cache read failed:" << e.what();
         return false;
+    }
+}
+
+void CardSearchService::fallBackToCache() {
+    // If a cached table is available, adopting it also ends further fetching for the
+    // session (setsLoaded_): we would rather narrow from a slightly stale-but-complete
+    // table than re-hit the flaky /v2/sets on every search while the API is degraded.
+    // With no cache we leave setsLoaded_ false, so a later search retries — there is
+    // nothing to narrow with until a real list arrives.
+    if (loadSetsFromCache(/*requireFresh=*/false)) {
+        setsLoaded_ = true;
     }
 }
 
@@ -200,9 +213,10 @@ void CardSearchService::fetchSets(int retriesLeft) {
                     // A 200 carrying an empty table is a degraded-mode response, not a
                     // real set list — never overwrite the last-good cache with it (that
                     // would destroy the outage fallback). Treat it like a failed fetch:
-                    // keep the cache and fall back to it (even if stale).
+                    // fall back to the cache (even if stale) and, if we have one, stop
+                    // re-fetching for the session.
                     qWarning() << "CardSearchService: set list came back empty — keeping cache";
-                    loadSetsFromCache(/*requireFresh=*/false);
+                    fallBackToCache();
                 } else {
                     sets_ = std::move(parsed);
                     setsLoaded_ = true;
@@ -224,7 +238,7 @@ void CardSearchService::fetchSets(int retriesLeft) {
                 // A parse failure likewise leaves the good cache intact and falls back
                 // to it, rather than dropping set narrowing for the session.
                 qWarning() << "CardSearchService: could not parse set list:" << e.what();
-                loadSetsFromCache(/*requireFresh=*/false);
+                fallBackToCache();
             }
         } else if (isTransient(reply) && retriesLeft > 0) {
             const int attempt = kMaxSearchRetries - retriesLeft;
@@ -235,15 +249,15 @@ void CardSearchService::fetchSets(int retriesLeft) {
             return;  // keep setsLoading_ true across the retry
         } else {
             // Not fatal: fall back to a stale cache if we have one, so searches keep
-            // narrowing from the last good table while the API is down. Failing that,
-            // searches proceed without the table (no narrowing, and expansion codes
-            // fall back to each card's embedded set). Either way setsLoaded_ stays
-            // false (loadSetsFromCache's stale path leaves it so), so the next search
-            // re-attempts the fetch once the API recovers.
+            // narrowing from the last good table while the API is down (and, having a
+            // usable table, stop re-fetching for the session). Failing that (no cache),
+            // searches proceed without the table (no narrowing, and expansion codes fall
+            // back to each card's embedded set) and setsLoaded_ stays false, so the next
+            // search re-attempts the fetch once the API recovers.
             setsLoading_ = false;
             qWarning().noquote() << "CardSearchService: set list fetch failed —"
                                  << httpStatusNote(reply) << ":" << reply->errorString();
-            loadSetsFromCache(/*requireFresh=*/false);
+            fallBackToCache();
         }
         // On a terminal outcome (loaded, parse-fail, or exhausted), let any pending
         // search proceed now that the load is no longer in flight.
