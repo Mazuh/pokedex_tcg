@@ -226,8 +226,18 @@ void PokemonDetailPanel::showCopy(const CardCopy& copy, int total) {
                                          : tr("%1 owned copies filed here").arg(total));
     }
 
-    const QString comments = QString::fromStdString(copy.comments);
-    copyComments_->setText(comments);
+    // A long comment must not push the image, prices, and buttons off-panel: cap the
+    // shown text at a few lines' worth of characters and append an ellipsis, keeping the
+    // full comment on a tooltip (and selectable up to the cap). This bounds the label's
+    // height so the rest of the detail panel keeps its space. The Edit page shows the
+    // whole comment for reading/editing.
+    const QString comments = QString::fromStdString(copy.comments).trimmed();
+    constexpr int kMaxCommentChars = 180;
+    const bool truncated = comments.size() > kMaxCommentChars;
+    copyComments_->setText(truncated ? comments.left(kMaxCommentChars).trimmed() +
+                                           QStringLiteral("…")
+                                     : comments);
+    copyComments_->setToolTip(truncated ? comments : QString());
     copyComments_->setVisible(!comments.isEmpty());
 
     copyDetail_->show();

@@ -95,6 +95,13 @@ private:
     // (preferring `preferCopyId` if set, else a random one), plain artwork otherwise.
     // The one place the ownedHere_ lookup → showPokemon dispatch lives.
     void showSpeciesInPanel(int dex, const QString& name, const QString& preferCopyId = {});
+    // The copy whose printed identity fills a species row's Card/Set/condition/rarity/
+    // foil columns: the first owned copy filed here for that dex, or nullptr when the
+    // species owns none here (those columns then render blank). A species with several
+    // copies filed here shows its first copy's details in the row; the detail panel still
+    // surfaces the whole set. The returned pointer is valid only until ownedHere_ is next
+    // rebuilt.
+    const CardCopy* representativeCopy(int dex) const;
 
     BinderGuideService& guide_;
     CardBinder binder_;

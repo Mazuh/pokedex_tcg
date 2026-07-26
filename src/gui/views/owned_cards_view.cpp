@@ -64,26 +64,6 @@ QString speciesRegionLabel(PokemonDexNum dexNumber) {
 // can never drift apart.
 bool isRemoved(const CardCopy& copy) { return copy.ownership == CardOwnership::Removed; }
 
-// Three-way compare (compareValues shape) for an optional-valued column
-// (Condition / Rarity / Foil) where an unset value must always sink to the
-// BOTTOM — in both sort directions, because "no data" isn't a low value. The
-// shared sort shell flips the comparator's sign for a descending sort, so we
-// pre-invert the set-vs-unset case here: `ascending` decides which sign keeps
-// the unset operand last after that flip. Two set values compare normally; two
-// unset values are equal.
-int compareOptionalRank(std::optional<int> a, std::optional<int> b, bool ascending) {
-    if (a && b) {
-        return compareValues(*a, *b);
-    }
-    if (!a && !b) {
-        return 0;
-    }
-    // Exactly one is unset. Set-before-unset is cmp<0 ascending / cmp>0
-    // descending (the shell's flip turns the latter back into "last").
-    const int setBeforeUnset = ascending ? -1 : 1;
-    return a ? setBeforeUnset : -setBeforeUnset;
-}
-
 }  // namespace
 
 OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
@@ -372,14 +352,17 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
                 return key;
             },
             [ascending](const Key& a, const Key& b, int column) -> int {
+                // Ranks (Condition/Rarity/Foil) sink their unset rows to the bottom in
+                // both directions via the shared compareOptional (sortable_table.h).
+                const auto rank = [](int x, int y) { return compareValues(x, y); };
                 switch (column) {
                     case 0: return a.species.localeAwareCompare(b.species);
                     case 1: return a.card.localeAwareCompare(b.card);
                     case 2: return a.setName.localeAwareCompare(b.setName);
                     case 3: return a.language.localeAwareCompare(b.language);
-                    case 4: return compareOptionalRank(a.conditionRank, b.conditionRank, ascending);
-                    case 5: return compareOptionalRank(a.rarityRank, b.rarityRank, ascending);
-                    case 6: return compareOptionalRank(a.foilRank, b.foilRank, ascending);
+                    case 4: return compareOptional(a.conditionRank, b.conditionRank, ascending, rank);
+                    case 5: return compareOptional(a.rarityRank, b.rarityRank, ascending, rank);
+                    case 6: return compareOptional(a.foilRank, b.foilRank, ascending, rank);
                     case 7: return a.ownership.localeAwareCompare(b.ownership);
                     case 8: return a.binderName.localeAwareCompare(b.binderName);
                 }

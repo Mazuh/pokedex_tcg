@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -77,6 +78,29 @@ int compareValues(const T& a, const T& b) {
         return 1;
     }
     return 0;
+}
+
+// GUI — direction-aware three-way compare (compareValues shape) for an OPTIONAL
+// column value that must sink its unset (nullopt) rows to the BOTTOM in BOTH sort
+// directions — "no data" isn't a low value, so it belongs last whichever way the
+// column is sorted. applyColumnSort below flips the comparator's sign for a descending
+// sort, so this pre-inverts the set-vs-unset case: `ascending` picks the sign that keeps
+// the unset operand last after that flip. Two present values are compared with `cmp`
+// (e.g. compareValues for ranks, localeAwareCompare for text); two unset are equal. This
+// is the single home of that subtle logic, shared by every view with an optional column
+// (OwnedCardsView's Condition/Rarity/Foil, the binder guide's copy columns) so the
+// pre-invert can never drift out of lockstep with applyColumnSort's flip.
+template <class T, class Cmp>
+int compareOptional(const std::optional<T>& a, const std::optional<T>& b, bool ascending,
+                    Cmp cmp) {
+    if (a && b) {
+        return cmp(*a, *b);
+    }
+    if (!a && !b) {
+        return 0;
+    }
+    const int setBeforeUnset = ascending ? -1 : 1;
+    return a ? setBeforeUnset : -setBeforeUnset;
 }
 
 // GUI — sort a view's backing vector by the active header column/order, given a

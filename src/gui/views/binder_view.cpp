@@ -16,6 +16,7 @@
 
 #include <exception>
 #include <map>
+#include <optional>
 #include <unordered_set>
 #include <string>
 #include <unordered_map>
@@ -29,11 +30,15 @@
 #include "gui/views/add_card_copy_page.h"
 #include "gui/views/back_button.h"
 #include "gui/views/binder_combo.h"
+#include "gui/views/card_copy_labels.h"
+#include "gui/views/condition_labels.h"
 #include "gui/views/copy_row_activation.h"
 #include "gui/views/edit_copy_page_host.h"
+#include "gui/views/foil_labels.h"
 #include "gui/views/owned_copy_buckets.h"
 #include "gui/views/pokemon_detail_panel.h"
 #include "gui/views/price_labels.h"
+#include "gui/views/rarity_labels.h"
 #include "gui/views/select_all_line_edit.h"
 #include "gui/views/sortable_table.h"
 #include "gui/views/splitter_style.h"
@@ -76,11 +81,16 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     search_->setPlaceholderText(tr("Search Pokémon…"));
     search_->setClearButtonEnabled(true);
 
-    // A read-only three-column table: dex number, name, status. Whole-row
-    // selection, no editing; the Pokémon column takes the slack.
+    // A read-only table: dex number, name, then the printed-identity columns mirroring
+    // My Cards (Card code, Set, condition, rarity, foil) for a representative owned copy
+    // filed here, and finally the capture Status. Whole-row selection, no editing. The
+    // Set column takes the slack (as in My Cards); the Pokémon column sizes to content so
+    // the species name is never truncated. The copy columns are blank for a species with
+    // no copy filed here (most rows in a fresh binder).
     table_ = new QTableWidget(this);
-    table_->setColumnCount(3);
-    table_->setHorizontalHeaderLabels({tr("#"), tr("Pokémon"), tr("Status")});
+    table_->setColumnCount(8);
+    table_->setHorizontalHeaderLabels({tr("#"), tr("Pokémon"), tr("Card"), tr("Set"),
+                                       tr("Cond."), tr("Rarity"), tr("Foil"), tr("Status")});
     table_->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     // The "#" header sits over right-aligned dex numbers, so right-align it to match.
     table_->horizontalHeaderItem(0)->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -88,9 +98,14 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
     table_->verticalHeader()->setVisible(false);
-    table_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    table_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
-    table_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    auto* header = table_->horizontalHeader();
+    // Pokémon (col 1) and the short metadata columns size to content; Set (col 3) is the
+    // flexible slack absorber that grows when there's room and elides (full value on a
+    // tooltip) when space is tight — mirroring OwnedCardsView.
+    for (const int col : {0, 1, 2, 4, 5, 6, 7}) {  // #, Pokémon, Card, Cond., Rarity, Foil, Status
+        header->setSectionResizeMode(col, QHeaderView::ResizeToContents);
+    }
+    header->setSectionResizeMode(3, QHeaderView::Stretch);  // Set — flexible slack absorber
     // Cell padding so content clears the edges and the overlay scrollbar.
     table_->setStyleSheet("QTableView::item { padding-left: 8px; padding-right: 16px; }");
 
@@ -297,7 +312,22 @@ void BinderView::repopulate() {
         number->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
         table_->setItem(i, 0, number);
         table_->setItem(i, 1, cell(QString::fromStdString(entry.pokemon.name)));
-        table_->setItem(i, 2, cell(statusLabel(entry.status)));
+        // A representative owned copy filed here fills the printed-identity columns; a
+        // species with none leaves them blank (rendered as an em-dash by cell()).
+        const CardCopy* rep = representativeCopy(entry.pokemon.dexNumber);
+        table_->setItem(i, 2, cell(rep ? cardText(rep->cardRef) : QString()));
+        // Set is the free-text slack column: carry the full value as a tooltip so it
+        // stays readable when the width elides it.
+        auto* setCell = cell(rep ? QString::fromStdString(rep->cardRef.setName) : QString());
+        if (rep) {
+            setCell->setToolTip(QString::fromStdString(rep->cardRef.setName));
+        }
+        table_->setItem(i, 3, setCell);
+        table_->setItem(i, 4, cell(rep && rep->condition ? conditionAbbrev(*rep->condition)
+                                                         : QString()));
+        table_->setItem(i, 5, cell(rep && rep->rarity ? rarityLabel(*rep->rarity) : QString()));
+        table_->setItem(i, 6, cell(rep && rep->foil ? foilLabel(*rep->foil) : QString()));
+        table_->setItem(i, 7, cell(statusLabel(entry.status)));
     }
 
     // Move the highlight to the row the selected species landed on after the sort, so
@@ -334,33 +364,82 @@ void BinderView::repopulate() {
 }
 
 void BinderView::sortEntries() {
-    // The name column allocates a QString, so precompute each row's keys once (via
-    // sortByKeys) rather than rebuilding them for both operands on every comparison.
-    // A sortColumn_ < 0 keeps the guide's natural (dex) order.
+    // Precompute each row's keys once (via sortByKeys) rather than rebuilding them for
+    // both operands on every comparison — the name and the copy-derived text columns
+    // allocate QStrings, and each row does a representativeCopy() lookup. A sortColumn_ < 0
+    // keeps the guide's natural (dex) order. The copy columns are keyed as std::optional so
+    // a species with no copy filed here sinks to the bottom in either direction (see
+    // compareOptionalField), not just ascending. Condition/rarity/foil rank by enum value
+    // (best-to-worst condition; declaration order for rarity/foil) so the sort matches My
+    // Cards' semantics rather than the labels' alphabetical order.
     struct Key {
         int dexNumber;
         QString name;
+        std::optional<QString> card;
+        std::optional<QString> setName;
+        std::optional<int> conditionRank;
+        std::optional<int> rarityRank;
+        std::optional<int> foilRank;
         int statusRank;
     };
+    const bool ascending = sortOrder_ == Qt::AscendingOrder;
     sortByKeys(
         entries_, sortColumn_, sortOrder_,
-        [](const CardBinderEntry& e) {
-            return Key{e.pokemon.dexNumber, QString::fromStdString(e.pokemon.name),
-                       static_cast<int>(e.status)};
+        [this](const CardBinderEntry& e) {
+            Key key;
+            key.dexNumber = e.pokemon.dexNumber;
+            key.name = QString::fromStdString(e.pokemon.name);
+            key.statusRank = static_cast<int>(e.status);
+            if (const CardCopy* rep = representativeCopy(e.pokemon.dexNumber)) {
+                key.card = cardText(rep->cardRef);
+                key.setName = QString::fromStdString(rep->cardRef.setName);
+                if (rep->condition) {
+                    key.conditionRank = static_cast<int>(*rep->condition);
+                }
+                if (rep->rarity) {
+                    key.rarityRank = static_cast<int>(*rep->rarity);
+                }
+                if (rep->foil) {
+                    key.foilRank = static_cast<int>(*rep->foil);
+                }
+            }
+            return key;
         },
-        [](const Key& a, const Key& b, int column) -> int {
+        [ascending](const Key& a, const Key& b, int column) -> int {
+            const auto text = [](const QString& x, const QString& y) {
+                return x.localeAwareCompare(y);
+            };
+            const auto rank = [](int x, int y) { return compareValues(x, y); };
             switch (column) {
                 case 0:
                     return compareValues(a.dexNumber, b.dexNumber);
                 case 1:
                     return a.name.localeAwareCompare(b.name);
                 case 2:
+                    return compareOptional(a.card, b.card, ascending, text);
+                case 3:
+                    return compareOptional(a.setName, b.setName, ascending, text);
+                case 4:
+                    return compareOptional(a.conditionRank, b.conditionRank, ascending, rank);
+                case 5:
+                    return compareOptional(a.rarityRank, b.rarityRank, ascending, rank);
+                case 6:
+                    return compareOptional(a.foilRank, b.foilRank, ascending, rank);
+                case 7:
                     // CollectionStatus enum values are the documented precedence order —
                     // a more meaningful grouping than the status labels' alphabetical order.
                     return compareValues(a.statusRank, b.statusRank);
             }
             return 0;
         });
+}
+
+const CardCopy* BinderView::representativeCopy(int dex) const {
+    const auto it = ownedHere_.find(dex);
+    if (it == ownedHere_.end() || it->second.empty()) {
+        return nullptr;
+    }
+    return &it->second.front();
 }
 
 void BinderView::applyFilter(const QString& filter) {
