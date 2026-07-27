@@ -366,20 +366,15 @@ void CardPricesPanel::render() {
     // Emptiness is decided on the RAW cache, before hiding the "high" outlier — else a
     // card whose only cached metric is TCGplayer "high" would falsely read as priceless.
     if (cached.empty()) {
-        rows_.clear();
-        headline_->hide();
-        infoButton_->hide();
-        links_->hide();
-        toggle_->hide();
-        table_->hide();
-        if (fetchedAt) {
-            status_->setText(QStringLiteral("No market prices found for this card."));
-            fetchButton_->setText(QStringLiteral("Refresh"));
-        } else {
-            status_->setText(QStringLiteral("Prices not fetched yet."));
-            fetchButton_->setText(QStringLiteral("Fetch prices"));
-        }
-        status_->show();
+        // Same widget-hiding as the message states (headline/info/links/toggle/table + rows_
+        // cleared) via resetToMessage, but keep the Fetch/Refresh button so the user can
+        // (re)fetch — resetToMessage hides it, so re-show it here.
+        resetToMessage(fetchedAt ? QStringLiteral("No market prices found for this card.")
+                                 : QStringLiteral("Prices not fetched yet."));
+        fetchButton_->setText(fetchedAt ? QStringLiteral("Refresh")
+                                        : QStringLiteral("Fetch prices"));
+        fetchButton_->show();
+        fetchButton_->setEnabled(true);
         return;
     }
 
@@ -493,13 +488,19 @@ void CardPricesPanel::onFetchClicked() {
 }
 
 void CardPricesPanel::onLinkResults(const std::vector<CardCandidate>& cards) {
-    // Pick the one printing to link. A set + species/name usually yields exactly one;
-    // when a species has several printings in the set, the copy's collector number
-    // singles one out. Anything still ambiguous is reported, not guessed.
+    // Pick the one printing to link. A set + species/name usually yields exactly one; when a
+    // species has several printings in the set, the copy's collector number singles one out.
+    // A lone result is trusted only when the copy records NO collector number or it matches —
+    // otherwise a wrong sole hit (a renamed/merged set, or a loose set-name match that
+    // surfaced a different card) would be linked and shown as this copy's card. Anything
+    // ambiguous or mismatched is reported, not guessed.
     const QString wantNumber = collectorKey(cardRef_.collectorNumber);
     const CardCandidate* match = nullptr;
     if (cards.size() == 1) {
-        match = &cards.front();
+        const QString candidateNumber = collectorKey(cards.front().cardRef.collectorNumber);
+        if (wantNumber.isEmpty() || candidateNumber == wantNumber) {
+            match = &cards.front();
+        }
     } else if (cards.size() > 1 && !wantNumber.isEmpty()) {
         for (const CardCandidate& candidate : cards) {
             if (collectorKey(candidate.cardRef.collectorNumber) != wantNumber) {
@@ -517,10 +518,12 @@ void CardPricesPanel::onLinkResults(const std::vector<CardCandidate>& cards) {
         linking_ = false;
         fetching_ = false;
         fetchButton_->setEnabled(true);
+        // "Not empty" now also covers a lone hit whose collector number didn't match, so the
+        // wording fits both that and the several-ambiguous case (never claims "several").
         status_->setText(cards.empty()
                              ? QStringLiteral("Couldn't find this card in the catalog.")
-                             : QStringLiteral("Found several possible cards — open “Edit "
-                                              "card…” to pick the right one."));
+                             : QStringLiteral("Couldn't confidently match this card — open "
+                                              "“Edit card…” to pick the right one."));
         status_->show();
         return;
     }
