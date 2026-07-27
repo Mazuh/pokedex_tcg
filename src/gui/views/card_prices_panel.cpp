@@ -443,6 +443,13 @@ void CardPricesPanel::repopulateTable() {
                                 return QString::fromStdString(a.metric)
                                     .localeAwareCompare(QString::fromStdString(b.metric));
                             case 3:
+                                // Intentional: sort by the raw cent amount, treating USD
+                                // as the reference scale and NOT converting Cardmarket's
+                                // EUR rows. We have no exchange rate on hand, and USD/EUR
+                                // track closely enough that the raw magnitude gives a
+                                // useful rough ordering — good enough for a "find the
+                                // biggest/smallest figure" glance, without pulling an FX
+                                // feed into a display-only sort.
                                 return compareValues(a.amountCents, b.amountCents);
                             case 4:
                                 return compareValues(a.observedAt, b.observedAt);
