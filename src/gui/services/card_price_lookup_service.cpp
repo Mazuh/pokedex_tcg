@@ -14,15 +14,6 @@
 
 namespace pokedex {
 
-namespace {
-
-// Per-card retry/backoff: the API 5xx/504s under load, so a transient failure is
-// retried a few times with growing delays before it surfaces as pricesFailed().
-constexpr int kMaxRetries = 3;
-constexpr int kBackoffBaseMs = 400;
-
-}  // namespace
-
 CardPriceLookupService::CardPriceLookupService(const CardCatalogApi& api, CardPriceService& prices,
                                                QObject* parent)
     : QObject(parent), api_(api), prices_(prices), nam_(new QNetworkAccessManager(this)) {}
@@ -50,7 +41,7 @@ void CardPriceLookupService::fetch(const QString& externalCardId) {
         return;
     }
     inFlight_.insert(externalCardId);
-    startFetch(externalCardId, kMaxRetries);
+    startFetch(externalCardId, kApiMaxRetries);
 }
 
 void CardPriceLookupService::startFetch(const QString& externalCardId, int retriesLeft) {
@@ -63,7 +54,7 @@ void CardPriceLookupService::startFetch(const QString& externalCardId, int retri
             // A 404 here is terminal, not retryable: the card id is genuinely absent
             // (unlike a search, where 404 is a spurious flake) — see http_status.h.
             if (isTransient(reply, /*retry404=*/false) && retriesLeft > 0) {
-                const int delay = backoffDelayMs(retriesLeft, kMaxRetries, kBackoffBaseMs);
+                const int delay = backoffDelayMs(retriesLeft, kApiMaxRetries, kApiBackoffBaseMs);
                 qWarning().noquote()
                     << "CardPriceLookupService: prices for" << externalCardId
                     << httpStatusNote(reply) << "— retrying in" << delay << "ms ("

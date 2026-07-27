@@ -34,10 +34,8 @@ constexpr int kThrottleRetryMs = 150;
 // transient 429/504 is absorbed by the search retry/backoff below.
 constexpr double kBurst = 8.0;
 constexpr double kSustainedPerSecond = 5.0;
-// Card-search retry/backoff: the API 504s under load, so a transient failure is
-// retried a few times with growing delays before it surfaces as failed().
-constexpr int kMaxSearchRetries = 3;
-constexpr int kBackoffBaseMs = 400;
+// Card-search retry/backoff uses the shared API policy (kApiMaxRetries /
+// kApiBackoffBaseMs in http_status.h) so it can't drift from the price transport.
 // A filter that resolves to more than this many sets isn't a useful narrow and
 // would OR that many set.id clauses into the query URL (risking the API's length
 // limit), so treat it as unnarrowed.
@@ -104,7 +102,7 @@ void CardSearchService::ensureSetsLoading() {
         return;
     }
     setsLoading_ = true;
-    fetchSets(kMaxSearchRetries);
+    fetchSets(kApiMaxRetries);
 }
 
 bool CardSearchService::loadSetsFromCache(bool requireFresh) {
@@ -215,7 +213,7 @@ void CardSearchService::fetchSets(int retriesLeft) {
                 setsLoaded_ = true;
             }
         } else if (isTransient(reply) && retriesLeft > 0) {
-            const int delay = backoffDelayMs(retriesLeft, kMaxSearchRetries, kBackoffBaseMs);
+            const int delay = backoffDelayMs(retriesLeft, kApiMaxRetries, kApiBackoffBaseMs);
             qWarning().noquote() << "CardSearchService: set list" << httpStatusNote(reply)
                                  << "— retrying in" << delay << "ms (" << retriesLeft << "left)";
             QTimer::singleShot(delay, this, [this, retriesLeft]() { fetchSets(retriesLeft - 1); });
@@ -295,7 +293,7 @@ void CardSearchService::dispatchSearch() {
     }
     pendingSearch_.reset();
     startCardFetch(req.dexNumber, req.generation,
-                   QString::fromStdString(api_.resolveSearch(query).url), kMaxSearchRetries);
+                   QString::fromStdString(api_.resolveSearch(query).url), kApiMaxRetries);
 }
 
 void CardSearchService::startCardFetch(int dexNumber, std::uint64_t generation,
@@ -313,7 +311,7 @@ void CardSearchService::startCardFetch(int dexNumber, std::uint64_t generation,
                 if (reply->error() != QNetworkReply::NoError) {
                     if (isTransient(reply) && retriesLeft > 0) {
                         const int delay =
-                            backoffDelayMs(retriesLeft, kMaxSearchRetries, kBackoffBaseMs);
+                            backoffDelayMs(retriesLeft, kApiMaxRetries, kApiBackoffBaseMs);
                         qWarning().noquote()
                             << "CardSearchService: dex" << dexNumber << httpStatusNote(reply)
                             << "— retrying in" << delay << "ms (" << retriesLeft << "left)";

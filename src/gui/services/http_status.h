@@ -13,6 +13,13 @@ namespace pokedex {
 // and want the same "is this worth retrying?" rule and the same human-readable
 // status note in the logs.
 
+// The shared retry/backoff policy for that API: a few attempts with exponential
+// backoff (see backoffDelayMs). Kept here alongside the classification helpers — not
+// re-declared per transport — so the search and price paths can't silently drift to
+// different retry policies against the same host.
+inline constexpr int kApiMaxRetries = 3;
+inline constexpr int kApiBackoffBaseMs = 400;
+
 // A transient failure worth retrying: any network-layer error, or an HTTP 429 / 5xx
 // (and, when `retry404` is set, 404). 404 is retryable for SEARCH because
 // pokemontcg.io intermittently returns spurious 404s under load for perfectly valid
