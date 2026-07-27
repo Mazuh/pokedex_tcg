@@ -71,11 +71,22 @@ Q_SIGNALS:
 
 private:
     void startFetch(const QString& externalCardId, int retriesLeft);
+    // Terminal outcomes of an in-flight fetch. On success the coalesced-Refresh flag is
+    // cleared (the fresh result covers every waiting panel); on failure, if a Refresh
+    // coalesced onto this now-failed attempt, it is re-issued as a genuine fresh fetch
+    // rather than inheriting the failure.
+    void finishSucceeded(const QString& externalCardId);
+    void finishFailed(const QString& externalCardId);
 
     const CardCatalogApi& api_;
     CardPriceService& prices_;
     QNetworkAccessManager* nam_;
     QSet<QString> inFlight_;  // ids with a fetch on the wire, to coalesce duplicates
+    // ids for which an explicit Fetch/Refresh arrived while a fetch was already on the
+    // wire. A coalesced request rides the in-flight result when it SUCCEEDS, but if that
+    // fetch fails the user's forced click still deserves a real attempt — so it is
+    // re-issued once, on failure, for any id recorded here.
+    QSet<QString> refetchQueued_;
 };
 
 }  // namespace pokedex
