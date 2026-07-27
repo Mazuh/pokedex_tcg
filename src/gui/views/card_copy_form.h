@@ -69,7 +69,7 @@ public:
     void setCardReference(const CardReference& ref);
 
     // Pre-fill the rarity picker (e.g. from a picked card's catalog rarity). nullopt
-    // selects "(Unspecified)". Silent — uses setCurrentIndex, so it emits no signals,
+    // selects "— None —". Silent — uses setCurrentIndex, so it emits no signals,
     // and the user can still change it.
     void setRarity(std::optional<CardRarity> rarity);
 

@@ -16,6 +16,7 @@
 
 #include "gui/views/binder_combo.h"
 #include "gui/views/condition_labels.h"
+#include "gui/views/empty_option.h"
 #include "gui/views/foil_labels.h"
 #include "gui/views/muted_text.h"
 #include "gui/views/ownership_labels.h"
@@ -135,7 +136,12 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     // case. A USER pick (activated, not the programmatic setCurrentIndex in loadCopy)
     // is reported so an edit host can enable its Save button.
     language_ = new QComboBox(this);
-    language_->addItems(languageCodes());
+    // Each item carries the stored code as its data (so the empty entry can show the
+    // shared noneOptionLabel() while still mapping back to ""). The leading blank in
+    // languageCodes() is that empty entry; the rest are the real codes.
+    for (const QString& code : languageCodes()) {
+        language_->addItem(code.isEmpty() ? noneOptionLabel() : code, code);
+    }
     connect(language_, &QComboBox::activated, this, [this](int) { Q_EMIT detailsChanged(); });
 
     collectorNumber_ = new QLineEdit(this);
@@ -145,21 +151,22 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
 
     condition_ = new QComboBox(this);
     // Condition is optional (a copy can be recorded ungraded) — default to blank, so
-    // nothing is claimed unless the user picks a grade. The -1 sentinel means "none".
+    // nothing is claimed unless the user picks a grade. The -1 sentinel means "none";
+    // its label is the shared noneOptionLabel() so every form's empty entry reads alike.
     // Labels come from conditionLabel() (the app's single source, so the picker reads
     // the same as the table and a new grade fails its exhaustive -Wswitch).
-    condition_->addItem(tr("(Unspecified)"), -1);
+    condition_->addItem(noneOptionLabel(), -1);
     for (const CardCondition c : kConditions) {
         condition_->addItem(conditionLabel(c), static_cast<int>(c));
     }
     connect(condition_, &QComboBox::activated, this, [this](int) { Q_EMIT detailsChanged(); });
 
     // Rarity and foil treatment are optional physical-copy attributes (like condition):
-    // each has a "(Unspecified)" -1 sentinel first, then one item per enum value with
+    // each has a noneOptionLabel() -1 sentinel first, then one item per enum value with
     // its label from the app's single source. Rarity lists the modern scale followed by
     // the legacy rarities (the two info-popover sections). Foil lists every finish.
     rarity_ = new QComboBox(this);
-    rarity_->addItem(tr("(Unspecified)"), -1);
+    rarity_->addItem(noneOptionLabel(), -1);
     for (const CardRarity r : kModernRarities) {
         rarity_->addItem(rarityLabel(r), static_cast<int>(r));
     }
@@ -169,7 +176,7 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     connect(rarity_, &QComboBox::activated, this, [this](int) { Q_EMIT detailsChanged(); });
 
     foil_ = new QComboBox(this);
-    foil_->addItem(tr("(Unspecified)"), -1);
+    foil_->addItem(noneOptionLabel(), -1);
     for (const CardFoil f : kFoils) {
         foil_->addItem(foilLabel(f), static_cast<int>(f));
     }
@@ -307,7 +314,7 @@ void CardCopyForm::setCardReference(const CardReference& ref) {
 
 void CardCopyForm::setRarity(std::optional<CardRarity> rarity) {
     // Silent (setCurrentIndex, not activated), so autofilling from a picked card emits
-    // no detailsChanged(); nullopt / an unmapped value falls back to "(Unspecified)".
+    // no detailsChanged(); nullopt / an unmapped value falls back to "— None —".
     const int data = rarity ? static_cast<int>(*rarity) : -1;
     const int index = rarity_->findData(data);
     rarity_->setCurrentIndex(index >= 0 ? index : 0);
@@ -323,17 +330,21 @@ void CardCopyForm::loadCopy(const CardCopy& copy) {
     setName_->setText(QString::fromStdString(copy.cardRef.setName));
     collectorNumber_->setText(QString::fromStdString(copy.cardRef.collectorNumber));
     const QString language = QString::fromStdString(copy.cardRef.language);
-    int li = language_->findText(language);
-    if (li < 0 && !language.isEmpty()) {
-        // The stored code isn't one this build lists (a row written by a newer
-        // version, or a code since dropped from languageCodes). Add it as a
-        // selectable item so loading + saving round-trips it — otherwise it would
-        // fall to the blank "(unspecified)" item and the first save (even a
-        // comment-only one, since the page then reads dirty) would erase it.
-        language_->addItem(language);
-        li = language_->count() - 1;
+    if (language.isEmpty()) {
+        language_->setCurrentIndex(0);  // the noneOptionLabel() entry
+    } else {
+        int li = language_->findData(language);
+        if (li < 0) {
+            // The stored code isn't one this build lists (a row written by a newer
+            // version, or a code since dropped from languageCodes). Add it as a
+            // selectable item so loading + saving round-trips it — otherwise it would
+            // fall to the blank "— None —" item and the first save (even a
+            // comment-only one, since the page then reads dirty) would erase it.
+            language_->addItem(language, language);
+            li = language_->count() - 1;
+        }
+        language_->setCurrentIndex(li);
     }
-    language_->setCurrentIndex(li >= 0 ? li : 0);
     const int cd = copy.condition ? static_cast<int>(*copy.condition) : -1;
     const int ci = condition_->findData(cd);
     condition_->setCurrentIndex(ci >= 0 ? ci : 0);
@@ -353,7 +364,7 @@ void CardCopyForm::addAction(QPushButton* button) {
 CardReference CardCopyForm::cardReference() const {
     CardReference ref;
     ref.expansionCode = expansionCode_->text().trimmed().toStdString();
-    ref.language = language_->currentText().toStdString();  // "" when unspecified
+    ref.language = language_->currentData().toString().toStdString();  // "" when unspecified
     ref.collectorNumber = collectorNumber_->text().trimmed().toStdString();
     ref.setName = setName_->text().trimmed().toStdString();
     ref.name = cardName_->text().trimmed().toStdString();

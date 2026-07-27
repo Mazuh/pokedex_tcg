@@ -10,6 +10,7 @@
 
 #include "core/domain/card_binder.h"
 #include "core/domain/types.h"
+#include "gui/views/empty_option.h"
 #include "gui/views/region_labels.h"
 
 namespace pokedex {
@@ -35,7 +36,7 @@ inline QString binderComboLabel(const CardBinder& binder) {
 inline void fillBinderCombo(QComboBox& combo, const std::vector<CardBinder>& binders,
                             const std::optional<CardBinderId>& current) {
     combo.clear();
-    combo.addItem(QObject::tr("— None —"), QString());
+    combo.addItem(noneOptionLabel(), QString());
     for (const CardBinder& binder : binders) {
         combo.addItem(binderComboLabel(binder), QString::fromStdString(binder.id));
     }

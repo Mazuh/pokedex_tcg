@@ -9,6 +9,7 @@
 #include <QVBoxLayout>
 #include <QVariant>
 
+#include "gui/views/empty_option.h"
 #include "gui/views/region_labels.h"
 
 namespace pokedex {
@@ -25,8 +26,9 @@ BinderEditorDialog::BinderEditorDialog(QWidget* parent) : QDialog(parent) {
     nameEdit_->setPlaceholderText(tr("e.g. Kanto Journey"));
 
     regionCombo_ = new QComboBox(this);
-    // The region is optional: the first entry means "start empty".
-    regionCombo_->addItem(tr("(No region)"), kNoRegion);
+    // The region is optional: the first entry means "start empty" — the shared
+    // noneOptionLabel() so it reads the same as every other form's empty picker.
+    regionCombo_->addItem(noneOptionLabel(), kNoRegion);
     for (const Region region : kRegions) {
         regionCombo_->addItem(regionLabel(region), static_cast<int>(region));
     }
