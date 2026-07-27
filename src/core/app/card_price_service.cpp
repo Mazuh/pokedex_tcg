@@ -34,8 +34,8 @@ std::optional<Timestamp> CardPriceService::fetchedAt(const std::string& external
     return cache_.fetchedAt(externalCardId);
 }
 
-std::vector<CardPrice> CardPriceService::recordApiPrices(const std::string& externalCardId,
-                                                         const std::string& jsonPayload) {
+CardPriceService::RecordedApiPrices CardPriceService::recordApiPrices(
+    const std::string& externalCardId, const std::string& jsonPayload) {
     const Timestamp now = clock_();
     // A vendor block without a printed date falls back to the fetch time.
     const CardPricesParse parsed = parseCardPricesResult(jsonPayload, now);
@@ -51,7 +51,9 @@ std::vector<CardPrice> CardPriceService::recordApiPrices(const std::string& exte
     // caching the blank so it isn't re-fetched until the user insists via Refresh. Manual
     // rows are untouched either way (storeApiPrices keeps them).
     if (prices.empty() && !parsed.cardPresent) {
-        return {};  // degraded: leave the cache and the (absent-or-old) stamp untouched
+        // Degraded: leave the cache and the (absent-or-old) stamp untouched, and tell the
+        // caller so it surfaces a retryable failure rather than a false "no prices".
+        return {.stored = {}, .degraded = true};
     }
 
     for (CardPrice& p : prices) {
@@ -61,7 +63,7 @@ std::vector<CardPrice> CardPriceService::recordApiPrices(const std::string& exte
         p.id = idGenerator_();
     }
     cache_.storeApiPrices(externalCardId, prices, now);
-    return prices;
+    return {.stored = std::move(prices), .degraded = false};
 }
 
 CardPrice CardPriceService::addManualPrice(const std::string& externalCardId, long long amountCents,

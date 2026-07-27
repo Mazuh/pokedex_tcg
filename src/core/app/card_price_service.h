@@ -52,14 +52,27 @@ public:
     // When we last fetched this card from the API, or nullopt if never.
     std::optional<Timestamp> fetchedAt(const std::string& externalCardId);
 
+    // The outcome of recordApiPrices. `stored` are the freshly persisted API rows (empty
+    // when the card came back with no vendor blocks). `degraded` is true when NO card
+    // object came back at all (an error body / data:null / a 200 the transport couldn't
+    // turn into a card): nothing was stored or stamped, so the caller must treat the fetch
+    // as FAILED (let the user retry) rather than as a successful "no prices" answer — a
+    // genuinely price-less card (card present, no blocks) has degraded=false and an empty
+    // `stored`, and IS stamped so it isn't re-offered forever. See CardPricesParse.
+    struct RecordedApiPrices {
+        std::vector<CardPrice> stored;
+        bool degraded = false;
+    };
+
     // Parse a /v2/cards/{id} payload and persist its prices for `externalCardId`, replacing
     // that card's previously-cached API rows and stamping the fetch time to now();
     // manual rows are preserved. The parsed rows are re-keyed to `externalCardId` (the id we
-    // fetched) so a read finds them regardless of the payload's own id field. Returns
-    // the freshly stored API prices. Throws CardCatalogParseError if the payload is
-    // not valid JSON (a valid-but-empty payload simply stores no prices).
-    std::vector<CardPrice> recordApiPrices(const std::string& externalCardId,
-                                           const std::string& jsonPayload);
+    // fetched) so a read finds them regardless of the payload's own id field. Returns the
+    // freshly stored API prices, plus a `degraded` flag distinguishing a no-card response
+    // (nothing stored/stamped) from a genuine price-less answer. Throws CardCatalogParseError
+    // if the payload is not valid JSON.
+    RecordedApiPrices recordApiPrices(const std::string& externalCardId,
+                                      const std::string& jsonPayload);
 
     // Pin a manual price for a card. `amountCents` must be positive and `currency`
     // non-blank (trimmed) — else CardPriceError. observedAt is stamped to now().

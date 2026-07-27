@@ -81,10 +81,20 @@ void CardPriceLookupService::startFetch(const QString& externalCardId, int retri
             return;
         }
         try {
-            prices_.recordApiPrices(externalCardId.toStdString(),
-                                    reply->readAll().toStdString());
+            const auto recorded = prices_.recordApiPrices(externalCardId.toStdString(),
+                                                           reply->readAll().toStdString());
             inFlight_.remove(externalCardId);
-            Q_EMIT pricesReady(externalCardId);
+            if (recorded.degraded) {
+                // A 200 with no card object (data:null / an error body the API returns
+                // instead of a 5xx): nothing was stored or stamped, so this is a failed
+                // fetch, not a "no prices" answer. Emit pricesFailed so the panel shows a
+                // retryable error rather than silently no-op'ing on a Fetch click.
+                qWarning() << "CardPriceLookupService: degraded price response (no card) for"
+                           << externalCardId;
+                Q_EMIT pricesFailed(externalCardId);
+            } else {
+                Q_EMIT pricesReady(externalCardId);
+            }
         } catch (const std::exception& e) {
             qWarning() << "CardPriceLookupService: could not parse prices for" << externalCardId
                        << ":" << e.what();

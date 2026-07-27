@@ -47,7 +47,9 @@ constexpr const char* kPayload = R"json({
 
 TEST(CardPriceServiceTest, RecordApiPricesParsesPersistsAndStampsFetch) {
     Fixture f;
-    const std::vector<CardPrice> stored = f.service.recordApiPrices("base1-4", kPayload);
+    const auto recorded = f.service.recordApiPrices("base1-4", kPayload);
+    EXPECT_FALSE(recorded.degraded);
+    const std::vector<CardPrice>& stored = recorded.stored;
 
     ASSERT_EQ(stored.size(), 2u);
     for (const CardPrice& p : stored) {
@@ -101,7 +103,8 @@ TEST(CardPriceServiceTest, CardPresentWithNoPricesClearsStalePrices) {
     f.now = at("2026-07-26T00:00:00Z");
     const auto result = f.service.recordApiPrices(
         "base1-4", R"({"data": {"id": "base1-4", "name": "Charizard"}})");
-    EXPECT_TRUE(result.empty());
+    EXPECT_TRUE(result.stored.empty());
+    EXPECT_FALSE(result.degraded);  // card present, just price-less → a real answer
     EXPECT_TRUE(f.service.pricesFor("base1-4").empty());  // cleared — the card has no prices now
     ASSERT_TRUE(f.service.fetchedAt("base1-4").has_value());
     EXPECT_EQ(*f.service.fetchedAt("base1-4"), f.now);  // re-stamped to the fresh fetch
@@ -116,7 +119,8 @@ TEST(CardPriceServiceTest, CardPresentWithNoPricesKeepsManualRows) {
 
     const auto result = f.service.recordApiPrices(
         "base1-4", R"({"data": {"id": "base1-4", "name": "Charizard"}})");
-    EXPECT_TRUE(result.empty());
+    EXPECT_TRUE(result.stored.empty());
+    EXPECT_FALSE(result.degraded);
     const auto loaded = f.service.pricesFor("base1-4");
     ASSERT_EQ(loaded.size(), 1u);  // the API rows cleared, the manual one kept
     EXPECT_EQ(loaded.front().provenance, kManualPriceProvenance);
@@ -134,7 +138,8 @@ TEST(CardPriceServiceTest, DegradedResponseWithoutCardKeepsExistingPrices) {
     f.now = at("2026-07-26T00:00:00Z");
     // Valid JSON, but no card node (a degraded/error body) — cardPresent is false.
     const auto result = f.service.recordApiPrices("base1-4", R"({"data": null})");
-    EXPECT_TRUE(result.empty());
+    EXPECT_TRUE(result.stored.empty());
+    EXPECT_TRUE(result.degraded);  // no card object → failed fetch, not a "no prices" answer
     EXPECT_EQ(f.service.pricesFor("base1-4").size(), 2u);      // preserved, not wiped
     EXPECT_EQ(f.service.fetchedAt("base1-4"), fetchedBefore);  // stamp untouched → will retry
 }
@@ -145,7 +150,8 @@ TEST(CardPriceServiceTest, DegradedResponseWithoutCardKeepsExistingPrices) {
 TEST(CardPriceServiceTest, DegradedFirstFetchDoesNotStamp) {
     Fixture f;
     const auto result = f.service.recordApiPrices("sv3-5", R"({"data": null})");
-    EXPECT_TRUE(result.empty());
+    EXPECT_TRUE(result.stored.empty());
+    EXPECT_TRUE(result.degraded);  // no card object → failed fetch
     EXPECT_TRUE(f.service.pricesFor("sv3-5").empty());
     EXPECT_FALSE(f.service.fetchedAt("sv3-5").has_value());  // never stamped → still fetchable
 }
@@ -156,7 +162,8 @@ TEST(CardPriceServiceTest, FirstFetchWithNoPricesStillStamps) {
     Fixture f;
     const auto result =
         f.service.recordApiPrices("sv3-5", R"({"data": {"id": "sv3-5", "name": "No Prices"}})");
-    EXPECT_TRUE(result.empty());
+    EXPECT_TRUE(result.stored.empty());
+    EXPECT_FALSE(result.degraded);  // card present, just price-less → stamp and cache the blank
     EXPECT_TRUE(f.service.pricesFor("sv3-5").empty());
     EXPECT_TRUE(f.service.fetchedAt("sv3-5").has_value());  // stamped, so it won't re-offer
 }
