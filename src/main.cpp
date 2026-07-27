@@ -119,7 +119,10 @@ int main(int argc, char *argv[]) {
         pokedex::MainWindow window(
             service, guide, browse, wishlist, media, cardSearch, priceLookup, cardCopies,
             cardImages, QString::fromStdString(workspace->root().string()));
-        window.show();
+        // Open maximized so the window fills the screen straight away — the sections'
+        // list/detail splits have room to breathe without the user having to maximize
+        // (the title-bar double-click) first.
+        window.showMaximized();
 
         return app.exec();
     } catch (const std::exception &e) {

@@ -131,12 +131,15 @@ prices via `resolveCardById` and persists them through `recordApiPrices`. It is 
 hits the API. The reusable `gui/views/CardPricesPanel` is driven by `showCopy(copy)` /
 `clear()` (it carries the copy's link context — id, `CardReference`, species — not just an
 `external_card_id`) and renders the states [nothing-selected / unresolvable (unlinked, too
-little data) / ready-to-fetch (linked OR auto-resolvable) / has-prices (headline +
-"as of/fetched" line + expandable full table) / fetched-empty]. It appears on **every**
-owned-copy surface: the Edit page, the My Cards detail (`OwnedCardsView`), and the
-binder-guide / Pokémon-browser copy detail (`PokemonDetailPanel` copy mode, fed by
-`BinderView` and `PokemonListView`, which pass it `CardPriceLookupService` +
-`CardSearchService` + `CardCopyService`).
+little data) / ready-to-fetch (linked OR auto-resolvable) / has-prices (a headline of one
+figure per vendor, each vendor **name itself the link** to its marketplace listing, one
+vendor **per line**; the "as of"/fetched dates live on the ⓘ tooltip) / fetched-empty].
+There is **no "show all prices" table** — the full per-metric spread is deliberately left
+to the marketplace links, so the panel stays a compact headline + Fetch/Refresh + ⓘ. It
+appears on **every** owned-copy surface: the Edit page, the My Cards detail
+(`OwnedCardsView`), and the binder-guide / Pokémon-browser copy detail
+(`PokemonDetailPanel` copy mode, fed by `BinderView` and `PokemonListView`, which pass it
+`CardPriceLookupService` + `CardSearchService` + `CardCopyService`).
 **Linking is invisible — never a UI verb.** A copy that isn't yet linked but records enough
 identity (a set + species/name) still shows a "Fetch prices" button; the first Fetch
 resolves the catalog card itself (`onFetchClicked` → search scoped by the copy's set [name,
@@ -150,17 +153,25 @@ reply is adopted, since the service is app-wide) with a watchdog `QTimer` recove
 Fetch button if a superseded search never replies. The Edit page keeps its finder-based
 manual "Link prices to this card" as the disambiguation fallback for the ambiguous case.
 The panel also carries an
-"ⓘ" popover (same idiom as the card-attribute pickers) explaining the metrics, and
-per-vendor **listing links** ("TCGplayer ↗ / Cardmarket ↗") built deterministically as
-`prices.pokemontcg.io/<vendor>/<id>` — a stable redirect to the real marketplace page, so
-no fetch or stored URL. The TCGplayer `high` metric is dropped from the display (a lone top
-listing, routinely an unrealistic outlier; still in the cache, never in the headline). Prices ride along for free while **browsing**:
+"ⓘ" popover (same idiom as the card-attribute pickers) explaining the metrics **and the
+price freshness** (the vendor "as of" date + the day we fetched, set per-render). The
+per-vendor **listing links** are merged **into the headline** — the vendor name is itself
+the link ("TCGplayer ↗ $350.00"), built deterministically as `prices.pokemontcg.io/<vendor>/<id>`
+(a stable redirect to the real marketplace page, so no fetch or stored URL) — rather than a
+separate "Listings:" line that named each vendor twice. The headline's per-vendor pick
+(`vendorBest`) never selects the TCGplayer `high` outlier, so it can't surface. Prices ride along for free while **browsing**:
 `parseCardSearchResponse` extracts the same tcgplayer/cardmarket blocks the search payload
 already carries into `CardCandidate.prices` (display-only, never persisted), and
 `CardFinderPanel` shows a subtle headline under the preview — no extra HTTP for a card the
 user may not own. Money→string display (currency symbols, the headline pick) is
 GUI-side in `gui/views/price_labels.h`, shared by the finder hint and the panel so they
-never diverge. Edition modeling and manual-price entry remain deferred.
+never diverge. `priceAmountsInline` (labels-free "$… · €…", the currency symbol as the
+only context) backs the **Prices column** both card tables carry (My Cards, the binder
+guide): each row shows its representative copy's cached figures, read from a single batched
+`cachedMany` snapshot per reload (`loadCachedPrices` — no network, so a header-sort never
+re-queries), blank for an unlinked/unfetched/Removed copy, and sortable by summed
+per-vendor value (USD+EUR added without an FX rate — the same intentional rough-magnitude
+tradeoff as the price table's amount sort; unpriced rows sink to the bottom). Edition modeling and manual-price entry remain deferred.
 A `CardSearchQuery` is scoped EITHER by species
 (`dexNumber`, → `nationalPokedexNumbers:N`) OR by card name (`nameQuery`, →
 `name:"…"`) — the latter is how a species-free card is found; on the GUI side
@@ -186,12 +197,13 @@ on the page after each save). `AddCardCopyPage` does double duty by its
 species' add-copy page (finder species-scoped); with `nullopt` (opened from "My
 Cards") it is the **species-free** add page for a non-Pokémon card, with the finder
 in by-name search mode (`CardFinderPanel::NameSearchMode`). `OwnedCardsView` ("My
-Cards" inventory: browse/search/assign-to-binder/remove, plus an **"Add a card…"**
-button — always available, even when empty — that pushes the species-free
-`AddCardCopyPage`, the only place a non-Pokémon card can be recorded) hosts the
-add/edit pages on an inner stack and
-reloads on return so an edited comment shows. The `CardImagePanel` is the "My Cards"
-right-hand detail panel (title + image + the copy's comments beneath). The unscoped
+Cards" inventory: browse/search/assign-to-binder/remove/delete) hosts the add/edit
+pages on an inner stack and reloads on return so an edited comment shows. Its
+right-hand detail is the **shared `PokemonDetailPanel`** (see below), configured
+species-free-friendly (`setAddMode(FreeCard)` → an always-enabled "Add" that records a
+non-Pokémon card — the only place one can be recorded; `setWishlistVisible(false)`); the
+inspector also hosts the "Edit" action, so the left toolbar keeps only
+Assign/Remove/Delete. The unscoped
 wishlist section (`WishlistView`), and the
 per-Pokémon wishlist editor (`WishlistSourcesEditor`) — no longer embedded in the
 detail panel (it crowded the card info) but hosted on its own in-window page,
@@ -202,18 +214,26 @@ shows a compact "Wishlist (N)" / "Wishlist (none)" button (reading the source co
 (`PokemonListView`, `BinderView`) turn that into a `WishlistEditPage` push, and on Back
 re-show the species so the counter refreshes (the binder guide also `refresh()`es, since
 a wishlist change can flip a species' `CollectionStatus` between Missing and Wished).
-`PokemonDetailPanel` is shared by the Pokémon browser and the
-binder guide and has an **opt-in copy mode** (3-arg `showPokemon` + a `CardImageStore*`
-ctor arg): when the binder guide hands it the species' owned copies filed in that
-binder, it shows one copy's data (printed identity/condition/ownership/comments) plus a
-counter and an "Edit card…" button (`editCopyRequested`), and swaps the picture to the
-copy's card scan with a fallback to the Pokémon artwork. One copy is picked at random on
-each row selection; returning from the edit page re-shows the just-edited copy
-(`preferCopyId`) rather than re-rolling. Passing no copies (the Pokémon browser, which
-passes no store) is the unchanged artwork-only path. The shared `scaled_pixmap.h` helper
+`PokemonDetailPanel` is the **single inspector** shared by all three card surfaces —
+the Pokémon browser, the binder guide, and My Cards (`CardImagePanel` was deleted). Top
+to bottom it renders: the card's name (falling back to the species name), a printed
+identity line (the set abbreviation — or the full set name when there's no abbreviation —
+plus the collector number, via `collectorLine`), the image (the copy's card scan, falling
+back to the Pokémon artwork when there's a species), a condition + foil line, a rarity +
+"N copies" line (N is the count of that species' live copies on this surface — a total,
+soft-Removed copies excluded), the copy's comments, the `CardPricesPanel`, an **Add + Edit** button row (side
+by side), and an optional "Wishlist (N)" button. Copy mode is opt-in (needs a
+`CardImageStore*`): the two species hosts enter it via `showPokemon(dex, name, copies,
+prefer)` (one copy shown — `preferCopyId`, else a random pick), My Cards via
+`showSingleCopy(copy, sameSpeciesTotal)` (the exact selected copy; dex is optional, for
+species-free cards). `setAddMode` picks the Add flow (SpeciesCopy → `addCopyRequested`;
+FreeCard → `addCardRequested`); `setWishlistVisible(false)` hides the wishlist on My Cards;
+Edit is hidden for a soft-Removed copy. Passing no copies (the Pokémon browser on an
+unowned species) is the artwork-only path. The shared `scaled_pixmap.h` helper
 (DPR-aware fit-scale) backs every image panel. Copy-label helpers (`speciesName`,
-`cardText`, `speciesOrCardName`, `titleFor`) are header-only in `card_copy_labels.h`,
-shared by My Cards and the binder guide's panel. Other enum→label display helpers are
+`cardText`, `setLabel` [the "Set" column's "Base Set (BS)"], `collectorLine` [the
+inspector's set+number line], `speciesOrCardName`, `titleFor`) are header-only in
+`card_copy_labels.h`, shared by My Cards and the binder guide. Other enum→label display helpers are
 header-only in `gui/views/`
 (`region_labels.h`, `status_labels.h`, `condition_labels.h`, `ownership_labels.h`).
 Every outbound external-API GET goes through one chokepoint: `gui/services/network_log.h`'s
@@ -343,7 +363,8 @@ ctest --test-dir build --output-on-failure
 
 **GUI navigation.** The app is a macOS-style shell: `MainWindow` has a left
 sidebar (a `QListWidget` source list, Finder/Settings-style) selecting sections
-in an outer `QStackedWidget`. Prefer navigating *within* the window — swap pages
+in an outer `QStackedWidget`. `main.cpp` opens it with `showMaximized()` so the
+list/detail splits have room without the user having to maximize first. Prefer navigating *within* the window — swap pages
 in a `QStackedWidget` (as `BindersPage` does: binder table ⇄ binder guide, with
 a Back button) — over opening a second top-level window. A separate window or
 modal dialog is a deliberate, rare exception (the first-run setup, the

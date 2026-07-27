@@ -19,6 +19,7 @@
 #include <exception>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "core/app/binder_service.h"
@@ -27,16 +28,17 @@
 #include "core/domain/card_copy.h"
 #include "core/domain/pokemon.h"
 #include "gui/services/card_image_store.h"
+#include "gui/services/card_price_lookup_service.h"
 #include "gui/views/add_card_copy_page.h"
 #include "gui/views/binder_picker_dialog.h"
 #include "gui/views/card_copy_labels.h"
-#include "gui/views/card_image_panel.h"
-#include "gui/views/card_prices_panel.h"
 #include "gui/views/edit_card_copy_page.h"
 #include "gui/views/condition_labels.h"
 #include "gui/views/foil_labels.h"
 #include "gui/views/owned_copy_buckets.h"
 #include "gui/views/ownership_labels.h"
+#include "gui/views/pokemon_detail_panel.h"
+#include "gui/views/price_labels.h"
 #include "gui/views/rarity_labels.h"
 #include "gui/views/region_labels.h"
 #include "gui/views/select_all_line_edit.h"
@@ -69,29 +71,32 @@ bool isRemoved(const CardCopy& copy) { return copy.ownership == CardOwnership::R
 
 OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
                                CardImageStore& images, CardSearchService& cardSearch,
-                               CardPriceLookupService& priceLookup, QWidget* parent)
+                               CardPriceLookupService& priceLookup, MediaService& media,
+                               WishlistService& wishlist, QWidget* parent)
     : QWidget(parent),
       copies_(copies),
       binders_(binders),
       images_(images),
       cardSearch_(cardSearch),
-      priceLookup_(priceLookup) {
+      priceLookup_(priceLookup),
+      media_(media),
+      wishlist_(wishlist) {
     search_ = new SelectAllLineEdit(this);
     search_->setPlaceholderText(
         tr("Search copy by Pokémon, collector number, set or binder…"));
     search_->setClearButtonEnabled(true);
     connect(search_, &QLineEdit::textChanged, this, [this](const QString&) { applyFilter(); });
 
-    // A read-only nine-column table: Pokémon, card ref, set, language, condition,
+    // A read-only nine-column table: Pokémon, set, collector, language, condition,
     // rarity, foil, ownership, binder. Whole-row selection, no editing; the Pokémon
     // column sizes to its content (so the species name is never truncated) while the
-    // Set column takes up the slack. The Set column carries the human set name, which
-    // for code-less sets (McDonald's, POP…) is the only disambiguator.
+    // Set column takes up the slack. The Set column carries the human set name (with its
+    // abbreviation), which for code-less sets (McDonald's, POP…) is the only disambiguator.
     table_ = new QTableWidget(this);
-    table_->setColumnCount(9);
-    table_->setHorizontalHeaderLabels({tr("Pokémon"), tr("Card"), tr("Set"), tr("Lang"),
-                                       tr("Cond."), tr("Rarity"), tr("Foil"), tr("Ownership"),
-                                       tr("Binder")});
+    table_->setColumnCount(10);
+    table_->setHorizontalHeaderLabels({tr("Pokémon"), tr("Set name / expansion code"),
+                                       tr("Collector"), tr("Lang"), tr("Cond."), tr("Rarity"),
+                                       tr("Foil"), tr("Ownership"), tr("Binder"), tr("Prices")});
     table_->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -100,16 +105,15 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     auto* header = table_->horizontalHeader();
     // Pokémon (col 0) sizes to its content so the species name is never truncated —
     // names are short and bounded, so this stays a modest, stable width even with the
-    // image panel narrowing the table. Set (col 2) is the flexible slack absorber
-    // instead: free text that grows when there's room and elides (full value on a
-    // tooltip) when space is tight, so Pokémon keeps its width and, when very narrow,
-    // there is still overflow to scroll to. Binder (col 8) is content-sized-then-capped
-    // in reload() so a long user-named binder can't crowd the table; the short
-    // metadata columns size to content.
-    for (const int col : {0, 1, 3, 4, 5, 6, 7}) {  // Pokémon, Card, Lang, Cond., Rarity, Foil, Ownership
+    // image panel narrowing the table. Set (col 1) is the flexible slack absorber
+    // instead: free text that grows when there's room and elides when space is tight, so
+    // Pokémon keeps its width and, when very narrow, there is still overflow to scroll to.
+    // Binder (col 8) is content-sized-then-capped in reload() so a long user-named binder
+    // can't crowd the table; the short metadata columns size to content.
+    for (const int col : {0, 2, 3, 4, 5, 6, 7, 9}) {  // all but Set (slack) and Binder (capped)
         header->setSectionResizeMode(col, QHeaderView::ResizeToContents);
     }
-    header->setSectionResizeMode(2, QHeaderView::Stretch);      // Set — flexible slack absorber
+    header->setSectionResizeMode(1, QHeaderView::Stretch);      // Set — flexible slack absorber
     header->setSectionResizeMode(8, QHeaderView::Interactive);  // Binder — free text, capped
     table_->setStyleSheet("QTableView::item { padding-left: 8px; padding-right: 16px; }");
     connect(table_, &QTableWidget::itemSelectionChanged, this, [this]() {
@@ -145,21 +149,12 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     deleteButton_->setIcon(style()->standardIcon(QStyle::SP_DialogDiscardButton));
     connect(deleteButton_, &QPushButton::clicked, this, &OwnedCardsView::deletePermanently);
 
-    editButton_ = new QPushButton(tr("Edit card…"), this);
-    editButton_->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
-    connect(editButton_, &QPushButton::clicked, this, &OwnedCardsView::editSelectedCard);
-
-    // "Add a card…" records a species-free card (a Trainer/Energy card) — needs no row
-    // selection, so it stays available even when the collection is empty. Pokémon
-    // copies are still added from "All Pokémon" (scoped to a species).
-    addButton_ = new QPushButton(tr("Add a card…"), this);
-    addButton_->setIcon(style()->standardIcon(QStyle::SP_FileDialogNewFolder));
-    connect(addButton_, &QPushButton::clicked, this, &OwnedCardsView::addNewCard);
-
-    // Shown in place of the table (and search) when the collection is empty.
+    // Shown in place of the table (and search) when the collection is empty. "Add a card…"
+    // and "Edit card…" now live on the inspector (right), so point there rather than at a
+    // toolbar button. The inspector's Add stays available even with nothing selected.
     emptyLabel_ = new QLabel(
-        tr("No cards yet. Use “Add a card…” below for a Trainer or Energy card, or open "
-           "a Pokémon in “All Pokémon” and use “Add copy…”."),
+        tr("No cards yet. Use “Add” on the right for a Trainer or Energy card, or open a "
+           "Pokémon in “All Pokémon” and use “Add” there."),
         this);
     emptyLabel_->setWordWrap(true);
     emptyLabel_->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
@@ -168,17 +163,17 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     countLabel_ = new QLabel(this);
     countLabel_->setEnabled(false);  // muted: a status detail, not an action
 
+    // The toolbar keeps only the inventory-wide operations; Add + Edit moved to the
+    // inspector on the right (side by side).
     auto* buttons = new QHBoxLayout;
-    buttons->addWidget(addButton_);
     buttons->addWidget(assignButton_);
     buttons->addWidget(removeButton_);
     buttons->addWidget(deleteButton_);
-    buttons->addWidget(editButton_);
     buttons->addStretch();
 
-    // The list pane (left) holds everything the section had before; the card-image
-    // panel (right) shows the selected copy's image — the PokemonListView splitter
-    // idiom, so "My Cards" reads like "All Pokémon".
+    // The list pane (left) holds everything the section had before; the shared inspector
+    // (right) shows the selected copy — the PokemonListView splitter idiom, so "My Cards"
+    // reads like "All Pokémon".
     auto* listPane = new QWidget(this);
     auto* listLayout = new QVBoxLayout(listPane);
     listLayout->setContentsMargins(16, 12, 16, 12);  // match the other sections' padding
@@ -188,39 +183,43 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     listLayout->addLayout(buttons);
     listLayout->addWidget(countLabel_);
 
-    panel_ = new CardImagePanel;
-
-    // A deferred fetchAndSave() download (or any image write) for the copy currently
-    // shown must re-render the panel: the copy id is unchanged, so showSelectedImage's
-    // shownCopyId_ dedup guard would otherwise suppress the reload and the new art
-    // would never appear. Reset the guard and re-show when the shown copy changes.
-    connect(&images_, &CardImageStore::imageChanged, this, [this](const QString& copyId) {
-        if (copyId.toStdString() == shownCopyId_) {
-            shownCopyId_.clear();
-            showSelectedImage();
-        }
-    });
-
-    // The right pane stacks the card image over its market-prices block. The prices
-    // panel is on-demand (see CardPricesPanel): selecting a card only renders cached
-    // prices; a fetch happens only when the user clicks its button.
-    pricesPanel_ = new CardPricesPanel(priceLookup_, cardSearch_, copies_, this);
-    pricesPanel_->clear();  // nothing selected yet
+    // The same inspector the other sections use, configured for this flat inventory: the
+    // Add button records a species-free card (needs no selection) and the wishlist button
+    // is hidden (a species-free card has no wishlist). It hosts the prices block, the
+    // image (with artwork fallback), and the Add + Edit actions.
+    panel_ = new PokemonDetailPanel(media_, wishlist_, &images_, &priceLookup_, &cardSearch_,
+                                    &copies_, this);
+    panel_->setAddMode(PokemonDetailPanel::AddMode::FreeCard);
+    panel_->setWishlistVisible(false);
+    connect(panel_, &PokemonDetailPanel::addCardRequested, this, &OwnedCardsView::addNewCard);
+    connect(panel_, &PokemonDetailPanel::editCopyRequested, this,
+            [this](const QString&) { editSelectedCard(); });
     // When a Fetch auto-resolves a copy's catalog link, learn its new id so a later
     // re-selection renders it as already linked (no needless re-resolve).
-    connect(pricesPanel_, &CardPricesPanel::cardLinked, this,
+    connect(panel_, &PokemonDetailPanel::copyLinked, this,
             [this](const QString& copyId, const QString& externalCardId) {
                 applyLinkedCardToVector(loaded_, copyId, externalCardId);
             });
-    auto* rightPane = new QWidget;
-    auto* rightLayout = new QVBoxLayout(rightPane);
-    rightLayout->setContentsMargins(0, 0, 0, 0);
-    rightLayout->addWidget(panel_, /*stretch=*/1);
-    rightLayout->addWidget(pricesPanel_);
+    // When a price fetch (from the inspector) lands for a card in this inventory, re-read
+    // the price cache and rebuild the rows so the Prices column fills in — mirroring the
+    // binder guide. The lookup service is app-wide, so a fetch for a card we don't hold
+    // (most of them) is ignored rather than re-reading + rebuilding on every fetch anywhere.
+    connect(&priceLookup_, &CardPriceLookupService::pricesReady, this,
+            [this](const QString& externalCardId) {
+                const std::string id = externalCardId.toStdString();
+                const bool present = std::any_of(loaded_.begin(), loaded_.end(),
+                                                 [&](const CardCopy& c) {
+                                                     return c.externalCardId == id;
+                                                 });
+                if (present) {
+                    loadCachedPrices();
+                    repopulate(selectedCopyId());
+                }
+            });
 
     auto* splitter = new QSplitter(Qt::Horizontal);
     splitter->addWidget(listPane);
-    splitter->addWidget(rightPane);
+    splitter->addWidget(panel_);
     splitter->setStretchFactor(0, 1);
     splitter->setStretchFactor(1, 0);
     splitter->setSizes({560, 240});
@@ -267,11 +266,43 @@ void OwnedCardsView::reload() {
     // otherwise a header-sort would leave the highlight on a different copy and
     // Remove/Assign would silently act on the wrong card.
     const std::string keepSelected = selectedCopyId();
-    // (Re)load the inventory and the binders once; a header-sort re-sort goes through
-    // repopulate() directly, so reordering never re-hits storage.
+    // (Re)load the inventory, the binders, and the price cache once; a header-sort re-sort
+    // goes through repopulate() directly, so reordering never re-hits storage.
     loaded_ = copies_.listAll();
     binderList_ = binders_.list();
+    loadCachedPrices();
     repopulate(keepSelected);
+}
+
+void OwnedCardsView::loadCachedPrices() {
+    // Gather the distinct linked ids of the non-Removed copies (a Removed copy is frozen
+    // history — the Prices column stays blank for it, matching the inspector), then read
+    // them all in ONE batched cache query (cachedMany) rather than one SELECT per copy.
+    // Cache-only (no network); best-effort so a storage failure leaves blank Prices cells
+    // rather than crashing the section.
+    pricesByExternalId_.clear();
+    std::vector<std::string> ids;
+    std::unordered_set<std::string> seen;
+    for (const CardCopy& copy : loaded_) {
+        if (!isRemoved(copy) && !copy.externalCardId.empty() &&
+            seen.insert(copy.externalCardId).second) {
+            ids.push_back(copy.externalCardId);
+        }
+    }
+    try {
+        pricesByExternalId_ = priceLookup_.cachedMany(ids);
+    } catch (const std::exception&) {
+        pricesByExternalId_.clear();
+    }
+}
+
+const std::vector<CardPrice>& OwnedCardsView::pricesFor(const CardCopy& copy) const {
+    static const std::vector<CardPrice> kEmpty;
+    if (copy.externalCardId.empty()) {
+        return kEmpty;
+    }
+    const auto it = pricesByExternalId_.find(copy.externalCardId);
+    return it == pricesByExternalId_.end() ? kEmpty : it->second;
 }
 
 void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
@@ -312,8 +343,9 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
         // them for both operands on every comparison — column 0's speciesOrCardName does
         // a catalog lookup + allocation, and the text columns allocate.
         struct Key {
-            QString species, card, setName, language, ownership, binderName;
+            QString species, setText, collector, language, ownership, binderName;
             std::optional<int> conditionRank, rarityRank, foilRank;
+            std::optional<long long> priceCents;
         };
         const bool ascending = sortOrder_ == Qt::AscendingOrder;
         const int column = sortColumn_;
@@ -335,14 +367,29 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
                 Key key;
                 switch (column) {
                     case 0: key.species = speciesOrCardName(c); break;
-                    case 1: key.card = cardText(c.cardRef); break;
-                    case 2: key.setName = QString::fromStdString(c.cardRef.setName); break;
+                    case 1: key.setText = setLabel(c.cardRef); break;
+                    case 2: key.collector = QString::fromStdString(c.cardRef.collectorNumber); break;
                     case 3: key.language = QString::fromStdString(c.cardRef.language); break;
                     case 4: key.conditionRank = rank(c.condition); break;
                     case 5: key.rarityRank = rank(c.rarity); break;
                     case 6: key.foilRank = rank(c.foil); break;
                     case 7: key.ownership = ownershipLabel(c.ownership); break;
                     case 8: key.binderName = binderName(c); break;
+                    case 9:
+                        // Sort by the copy's representative value: the sum of its per-vendor
+                        // figures in raw cents, USD and EUR added WITHOUT an FX rate (the
+                        // same intentional tradeoff as the price table's amount sort — a
+                        // rough magnitude ordering, not an exact worth). A Removed copy shows
+                        // no price, and an unpriced/unlinked one stays nullopt, so both sink
+                        // to the bottom in either direction.
+                        if (!isRemoved(c)) {
+                            const VendorBest best = vendorBest(pricesFor(c));
+                            if (best.tcg || best.cm) {
+                                key.priceCents = (best.tcg ? best.tcg->amountCents : 0) +
+                                                 (best.cm ? best.cm->amountCents : 0);
+                            }
+                        }
+                        break;
                 }
                 return key;
             },
@@ -352,14 +399,17 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
                 const auto rank = [](int x, int y) { return compareValues(x, y); };
                 switch (column) {
                     case 0: return a.species.localeAwareCompare(b.species);
-                    case 1: return a.card.localeAwareCompare(b.card);
-                    case 2: return a.setName.localeAwareCompare(b.setName);
+                    case 1: return a.setText.localeAwareCompare(b.setText);
+                    case 2: return a.collector.localeAwareCompare(b.collector);
                     case 3: return a.language.localeAwareCompare(b.language);
                     case 4: return compareOptional(a.conditionRank, b.conditionRank, ascending, rank);
                     case 5: return compareOptional(a.rarityRank, b.rarityRank, ascending, rank);
                     case 6: return compareOptional(a.foilRank, b.foilRank, ascending, rank);
                     case 7: return a.ownership.localeAwareCompare(b.ownership);
                     case 8: return a.binderName.localeAwareCompare(b.binderName);
+                    case 9:
+                        return compareOptional(a.priceCents, b.priceCents, ascending,
+                                               [](long long x, long long y) { return compareValues(x, y); });
                 }
                 return 0;
             });
@@ -383,12 +433,10 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
         // Column 0 identifies the row: the species name, or (for a species-free
         // Trainer/Energy card) its printed card name so the row isn't blank.
         table_->setItem(row, 0, cell(speciesOrCardName(c)));
-        table_->setItem(row, 1, cell(cardText(c.cardRef)));
-        // Set and Binder are the free-text, capped columns: carry the full value as
-        // a tooltip so it stays readable when the cap elides it.
-        auto* setCell = cell(QString::fromStdString(c.cardRef.setName));
-        setCell->setToolTip(QString::fromStdString(c.cardRef.setName));
-        table_->setItem(row, 2, setCell);
+        // Set shows the human name with its abbreviation ("Base Set (BS)"); it's the
+        // free-text slack column but carries no tooltip (it would just repeat the cell).
+        table_->setItem(row, 1, cell(setLabel(c.cardRef)));
+        table_->setItem(row, 2, cell(QString::fromStdString(c.cardRef.collectorNumber)));
         table_->setItem(row, 3, cell(QString::fromStdString(c.cardRef.language)));
         // Condition is optional (ungraded copies) — blank renders as an em-dash.
         table_->setItem(row, 4, cell(c.condition ? conditionAbbrev(*c.condition) : QString()));
@@ -410,6 +458,11 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
         auto* binderCell = cell(binderName);
         binderCell->setToolTip(binderName);
         table_->setItem(row, 8, binderCell);
+        // The copy's cached market prices, inline ("$… · €…"); blank when unlinked, never
+        // fetched, or Removed (frozen history — matches the inspector). Cache-only
+        // (pricesByExternalId_), so this stays a pure in-memory rebuild.
+        table_->setItem(row, 9,
+                        cell(isRemoved(c) ? QString() : priceAmountsInline(pricesFor(c))));
 
         // Gray out a Removed copy's whole row so the (bottom-sorted) history band
         // reads as inactive.
@@ -463,12 +516,9 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
     assignButton_->setVisible(!empty);
     removeButton_->setVisible(!empty);
     deleteButton_->setVisible(!empty);
-    editButton_->setVisible(!empty);
     emptyLabel_->setVisible(empty);
-    panel_->setVisible(!empty);
-    // Hide the prices block too when there are no cards — otherwise its "nothing selected"
-    // state sits beneath the empty-state message with no card to refer to.
-    pricesPanel_->setVisible(!empty);
+    // The inspector stays visible even when empty: its "Add a card…" button is the entry
+    // point for recording a species-free card, so it must remain reachable.
 
     // Restore the selection at its new row (a no-op if the copy is gone).
     if (!keepSelectedId.empty()) {
@@ -523,7 +573,6 @@ void OwnedCardsView::updateButtonState() {
                                !isRemoved(loaded_[row]);
     assignButton_->setEnabled(liveSelection);
     removeButton_->setEnabled(hasSelection);
-    editButton_->setEnabled(liveSelection);
     // Permanent deletion is only offered for a copy that's already soft-Removed —
     // you remove first, then (optionally) purge it from history. (hasSelection already
     // excludes a filter-hidden row, so an off-screen copy can't be purged.)
@@ -546,18 +595,29 @@ void OwnedCardsView::showSelectedImage() {
     shownCopyId_ = target;
     if (!valid) {
         panel_->clear();
-        pricesPanel_->clear();
         return;
     }
+    // The inspector shows the exact selected copy: its image (with the Pokémon-artwork
+    // fallback for a species copy with no scan), condition/foil/rarity, comments, and its
+    // on-demand prices block (cached-only on select; a fetch happens only on its button).
     const CardCopy& copy = loaded_[row];
-    // A synchronous local disk read (like MediaService's cache-hit path); a null
-    // pixmap (older copy, or one added without a preview) shows the panel placeholder.
-    // The copy's comments show beneath the image (hidden when blank).
-    panel_->showImage(titleFor(copy), images_.load(copy.id),
-                      QString::fromStdString(copy.comments));
-    // The prices block follows the selection (cached-only; no fetch on select). It
-    // carries the copy's link context so its Fetch button can resolve an unlinked copy.
-    pricesPanel_->showCopy(copy);
+    panel_->showSingleCopy(copy, sameSpeciesCount(copy));
+}
+
+int OwnedCardsView::sameSpeciesCount(const CardCopy& copy) const {
+    if (!copy.pokemonDexNum) {
+        return 0;  // a species-free card has no species to count copies of
+    }
+    int count = 0;
+    for (const CardCopy& c : loaded_) {
+        // Count the live copies of the species; a soft-Removed copy is frozen history and
+        // isn't part of the collection you hold (the binder guide's copy buckets are
+        // Owned-only for the same reason), so it must not inflate the count.
+        if (c.pokemonDexNum == copy.pokemonDexNum && !isRemoved(c)) {
+            ++count;
+        }
+    }
+    return count;
 }
 
 void OwnedCardsView::assignSelected() {

@@ -182,7 +182,6 @@ qt_add_executable(pokedex_tcg
     src/gui/views/card_finder_panel.cpp
     src/gui/views/edit_card_copy_page.cpp
     src/gui/views/owned_cards_view.cpp
-    src/gui/views/card_image_panel.cpp
     src/gui/views/card_prices_panel.cpp
     src/gui/views/wishlist_sources_editor.cpp
     src/gui/views/wishlist_edit_page.cpp

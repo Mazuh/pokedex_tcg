@@ -8,15 +8,12 @@
 #include <string>
 #include <vector>
 
-#include "core/app/card_price_dto.h"
 #include "core/domain/card_reference.h"
 #include "core/domain/types.h"
 
 class QLabel;
 class QPushButton;
 class QToolButton;
-class QTableWidget;
-class QHBoxLayout;
 class QTimer;
 
 namespace pokedex {
@@ -42,9 +39,11 @@ struct CardCandidate;
 //
 // States it renders: nothing selected → hidden; unresolvable (unlinked, too little
 // data) → a hint; ready-to-fetch (linked, or auto-resolvable) → a "Fetch prices"
-// button; has-prices → a headline summary + "as of/fetched" line + a Refresh button +
-// an expandable full table (every vendor × variant × metric); fetched-but-empty →
-// "no market prices found".
+// button; has-prices → a headline summary (one representative figure per vendor, each
+// vendor name linking to its listing page; the "as of"/fetched dates live on the ⓘ
+// tooltip) + a Refresh button; fetched-but-empty → "no market prices found". The full
+// per-metric spread is deliberately left to the marketplace (the listing links) rather
+// than shown as a raw cache table.
 class CardPricesPanel : public QWidget {
     Q_OBJECT
 
@@ -73,9 +72,8 @@ Q_SIGNALS:
     void cardLinked(const QString& copyId, const QString& externalCardId);
 
 private:
-    void render();           // rebuild the UI from the local cache for the current copy
-    void repopulateTable();  // sort rows_ by the active header column and fill the table
-    void onFetchClicked();   // the only path that spends a network request
+    void render();          // rebuild the UI from the local cache for the current copy
+    void onFetchClicked();  // the only path that spends a network request
     // Handle the catalog reply for a Fetch-triggered auto-link: pick the single matching
     // printing (disambiguating by collector number), persist the link, then fetch prices.
     void onLinkResults(const std::vector<CardCandidate>& cards);
@@ -106,19 +104,10 @@ private:
     // auto-link request without a reply (see the owned-cards watchdog rationale).
     QTimer* linkWatchdog_;
 
-    // The current card's prices, cached so a header-sort click is a pure in-memory
-    // reorder (no re-read). Header-driven sort state, re-applied on every render.
-    std::vector<CardPrice> rows_;
-    int sortColumn_ = -1;  // < 0 = natural (provenance, variant, metric) load order
-    Qt::SortOrder sortOrder_ = Qt::AscendingOrder;
-
-    QLabel* headline_;
-    QToolButton* infoButton_;  // "ⓘ" — explains what the metrics mean, on click
+    QLabel* headline_;         // per-vendor figures; each vendor name links to its listing
+    QToolButton* infoButton_;  // "ⓘ" — explains the metrics + price freshness, on click
     QLabel* status_;
-    QLabel* links_;            // "View on TCGplayer/Cardmarket" listing links (rich text)
     QPushButton* fetchButton_;
-    QToolButton* toggle_;
-    QTableWidget* table_;
 };
 
 }  // namespace pokedex

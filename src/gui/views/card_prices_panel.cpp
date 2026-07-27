@@ -1,11 +1,9 @@
 #include "gui/views/card_prices_panel.h"
 
 #include <QHBoxLayout>
-#include <QHeaderView>
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
-#include <QTableWidget>
 #include <QTimer>
 #include <QToolButton>
 #include <QToolTip>
@@ -25,7 +23,6 @@
 #include "gui/services/card_price_lookup_service.h"
 #include "gui/services/card_search_service.h"
 #include "gui/views/price_labels.h"
-#include "gui/views/sortable_table.h"
 
 namespace pokedex {
 
@@ -60,42 +57,48 @@ const QString& priceInfoHtml() {
         "going rate from recent sales and listings (not a min, median, or max).<br>"
         "• <b>TCGplayer</b> (USD) — its <i>market</i> price: the current market value; when "
         "a card has several finishes the highest such value is shown.</p>"
-        "<p><b>Show all prices</b> expands the full spread — Cardmarket <i>low</i> "
-        "(cheapest listing), <i>average sell</i> (mean of real sales), and 1/7/30-day "
-        "averages; TCGplayer <i>low</i>/<i>mid</i>/<i>market</i>/<i>direct-low</i> per "
-        "finish.</p>"
-        "<p>The TCGplayer <i>high</i> (a single top listing) is deliberately hidden — it "
-        "is routinely an unrealistic outlier.</p>");
+        "<p>Follow the marketplace links above for the full price breakdown and live "
+        "listings.</p>");
     return kHtml;
 }
 
-// The listing links for the vendors present in `prices`, as rich text opening the real
-// marketplace page. pokemontcg.io serves a stable per-vendor redirect keyed by the card
-// id (verified to 302 → the TCGplayer product page / the exact Cardmarket single), so
-// the URL is built from the id with no extra request or stored field.
-QString listingLinksHtml(const std::string& externalCardId, const std::vector<CardPrice>& prices) {
-    bool hasTcg = false;
-    bool hasCm = false;
-    for (const CardPrice& p : prices) {
-        hasTcg = hasTcg || p.provenance == kTcgplayerProvenance;
-        hasCm = hasCm || p.provenance == kCardmarketProvenance;
+// The headline, as rich text: one representative figure per vendor, one vendor PER LINE,
+// with the vendor NAME itself the link to that marketplace's real listing page — so the
+// vendor is named once (not "TCGplayer $1" plus a separate "Listings: TCGplayer") and the
+// two currencies don't crowd one line and wrap unpredictably. pokemontcg.io serves a stable
+// per-vendor redirect keyed by the card id (verified to 302 → the TCGplayer product page /
+// the exact Cardmarket single), so each URL is built from the id with no extra request or
+// stored field. Empty only when the card carries no usable figure for either vendor (the
+// caller then shows a plain "Market prices" label).
+QString linkedHeadlineHtml(const std::string& externalCardId,
+                           const std::vector<CardPrice>& prices) {
+    const VendorBest best = vendorBest(prices);
+    const QString id = QString::fromStdString(externalCardId).toHtmlEscaped();
+    QStringList lines;
+    if (best.tcg != nullptr) {
+        lines << QStringLiteral(
+                     "<a href=\"https://prices.pokemontcg.io/tcgplayer/%1\">TCGplayer ↗</a> %2")
+                     .arg(id, formatMoney(best.tcg->amountCents, best.tcg->currency).toHtmlEscaped());
     }
-    const QString id = QString::fromStdString(externalCardId);
-    QStringList parts;
-    if (hasTcg) {
-        parts << QStringLiteral(
-                     "<a href=\"https://prices.pokemontcg.io/tcgplayer/%1\">TCGplayer ↗</a>")
-                     .arg(id);
+    if (best.cm != nullptr) {
+        lines << QStringLiteral(
+                     "<a href=\"https://prices.pokemontcg.io/cardmarket/%1\">Cardmarket ↗</a> %2")
+                     .arg(id, formatMoney(best.cm->amountCents, best.cm->currency).toHtmlEscaped());
     }
-    if (hasCm) {
-        parts << QStringLiteral(
-                     "<a href=\"https://prices.pokemontcg.io/cardmarket/%1\">Cardmarket ↗</a>")
-                     .arg(id);
+    return lines.join(QStringLiteral("<br>"));
+}
+
+// The "ⓘ" tooltip/popover text for a priced card: the static metric explanation plus a
+// freshness paragraph carrying the vendor "as of" date and the day WE fetched — the
+// figures that used to sit on a visible status line now live here, on request.
+QString priceInfoWithFreshness(const QString& asOf, const QString& fetched) {
+    QString html = priceInfoHtml();
+    html += QStringLiteral("<p><b>Freshness</b><br>Prices as of %1").arg(asOf);
+    if (!fetched.isEmpty()) {
+        html += QStringLiteral(", last fetched %1").arg(fetched);
     }
-    if (parts.isEmpty()) {
-        return {};
-    }
-    return QStringLiteral("Listings: ") + parts.join(QStringLiteral(" · "));
+    html += QStringLiteral(".</p>");
+    return html;
 }
 
 }  // namespace
@@ -106,11 +109,18 @@ CardPricesPanel::CardPricesPanel(CardPriceLookupService& lookup, CardSearchServi
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
 
+    // The headline carries the per-vendor figures with the vendor name linking to its
+    // real listing page (rich text), so a vendor is named once rather than repeated in a
+    // separate "Listings" line.
     headline_ = new QLabel(this);
     headline_->setWordWrap(true);
+    headline_->setTextFormat(Qt::RichText);
+    headline_->setOpenExternalLinks(true);
     headline_->setStyleSheet(QStringLiteral("font-weight: 600;"));
 
     // "ⓘ" popover explaining the metrics — the same idiom the card-attribute pickers use.
+    // Its tooltip also carries the price freshness (vendor "as of" + our fetch date), set
+    // per-render; the click shows whatever the current tooltip holds.
     infoButton_ = new QToolButton(this);
     infoButton_->setText(QStringLiteral("ⓘ"));
     infoButton_->setAutoRaise(true);
@@ -120,63 +130,30 @@ CardPricesPanel::CardPricesPanel(CardPriceLookupService& lookup, CardSearchServi
     infoButton_->setAccessibleName(tr("What these prices mean"));
     connect(infoButton_, &QToolButton::clicked, this, [this]() {
         QToolTip::showText(infoButton_->mapToGlobal(QPoint(0, infoButton_->height())),
-                           priceInfoHtml(), infoButton_);
+                           infoButton_->toolTip(), infoButton_);
     });
 
+    // The ⓘ sits at the far right, top-aligned so it pairs with the first headline line
+    // (the headline can span two lines, one per vendor).
     auto* headlineRow = new QHBoxLayout;
     headlineRow->setContentsMargins(0, 0, 0, 0);
-    headlineRow->addWidget(headline_);
-    headlineRow->addWidget(infoButton_);
-    headlineRow->addStretch(1);
+    headlineRow->addWidget(headline_, /*stretch=*/1);
+    headlineRow->addWidget(infoButton_, 0, Qt::AlignTop | Qt::AlignRight);
 
     status_ = new QLabel(this);
     status_->setWordWrap(true);
     status_->setStyleSheet(QStringLiteral("color: gray;"));
 
-    // Listing links (rich text) that open the real marketplace pages in the browser.
-    links_ = new QLabel(this);
-    links_->setTextFormat(Qt::RichText);
-    links_->setOpenExternalLinks(true);
-    links_->setWordWrap(true);
-
     auto* buttonRow = new QHBoxLayout;
     fetchButton_ = new QPushButton(this);
-    toggle_ = new QToolButton(this);
-    toggle_->setCheckable(true);
-    toggle_->setText(QStringLiteral("Show all prices ▸"));
     buttonRow->addWidget(fetchButton_);
-    buttonRow->addWidget(toggle_);
     buttonRow->addStretch(1);
-
-    table_ = new QTableWidget(this);
-    table_->setColumnCount(5);
-    table_->setHorizontalHeaderLabels(
-        {QStringLiteral("Source"), QStringLiteral("Variant"), QStringLiteral("Metric"),
-         QStringLiteral("Price"), QStringLiteral("As of")});
-    table_->horizontalHeader()->setStretchLastSection(true);
-    table_->verticalHeader()->setVisible(false);
-    table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    table_->setSelectionMode(QAbstractItemView::NoSelection);
-    table_->setVisible(false);
-    // Header-click sorting (the repo convention for every table): a click reorders the
-    // cached rows_ in memory and refills — never Qt's setSortingEnabled.
-    installHeaderSort(table_, [this](int column, Qt::SortOrder order) {
-        sortColumn_ = column;
-        sortOrder_ = order;
-        repopulateTable();
-    });
 
     layout->addLayout(headlineRow);
     layout->addWidget(status_);
-    layout->addWidget(links_);
     layout->addLayout(buttonRow);
-    layout->addWidget(table_);
 
     connect(fetchButton_, &QPushButton::clicked, this, &CardPricesPanel::onFetchClicked);
-    connect(toggle_, &QToolButton::toggled, this, [this](bool on) {
-        table_->setVisible(on);
-        toggle_->setText(on ? QStringLiteral("Hide prices ▾") : QStringLiteral("Show all prices ▸"));
-    });
     // Re-render when a fetch we (or another view) triggered lands for our card.
     connect(&lookup_, &CardPriceLookupService::pricesReady, this, [this](const QString& id) {
         if (id == externalCardId_) {
@@ -254,7 +231,6 @@ void CardPricesPanel::showCopy(const CardCopy& copy) {
     fetching_ = false;
     linking_ = false;
     linkWatchdog_->stop();
-    toggle_->setChecked(false);
     render();
 }
 
@@ -275,7 +251,6 @@ void CardPricesPanel::clear() {
     fetching_ = false;
     linking_ = false;
     linkWatchdog_->stop();
-    toggle_->setChecked(false);
     render();
 }
 
@@ -292,12 +267,8 @@ bool CardPricesPanel::canAutoLink() const {
 }
 
 void CardPricesPanel::resetToMessage(const QString& text) {
-    rows_.clear();
     headline_->hide();
     infoButton_->hide();
-    links_->hide();
-    toggle_->hide();
-    table_->hide();
     fetchButton_->hide();
     if (text.isEmpty()) {
         status_->hide();
@@ -372,12 +343,10 @@ void CardPricesPanel::render() {
     fetchButton_->show();
     fetchButton_->setEnabled(true);
 
-    // Emptiness is decided on the RAW cache, before hiding the "high" outlier — else a
-    // card whose only cached metric is TCGplayer "high" would falsely read as priceless.
     if (cached.empty()) {
-        // Same widget-hiding as the message states (headline/info/links/toggle/table + rows_
-        // cleared) via resetToMessage, but keep the Fetch/Refresh button so the user can
-        // (re)fetch — resetToMessage hides it, so re-show it here.
+        // Same widget-hiding as the message states (headline/info cleared) via
+        // resetToMessage, but keep the Fetch/Refresh button so the user can (re)fetch —
+        // resetToMessage hides it, so re-show it here.
         resetToMessage(fetchedAt ? QStringLiteral("No market prices found for this card.")
                                  : QStringLiteral("Prices not fetched yet."));
         fetchButton_->setText(fetchedAt ? QStringLiteral("Refresh")
@@ -387,87 +356,25 @@ void CardPricesPanel::render() {
         return;
     }
 
-    // Drop the TCGplayer "high" (a single top listing, a routinely unrealistic outlier)
-    // — but only when that still leaves a price to show; if "high" is the sole cached
-    // metric, showing it beats claiming the card has no price. Erase in place (no aside
-    // copy) once we've confirmed a non-"high" row survives. (std::erase_if — C++20.)
-    rows_ = std::move(cached);
-    const auto isHigh = [](const CardPrice& p) {
-        return p.provenance == kTcgplayerProvenance && p.metric == "high";
-    };
-    if (std::any_of(rows_.begin(), rows_.end(), [&](const CardPrice& p) { return !isHigh(p); })) {
-        std::erase_if(rows_, isHigh);
-    }
-
-    const QString headline = priceHeadline(rows_);
+    // The headline names each vendor once, the name itself linking to its listing page —
+    // one representative figure per source (vendorBest), so the full per-metric spread is
+    // left to the marketplace rather than shown as a raw cache table. (vendorBest never
+    // picks the TCGplayer "high" outlier, so it can't surface here.)
+    const QString headline = linkedHeadlineHtml(externalCardId_.toStdString(), cached);
     headline_->setText(headline.isEmpty() ? QStringLiteral("Market prices") : headline);
     headline_->show();
-    infoButton_->show();
 
-    // Links to the vendors' own listing pages, for whichever vendors returned prices.
-    const QString linksHtml = listingLinksHtml(externalCardId_.toStdString(), rows_);
-    links_->setText(linksHtml);
-    links_->setVisible(!linksHtml.isEmpty());
-
-    // "as of" is the newest vendor date across the rows; also show when WE fetched.
-    Timestamp newest = rows_.front().observedAt;
-    for (const CardPrice& p : rows_) {
+    // "as of" is the newest vendor date across the rows; also carry when WE fetched. Both
+    // move onto the ⓘ tooltip (no separate visible line), so a glance stays uncluttered.
+    Timestamp newest = cached.front().observedAt;
+    for (const CardPrice& p : cached) {
         newest = std::max(newest, p.observedAt);
     }
-    QString status = QStringLiteral("as of %1").arg(dateOf(newest));
-    if (fetchedAt) {
-        status += QStringLiteral(" · fetched %1").arg(dateOf(*fetchedAt));
-    }
-    status_->setText(status);
-    status_->show();
+    infoButton_->setToolTip(priceInfoWithFreshness(
+        dateOf(newest), fetchedAt ? dateOf(*fetchedAt) : QString()));
+    infoButton_->show();
+    status_->hide();  // freshness lives on the ⓘ tooltip now, not a visible line
     fetchButton_->setText(QStringLiteral("Refresh"));
-
-    repopulateTable();
-    toggle_->show();
-    table_->setVisible(toggle_->isChecked());
-}
-
-void CardPricesPanel::repopulateTable() {
-    // A header click is a pure in-memory reorder of rows_ (never Qt's row sorting) —
-    // sortColumn_ < 0 keeps the natural (provenance, variant, metric) load order.
-    applyColumnSort(rows_, sortColumn_, sortOrder_,
-                    [](const CardPrice& a, const CardPrice& b, int col) -> int {
-                        switch (col) {
-                            case 0:
-                                return QString::fromStdString(a.provenance)
-                                    .localeAwareCompare(QString::fromStdString(b.provenance));
-                            case 1:
-                                return QString::fromStdString(a.variant)
-                                    .localeAwareCompare(QString::fromStdString(b.variant));
-                            case 2:
-                                return QString::fromStdString(a.metric)
-                                    .localeAwareCompare(QString::fromStdString(b.metric));
-                            case 3:
-                                // Intentional: sort by the raw cent amount, treating USD
-                                // as the reference scale and NOT converting Cardmarket's
-                                // EUR rows. We have no exchange rate on hand, and USD/EUR
-                                // track closely enough that the raw magnitude gives a
-                                // useful rough ordering — good enough for a "find the
-                                // biggest/smallest figure" glance, without pulling an FX
-                                // feed into a display-only sort.
-                                return compareValues(a.amountCents, b.amountCents);
-                            case 4:
-                                return compareValues(a.observedAt, b.observedAt);
-                            default:
-                                return 0;
-                        }
-                    });
-
-    table_->setRowCount(static_cast<int>(rows_.size()));
-    for (int row = 0; row < static_cast<int>(rows_.size()); ++row) {
-        const CardPrice& p = rows_[static_cast<std::size_t>(row)];
-        table_->setItem(row, 0, new QTableWidgetItem(QString::fromStdString(p.provenance)));
-        table_->setItem(row, 1, new QTableWidgetItem(QString::fromStdString(p.variant)));
-        table_->setItem(row, 2, new QTableWidgetItem(QString::fromStdString(p.metric)));
-        table_->setItem(row, 3, new QTableWidgetItem(formatMoney(p.amountCents, p.currency)));
-        table_->setItem(row, 4, new QTableWidgetItem(dateOf(p.observedAt)));
-    }
-    table_->resizeColumnsToContents();
 }
 
 void CardPricesPanel::onFetchClicked() {

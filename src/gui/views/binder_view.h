@@ -2,9 +2,11 @@
 
 #include <QWidget>
 
+#include <string>
 #include <unordered_map>
 #include <vector>
 
+#include "core/app/card_price_dto.h"
 #include "core/domain/card_binder.h"
 #include "core/domain/card_binder_entry.h"
 #include "core/domain/card_copy.h"
@@ -69,6 +71,11 @@ private:
     // Called from refresh() once both are loaded — never from repopulate(), since a
     // header-sort is a pure reorder that changes neither the counts nor the value.
     void updateStats(const std::vector<CardCopy>& filedCopies);
+    // (Re)read the local price cache for every Owned copy filed here into
+    // pricesByExternalId_, a single batched cache read (no network). Feeds both the
+    // header value stat and the per-row Prices column, so both draw from one snapshot.
+    // Best-effort: a storage failure leaves the map empty rather than crashing.
+    void loadCachedPrices();
     // Show only the rows whose Pokémon name contains `filter` (case-insensitive);
     // an empty filter shows all. Rows are toggled, not rebuilt.
     void applyFilter(const QString& filter);
@@ -106,6 +113,10 @@ private:
     // surfaces the whole set. The returned pointer is valid only until ownedHere_ is next
     // rebuilt.
     const CardCopy* representativeCopy(int dex) const;
+    // The cached market prices for a copy (its externalCardId's rows in
+    // pricesByExternalId_), or an empty list when it is unlinked or nothing is cached.
+    // Cache-only — never a network read. Backs the Prices column and its sort key.
+    const std::vector<CardPrice>& pricesFor(const CardCopy& copy) const;
 
     BinderGuideService& guide_;
     CardBinder binder_;
@@ -133,6 +144,10 @@ private:
     // last refresh() so the header value stat can be recomputed in-session — when a copy
     // is auto-linked or its prices are fetched from the detail panel — without a re-query.
     std::vector<CardCopy> filedCopies_;
+    // The local price cache for the Owned copies filed here, keyed by external card id,
+    // read once per refresh (loadCachedPrices) so both the header value stat and the
+    // per-row Prices column read from one snapshot and a header-sort never re-queries.
+    std::unordered_map<std::string, std::vector<CardPrice>> pricesByExternalId_;
     // Dex number currently shown in the detail panel (-1 = none), so a filter that
     // hides its row can clear the panel rather than leave stale artwork on screen.
     int shownDex_ = -1;

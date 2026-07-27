@@ -42,6 +42,39 @@ inline QString cardText(const CardReference& ref) {
     return expansion.isEmpty() ? number : expansion + QStringLiteral(" ") + number;
 }
 
+// The set as one cell for the "Set" column: the full set name with its abbreviation in
+// parentheses ("Base Set (BS)"), degrading to whichever part is present ("Base Set" or
+// "BS") and empty when the card records neither.
+inline QString setLabel(const CardReference& ref) {
+    const QString name = QString::fromStdString(ref.setName);
+    const QString code = QString::fromStdString(ref.expansionCode);
+    if (name.isEmpty()) {
+        return code;  // code, or "" when neither is recorded
+    }
+    if (code.isEmpty()) {
+        return name;
+    }
+    return name + QStringLiteral(" (") + code + QStringLiteral(")");
+}
+
+// The inspector's compact printed-identity line: the set (its abbreviation, or the full
+// set name when there's no abbreviation) followed by the collector number. Any absent
+// part drops out; empty only when the card records neither a set nor a number. Unlike
+// cardText, this falls back to the set name rather than showing a bare number when the
+// abbreviation is missing.
+inline QString collectorLine(const CardReference& ref) {
+    const QString code = QString::fromStdString(ref.expansionCode);
+    const QString set = code.isEmpty() ? QString::fromStdString(ref.setName) : code;
+    const QString number = QString::fromStdString(ref.collectorNumber);
+    if (set.isEmpty()) {
+        return number;
+    }
+    if (number.isEmpty()) {
+        return set;
+    }
+    return set + QStringLiteral(" ") + number;
+}
+
 // A copy's identifying label: its species name, or (for a species-free Trainer/Energy
 // card, or an out-of-range dex) its printed card name. Empty when neither resolves.
 // The single source for both the table's name column and titleFor(), so they agree.

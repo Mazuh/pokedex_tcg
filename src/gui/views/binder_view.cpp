@@ -85,15 +85,17 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     search_->setClearButtonEnabled(true);
 
     // A read-only table: dex number, name, then the printed-identity columns mirroring
-    // My Cards (Card code, Set, condition, rarity, foil) for a representative owned copy
-    // filed here, and finally the capture Status. Whole-row selection, no editing. The
-    // Set column takes the slack (as in My Cards); the Pokémon column sizes to content so
-    // the species name is never truncated. The copy columns are blank for a species with
-    // no copy filed here (most rows in a fresh binder).
+    // My Cards (set, collector, condition, rarity, foil) for a representative owned copy
+    // filed here, the capture Status, and finally that copy's cached market Prices ("$… ·
+    // €…", cache-only — never a network read). Whole-row selection, no editing. The Set
+    // column takes the slack (as in My Cards); the Pokémon column sizes to content so the
+    // species name is never truncated. The copy columns are blank for a species with no
+    // copy filed here (most rows in a fresh binder).
     table_ = new QTableWidget(this);
-    table_->setColumnCount(8);
-    table_->setHorizontalHeaderLabels({tr("#"), tr("Pokémon"), tr("Card"), tr("Set"),
-                                       tr("Cond."), tr("Rarity"), tr("Foil"), tr("Status")});
+    table_->setColumnCount(9);
+    table_->setHorizontalHeaderLabels({tr("#"), tr("Pokémon"), tr("Set name / expansion code"),
+                                       tr("Collector"), tr("Cond."), tr("Rarity"), tr("Foil"),
+                                       tr("Status"), tr("Prices")});
     table_->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     // The "#" header sits over right-aligned dex numbers, so right-align it to match.
     table_->horizontalHeaderItem(0)->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -102,13 +104,13 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
     table_->verticalHeader()->setVisible(false);
     auto* header = table_->horizontalHeader();
-    // Pokémon (col 1) and the short metadata columns size to content; Set (col 3) is the
-    // flexible slack absorber that grows when there's room and elides (full value on a
-    // tooltip) when space is tight — mirroring OwnedCardsView.
-    for (const int col : {0, 1, 2, 4, 5, 6, 7}) {  // #, Pokémon, Card, Cond., Rarity, Foil, Status
+    // Pokémon (col 1) and the short metadata columns size to content; Set (col 2) is the
+    // flexible slack absorber that grows when there's room and elides when space is tight —
+    // mirroring OwnedCardsView. Prices (col 8) sizes to its "$… · €…" content.
+    for (const int col : {0, 1, 3, 4, 5, 6, 7, 8}) {  // all but the Set slack column
         header->setSectionResizeMode(col, QHeaderView::ResizeToContents);
     }
-    header->setSectionResizeMode(3, QHeaderView::Stretch);  // Set — flexible slack absorber
+    header->setSectionResizeMode(2, QHeaderView::Stretch);  // Set — flexible slack absorber
     // Cell padding so content clears the edges and the overlay scrollbar.
     table_->setStyleSheet("QTableView::item { padding-left: 8px; padding-right: 16px; }");
 
@@ -153,10 +155,11 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
                 applyLinkedCardToVector(filedCopies_, copyId, externalCardId);
             });
     // A price fetch (from the detail panel, for a card filed here) can raise the binder's
-    // market-value total; the header is computed from cached prices at stat time, so
-    // recompute it when such a card's prices land rather than only on a full reopen. The
-    // lookup service is app-wide, so a pricesReady for a card NOT filed here (most of them)
-    // is ignored instead of re-running the whole batched value query on every fetch anywhere.
+    // market-value total AND fills in that card's row in the Prices column; both read the
+    // local price cache, so re-read it and refresh the header + rows when such a card's
+    // prices land rather than only on a full reopen. The lookup service is app-wide, so a
+    // pricesReady for a card NOT filed here (most of them) is ignored instead of re-running
+    // the batched cache read and rebuilding the table on every fetch anywhere.
     connect(&priceLookup_, &CardPriceLookupService::pricesReady, this,
             [this](const QString& externalCardId) {
                 const std::string id = externalCardId.toStdString();
@@ -164,7 +167,9 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
                     std::any_of(filedCopies_.begin(), filedCopies_.end(),
                                 [&](const CardCopy& c) { return c.externalCardId == id; });
                 if (filedHere) {
-                    updateStats(filedCopies_);
+                    loadCachedPrices();          // pick up the just-fetched prices
+                    updateStats(filedCopies_);   // header value total
+                    repopulate();                // the row's Prices cell
                 }
             });
 
@@ -227,8 +232,32 @@ void BinderView::refresh() {
     }
 
     filedCopies_ = std::move(filed);
+    loadCachedPrices();  // one batched cache read feeding both the header total and the rows
     updateStats(filedCopies_);
     repopulate();
+}
+
+void BinderView::loadCachedPrices() {
+    // Gather the distinct linked ids of the Owned copies filed here, then read every one's
+    // prices in a SINGLE batched cache query (cachedMany) rather than one SELECT per card —
+    // opening or re-statting a large binder must not be N synchronous round-trips. This is
+    // the only price read; both updateStats and repopulate() consult the resulting map, so a
+    // header-sort reorder never re-queries. Best-effort: a storage failure leaves the map
+    // empty (counts without a value, blank Prices cells) rather than crashing the open.
+    pricesByExternalId_.clear();
+    std::vector<std::string> ids;
+    std::unordered_set<std::string> seen;
+    for (const CardCopy& copy : filedCopies_) {
+        if (copy.ownership == CardOwnership::Owned && !copy.externalCardId.empty() &&
+            seen.insert(copy.externalCardId).second) {
+            ids.push_back(copy.externalCardId);
+        }
+    }
+    try {
+        pricesByExternalId_ = priceLookup_.cachedMany(ids);
+    } catch (const std::exception&) {
+        pricesByExternalId_.clear();
+    }
 }
 
 void BinderView::updateStats(const std::vector<CardCopy>& filedCopies) {
@@ -242,39 +271,20 @@ void BinderView::updateStats(const std::vector<CardCopy>& filedCopies) {
 
     // Market value of the Owned cards filed in this binder (species-free ones too — they
     // are cards in the binder), totalled per currency; no FX conversion, so USD (TCGplayer)
-    // and EUR (Cardmarket) stay separate. Reads are network-free local-cache lookups, so a
-    // copy contributes only once its prices were fetched (and it is linked); the figure is
-    // therefore a lower bound over what has been priced. Cache each id's rows so repeated
-    // printings aren't re-read (every copy still counts — three of a card is worth 3×). The
-    // read is best-effort like the rest of refresh(): a storage failure omits the $ rather
-    // than crashing the binder open.
+    // and EUR (Cardmarket) stay separate. Read from the pricesByExternalId_ snapshot
+    // loadCachedPrices() built (network-free, no re-query), so a copy contributes only once
+    // its prices were fetched (and it is linked); the figure is a lower bound over what has
+    // been priced. Every copy still counts (three of a card is worth 3×), by looking its id
+    // up in the map.
     std::map<std::string, long long> totals;
-    try {
-        // Gather the distinct linked ids, then read every one's prices in a single
-        // batched query (cachedMany) rather than one SELECT per card — opening or
-        // re-statting a large binder must not be N synchronous round-trips. Each copy
-        // still contributes (three of a card counts 3×), by looking its id up in the map.
-        std::vector<std::string> ids;
-        std::unordered_set<std::string> seen;
-        for (const CardCopy& copy : filedCopies) {
-            if (copy.ownership == CardOwnership::Owned && !copy.externalCardId.empty() &&
-                seen.insert(copy.externalCardId).second) {
-                ids.push_back(copy.externalCardId);
-            }
+    for (const CardCopy& copy : filedCopies) {
+        if (copy.ownership != CardOwnership::Owned || copy.externalCardId.empty()) {
+            continue;
         }
-        const std::unordered_map<std::string, std::vector<CardPrice>> byId =
-            priceLookup_.cachedMany(ids);
-        for (const CardCopy& copy : filedCopies) {
-            if (copy.ownership != CardOwnership::Owned || copy.externalCardId.empty()) {
-                continue;
-            }
-            const auto it = byId.find(copy.externalCardId);
-            if (it != byId.end()) {
-                accumulateBestPrices(totals, it->second);
-            }
+        const auto it = pricesByExternalId_.find(copy.externalCardId);
+        if (it != pricesByExternalId_.end()) {
+            accumulateBestPrices(totals, it->second);
         }
-    } catch (const std::exception&) {
-        totals.clear();  // best-effort: show the counts without a value rather than crash
     }
 
     QString text = tr("Listed %1").arg(listed);
@@ -325,19 +335,20 @@ void BinderView::repopulate() {
         // A representative owned copy filed here fills the printed-identity columns; a
         // species with none leaves them blank (rendered as an em-dash by cell()).
         const CardCopy* rep = representativeCopy(entry.pokemon.dexNumber);
-        table_->setItem(i, 2, cell(rep ? cardText(rep->cardRef) : QString()));
-        // Set is the free-text slack column: carry the full value as a tooltip so it
-        // stays readable when the width elides it.
-        auto* setCell = cell(rep ? QString::fromStdString(rep->cardRef.setName) : QString());
-        if (rep) {
-            setCell->setToolTip(QString::fromStdString(rep->cardRef.setName));
-        }
-        table_->setItem(i, 3, setCell);
+        // Set is the free-text slack column ("Base Set (BS)"); no tooltip (it would just
+        // repeat the cell).
+        table_->setItem(i, 2, cell(rep ? setLabel(rep->cardRef) : QString()));
+        table_->setItem(i, 3, cell(rep ? QString::fromStdString(rep->cardRef.collectorNumber)
+                                       : QString()));
         table_->setItem(i, 4, cell(rep && rep->condition ? conditionAbbrev(*rep->condition)
                                                          : QString()));
         table_->setItem(i, 5, cell(rep && rep->rarity ? rarityLabel(*rep->rarity) : QString()));
         table_->setItem(i, 6, cell(rep && rep->foil ? foilLabel(*rep->foil) : QString()));
         table_->setItem(i, 7, cell(statusLabel(entry.status)));
+        // The representative copy's cached market prices, inline ("$… · €…"); blank when the
+        // copy is unlinked or its prices were never fetched. Cache-only (pricesByExternalId_),
+        // so this stays a pure in-memory rebuild — no network, no re-query.
+        table_->setItem(i, 8, cell(rep ? priceAmountsInline(pricesFor(*rep)) : QString()));
     }
 
     // Move the highlight to the row the selected species landed on after the sort, so
@@ -385,12 +396,13 @@ void BinderView::sortEntries() {
     struct Key {
         int dexNumber = 0;
         QString name;
-        std::optional<QString> card;
-        std::optional<QString> setName;
+        std::optional<QString> setText;
+        std::optional<QString> collector;
         std::optional<int> conditionRank;
         std::optional<int> rarityRank;
         std::optional<int> foilRank;
         int statusRank = 0;
+        std::optional<long long> priceCents;
     };
     const bool ascending = sortOrder_ == Qt::AscendingOrder;
     const int column = sortColumn_;
@@ -401,7 +413,7 @@ void BinderView::sortEntries() {
             // the comparator reads a single field, so materializing every column on each
             // header click — five QString allocations plus a representativeCopy() lookup
             // per row — is pure waste that grows with the guide. Only the copy-derived
-            // columns (2–6) need the representative copy, so the dex/name/status columns
+            // columns (2–6, 8) need the representative copy, so the dex/name/status columns
             // skip that lookup entirely. Unset fields keep their default (0 / empty
             // QString / nullopt), which the comparator never consults for other columns.
             Key key;
@@ -414,12 +426,12 @@ void BinderView::sortEntries() {
                     break;
                 case 2:
                     if (const CardCopy* rep = representativeCopy(e.pokemon.dexNumber)) {
-                        key.card = cardText(rep->cardRef);
+                        key.setText = setLabel(rep->cardRef);
                     }
                     break;
                 case 3:
                     if (const CardCopy* rep = representativeCopy(e.pokemon.dexNumber)) {
-                        key.setName = QString::fromStdString(rep->cardRef.setName);
+                        key.collector = QString::fromStdString(rep->cardRef.collectorNumber);
                     }
                     break;
                 case 4:
@@ -443,6 +455,20 @@ void BinderView::sortEntries() {
                 case 7:
                     key.statusRank = static_cast<int>(e.status);
                     break;
+                case 8:
+                    if (const CardCopy* rep = representativeCopy(e.pokemon.dexNumber)) {
+                        // Sort by the copy's representative value: the sum of its per-vendor
+                        // figures in raw cents, USD and EUR added WITHOUT an FX rate (the same
+                        // intentional tradeoff as the price table's amount sort — a rough
+                        // magnitude ordering, not an exact worth). A copy with no cached price
+                        // stays nullopt so it sinks to the bottom in either direction.
+                        const VendorBest best = vendorBest(pricesFor(*rep));
+                        if (best.tcg || best.cm) {
+                            key.priceCents = (best.tcg ? best.tcg->amountCents : 0) +
+                                             (best.cm ? best.cm->amountCents : 0);
+                        }
+                    }
+                    break;
             }
             return key;
         },
@@ -457,9 +483,9 @@ void BinderView::sortEntries() {
                 case 1:
                     return a.name.localeAwareCompare(b.name);
                 case 2:
-                    return compareOptional(a.card, b.card, ascending, text);
+                    return compareOptional(a.setText, b.setText, ascending, text);
                 case 3:
-                    return compareOptional(a.setName, b.setName, ascending, text);
+                    return compareOptional(a.collector, b.collector, ascending, text);
                 case 4:
                     return compareOptional(a.conditionRank, b.conditionRank, ascending, rank);
                 case 5:
@@ -470,6 +496,9 @@ void BinderView::sortEntries() {
                     // CollectionStatus enum values are the documented precedence order —
                     // a more meaningful grouping than the status labels' alphabetical order.
                     return compareValues(a.statusRank, b.statusRank);
+                case 8:
+                    return compareOptional(a.priceCents, b.priceCents, ascending,
+                                           [](long long x, long long y) { return compareValues(x, y); });
             }
             return 0;
         });
@@ -481,6 +510,15 @@ const CardCopy* BinderView::representativeCopy(int dex) const {
         return nullptr;
     }
     return &it->second.front();
+}
+
+const std::vector<CardPrice>& BinderView::pricesFor(const CardCopy& copy) const {
+    static const std::vector<CardPrice> kEmpty;
+    if (copy.externalCardId.empty()) {
+        return kEmpty;
+    }
+    const auto it = pricesByExternalId_.find(copy.externalCardId);
+    return it == pricesByExternalId_.end() ? kEmpty : it->second;
 }
 
 void BinderView::applyFilter(const QString& filter) {

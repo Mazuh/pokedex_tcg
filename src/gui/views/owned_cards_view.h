@@ -4,8 +4,10 @@
 #include <QWidget>
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 
+#include "core/app/card_price_dto.h"
 #include "core/domain/card_binder.h"
 #include "core/domain/card_copy.h"
 
@@ -23,8 +25,9 @@ class BinderService;
 class CardImageStore;
 class CardSearchService;
 class CardPriceLookupService;
-class CardImagePanel;
-class CardPricesPanel;
+class MediaService;
+class WishlistService;
+class PokemonDetailPanel;
 class EditCardCopyPage;
 class AddCardCopyPage;
 
@@ -42,13 +45,19 @@ class AddCardCopyPage;
 // picker, or opened in an in-window "Edit card" page to change its image. It is a
 // section embedded in MainWindow's stack, not a separate window; the edit page is
 // pushed onto its own inner QStackedWidget (the PokemonListView list⇄page idiom).
+//
+// The right-hand detail is the shared PokemonDetailPanel (the same inspector the
+// Pokémon browser and binder guide use), in its species-free-friendly configuration:
+// the Add button records a species-free card and the wishlist button is hidden. The
+// panel also hosts the "Edit card" action, so the toolbar keeps only the inventory-wide
+// operations (Assign / Remove / Delete permanently).
 class OwnedCardsView : public QWidget {
     Q_OBJECT
 
 public:
     OwnedCardsView(CardCopyService& copies, BinderService& binders, CardImageStore& images,
                    CardSearchService& cardSearch, CardPriceLookupService& priceLookup,
-                   QWidget* parent = nullptr);
+                   MediaService& media, WishlistService& wishlist, QWidget* parent = nullptr);
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -75,9 +84,20 @@ private:
     void applyFilter();
     // Enable the row-action buttons only when a row is selected.
     void updateButtonState();
-    // Show the selected copy's card image (and title) in the right panel, or clear
-    // the panel when there is no selection.
+    // Show the selected copy in the right-hand inspector, or clear it when there is no
+    // selection. (Named showSelectedImage for historical continuity across the section.)
     void showSelectedImage();
+    // How many live (non-Removed) copies of the selected copy's species are in the
+    // inventory (drives the inspector's "N copies" line); 0 for a species-free card.
+    int sameSpeciesCount(const CardCopy& copy) const;
+    // (Re)read the local price cache for every linked copy in the inventory into
+    // pricesByExternalId_, a single batched cache read (no network) run from reload() so a
+    // header-sort's repopulate() never re-queries. Best-effort: a storage failure leaves
+    // the map empty (blank Prices cells) rather than crashing.
+    void loadCachedPrices();
+    // The cached market prices for a copy (its externalCardId's rows), or an empty list
+    // when it is unlinked or nothing is cached. Cache-only — backs the Prices column.
+    const std::vector<CardPrice>& pricesFor(const CardCopy& copy) const;
     // Open the binder picker for the selected copy and file it accordingly.
     void assignSelected();
     // Soft-remove the selected copy, prompting for an optional note to append.
@@ -96,10 +116,11 @@ private:
     BinderService& binders_;
     CardImageStore& images_;
     CardSearchService& cardSearch_;   // transport for the edit page's card finder
-    CardPriceLookupService& priceLookup_;  // transport for the prices panel (edit + detail)
-    QStackedWidget* stack_;   // page 0 = list ⇄ image panel; page 1 = the edit page
-    CardImagePanel* panel_;   // right-hand card-image detail panel
-    CardPricesPanel* pricesPanel_;  // market-prices block below the image detail
+    CardPriceLookupService& priceLookup_;  // transport for the inspector's prices block
+    MediaService& media_;          // artwork fallback for a copy with no saved scan
+    WishlistService& wishlist_;    // required by the shared inspector (its wishlist is hidden here)
+    QStackedWidget* stack_;   // page 0 = list ⇄ inspector; page 1 = the edit page
+    PokemonDetailPanel* panel_;   // right-hand inspector (shared with the other sections)
     QLineEdit* search_;
     QTableWidget* table_;
     // Header-driven sort state, re-applied on every reload so it survives a refresh.
@@ -107,11 +128,9 @@ private:
     int sortColumn_ = -1;
     Qt::SortOrder sortOrder_ = Qt::AscendingOrder;
     QLabel* emptyLabel_;   // shown in place of the table when no cards are recorded yet
-    QPushButton* addButton_;   // "Add a card…" — stays available even when empty
     QPushButton* assignButton_;
     QPushButton* removeButton_;
     QPushButton* deleteButton_;   // "Delete permanently…" — enabled only for Removed copies
-    QPushButton* editButton_;
     QLabel* countLabel_;
     // The copies backing the current rows, in display order (row i ⇄ loaded_[i]);
     // filtering only hides rows, so this stays aligned with the table.
@@ -119,6 +138,10 @@ private:
     // The binders, cached from the last reload() so a header-sort repopulate() can
     // resolve/sort the Binder column (name + region) without a second query.
     std::vector<CardBinder> binderList_;
+    // The local price cache for the inventory's linked copies, keyed by external card id,
+    // read once per reload() so the Prices column (and its sort) draw from one snapshot and
+    // a header-sort never re-queries.
+    std::unordered_map<std::string, std::vector<CardPrice>> pricesByExternalId_;
     // Per-row lowercased search text, precomputed in reload() so filtering is a
     // plain substring compare with no per-keystroke allocation (row i ⇄ haystacks_[i]).
     std::vector<QString> haystacks_;

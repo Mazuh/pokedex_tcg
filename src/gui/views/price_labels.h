@@ -81,6 +81,22 @@ inline VendorBest vendorBest(const std::vector<CardPrice>& prices) {
                       {"trendPrice", "averageSellPrice", "lowPrice"})};
 }
 
+// The per-card figures with NO vendor labels — just the amounts, each with its currency
+// symbol ("$800.43 · €1531.00"). The symbol is the only "context" (it says which
+// marketplace: $ = TCGplayer/USD, € = Cardmarket/EUR), so the string fits a narrow table
+// cell. Empty when the card has no usable figure. Same per-vendor pick as priceHeadline.
+inline QString priceAmountsInline(const std::vector<CardPrice>& prices) {
+    const VendorBest best = vendorBest(prices);
+    QStringList parts;
+    if (best.tcg != nullptr) {
+        parts << formatMoney(best.tcg->amountCents, best.tcg->currency);
+    }
+    if (best.cm != nullptr) {
+        parts << formatMoney(best.cm->amountCents, best.cm->currency);
+    }
+    return parts.join(QStringLiteral(" · "));
+}
+
 // A compact one-line summary of the spread: one representative figure per vendor —
 // e.g. "TCGplayer $800.43 · Cardmarket €1531.00". Empty only when a card truly has no
 // usable price, so callers can hide the hint. The full list is the panel's expandable
