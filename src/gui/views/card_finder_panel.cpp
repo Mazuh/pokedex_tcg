@@ -28,8 +28,12 @@ namespace pokedex {
 
 namespace {
 
-// Chunk + prefetch tuning mirrors PokemonListView's infinite scroll.
-constexpr int kChunkSize = 20;
+// Chunk + prefetch tuning mirrors PokemonListView's infinite scroll. A small
+// chunk keeps the up-front load close to just the rows actually visible: each row
+// fetches a thumbnail, so a large first chunk would pull images for cards the user
+// never scrolls to. fillViewport() still tops up to fill the viewport, so no blank
+// space — it just loads (and thumbnails) a handful at a time, then more on scroll.
+constexpr int kChunkSize = 5;
 constexpr int kPrefetchMargin = 64;
 
 // The card thumbnails are portrait; size the row icon to that aspect.
@@ -325,7 +329,9 @@ void CardFinderPanel::clearPreview() {
     previewPixmap_ = QPixmap();
     priceHint_->clear();
     priceHint_->hide();
-    preview_->setText(tr("Select a card to preview it."));
+    // With no pick, show the host's placeholder image (the copy's current picture) if
+    // one was supplied, else the hint. renderPreview() handles the pixmap-vs-text swap.
+    renderPreview();
     // Drop the list highlight; setCurrentItem(nullptr) fires currentItemChanged with a
     // null current, which selectCandidate ignores (guarded), so this does not recurse.
     printings_->setCurrentItem(nullptr);
@@ -335,10 +341,30 @@ void CardFinderPanel::clearPreview() {
 void CardFinderPanel::clearSelection() { clearPreview(); }
 
 void CardFinderPanel::renderPreview() {
-    if (previewPixmap_.isNull()) {
+    // Called on selection changes and on resize, so it rescales whatever is showing.
+    if (!previewPixmap_.isNull()) {
+        setScaledPixmap(preview_, previewPixmap_);  // the picked card's image
         return;
     }
-    setScaledPixmap(preview_, previewPixmap_);
+    if (selectedIndex_ >= 0) {
+        // A card is picked but its large image is still loading or unavailable — leave
+        // the text showPreview() set ("Loading card…" / "No image available…") intact.
+        return;
+    }
+    // Nothing picked: show the host's placeholder (the copy's current image) if any,
+    // else the hint.
+    if (!placeholderPixmap_.isNull()) {
+        setScaledPixmap(preview_, placeholderPixmap_);
+    } else {
+        preview_->setText(tr("Select a card to preview it."));
+    }
+}
+
+void CardFinderPanel::setPreviewPlaceholder(const QPixmap& pixmap) {
+    placeholderPixmap_ = pixmap;
+    if (selectedIndex_ < 0) {
+        renderPreview();  // nothing picked → reflect the new placeholder now
+    }
 }
 
 void CardFinderPanel::searchWith(const QString& query) {

@@ -57,6 +57,11 @@ EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardPriceLookupSer
     connect(&images_, &CardImageStore::imageChanged, this, [this](const QString& copyId) {
         if (copyId.toStdString() == copy_.id) {
             refreshCurrentImage();
+            // Keep the finder's preview placeholder in step with the stored image, so a
+            // fresh upload/pick shows there too once nothing is selected.
+            if (finder_ != nullptr) {
+                finder_->setPreviewPlaceholder(images_.load(copy_.id));
+            }
         }
     });
 
@@ -94,14 +99,31 @@ EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardPriceLookupSer
     // --- Finder (right): the shared search + preview widget ----------------
     // A species copy scopes the finder to that species (its name is the title's lead
     // segment). A species-free card (Trainer/Energy) has no dex to scope by, so the
-    // finder searches by card name, seeded with the card's stored name.
+    // finder searches by card name.
+    //
+    // Editing is usually a comment/rarity tweak, not an image swap — so when the copy
+    // already has a picture, don't auto-run a search on open (which would fetch a page
+    // of results and a batch of thumbnails the user rarely wants). The species finder
+    // never auto-searches; the name finder only seeds — and thus searches — when there
+    // is a reason to. The current picture is shown in the finder preview instead, so
+    // the user still sees what they're editing without a network hit.
+    //
+    // The one reason to still seed a pictured card: an *unlinked* copy's only route to a
+    // price link is this finder + "Link prices to this card" (the prices panel's auto-
+    // link is off here), and that button stays disabled until a card is picked. Seeding
+    // the name surfaces the printing so linking stays one step; a copy that is already
+    // linked has no such need, so it opens with an empty search.
+    const QPixmap currentPixmap = images_.load(copy_.id);
+    const bool linked = !copy_.externalCardId.empty();
     if (copy_.pokemonDexNum) {
         const QString species = title.section(QStringLiteral(" · "), 0, 0);
         finder_ = new CardFinderPanel(search, *copy_.pokemonDexNum, species, this);
     } else {
-        finder_ = new CardFinderPanel(search, CardFinderPanel::NameSearchMode{},
-                                      QString::fromStdString(copy_.cardRef.name), this);
+        const bool skipSeed = !currentPixmap.isNull() && linked;
+        const QString seed = skipSeed ? QString() : QString::fromStdString(copy_.cardRef.name);
+        finder_ = new CardFinderPanel(search, CardFinderPanel::NameSearchMode{}, seed, this);
     }
+    finder_->setPreviewPlaceholder(currentPixmap);
     // When a set has no printings (e.g. a card too new for the catalog), point the
     // user at the upload path instead.
     finder_->setNoResultsHint(

@@ -76,6 +76,14 @@ public:
     // the Edit-card host; the Add-copy host leaves the preview footer empty.
     void setPreviewFooter(QWidget* widget);
 
+    // Show `pixmap` in the preview pane whenever no card is picked, instead of the
+    // "Select a card to preview it." hint. The Edit-card host passes the copy's current
+    // image so the picture being edited is visible without running a search (the reason
+    // it can leave the search field empty on open). A null pixmap restores the hint.
+    // The placeholder is superseded by a picked card's image and returns when the
+    // selection is cleared.
+    void setPreviewPlaceholder(const QPixmap& pixmap);
+
 public Q_SLOTS:
     // Drop the current selection + preview — e.g. a host's form was edited so it no
     // longer matches the picked card. Emits selectionCleared().
@@ -147,6 +155,7 @@ private:
     QLabel* priceHint_;  // subtle market-price line under the preview (from the search
                          // payload's embedded prices — no extra fetch); empty = hidden
     QPixmap previewPixmap_;      // full-res selected-card image; rescaled on resize
+    QPixmap placeholderPixmap_;  // shown when nothing is picked (host's current image)
     QString previewCardId_;      // the thumbnail key we're awaiting for the preview
     int selectedIndex_ = -1;     // index into candidates_ of the picked card, or -1
 };
