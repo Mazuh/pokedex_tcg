@@ -193,8 +193,16 @@ add/edit pages on an inner stack and
 reloads on return so an edited comment shows. The `CardImagePanel` is the "My Cards"
 right-hand detail panel (title + image + the copy's comments beneath). The unscoped
 wishlist section (`WishlistView`), and the
-per-Pokémon wishlist editor (`WishlistSourcesEditor`) embedded below the artwork in
-`PokemonDetailPanel`. `PokemonDetailPanel` is shared by the Pokémon browser and the
+per-Pokémon wishlist editor (`WishlistSourcesEditor`) — no longer embedded in the
+detail panel (it crowded the card info) but hosted on its own in-window page,
+`WishlistEditPage` (a Back top bar + species heading over the reusable editor), pushed
+onto the host's stack exactly like the add/edit copy pages. `PokemonDetailPanel` now
+shows a compact "Wishlist (N)" / "Wishlist (none)" button (reading the source count via
+`WishlistService`) that emits `editWishlistRequested(dex, name)`; both copy-mode hosts
+(`PokemonListView`, `BinderView`) turn that into a `WishlistEditPage` push, and on Back
+re-show the species so the counter refreshes (the binder guide also `refresh()`es, since
+a wishlist change can flip a species' `CollectionStatus` between Missing and Wished).
+`PokemonDetailPanel` is shared by the Pokémon browser and the
 binder guide and has an **opt-in copy mode** (3-arg `showPokemon` + a `CardImageStore*`
 ctor arg): when the binder guide hands it the species' owned copies filed in that
 binder, it shows one copy's data (printed identity/condition/ownership/comments) plus a

@@ -22,13 +22,18 @@ class CardSearchService;
 class CardCopyService;
 class MediaService;
 class WishlistService;
-class WishlistSourcesEditor;
 
 // GUI — the right-hand detail panel: shows the selected Pokémon's name, its
-// official artwork, and (below the art) its wishlist sources editor. Embedded
-// (via a splitter) in both browsers, so one widget class serves the Pokémon list
-// and the binder guide. It depends on MediaService for artwork and WishlistService
-// for the sources editor, never on the external API's specifics.
+// official artwork, and (below the art) a compact "Wishlist (N)" button that opens
+// the species' wishlist on its own screen. Embedded (via a splitter) in both
+// browsers, so one widget class serves the Pokémon list and the binder guide. It
+// depends on MediaService for artwork and WishlistService only to read the sources
+// count for the button label, never on the external API's specifics.
+//
+// The wishlist CRUD used to live inline under the artwork; it crowded the card info,
+// so it moved to a dedicated page (WishlistEditPage). The button relays the request
+// up via editWishlistRequested() — like addCopyRequested/editCopyRequested — since
+// the panel is embedded and can't host a full page itself.
 //
 // showPokemon() displays the name immediately and asks MediaService for the
 // artwork asynchronously, showing a loading placeholder meanwhile. Because
@@ -98,6 +103,10 @@ Q_SIGNALS:
     // The user asked to edit the copy currently shown in copy mode. Carries the
     // copy's id; the owning view opens the EditCardCopyPage for it.
     void editCopyRequested(const QString& copyId);
+    // The user clicked the "Wishlist (N)" button for the shown Pokémon. Carries the
+    // species; the owning view pushes the WishlistEditPage for it. Relayed up because
+    // the panel is embedded and can't host the page itself.
+    void editWishlistRequested(int dexNumber, const QString& name);
     // The embedded prices panel auto-resolved and persisted this copy's catalog link (on
     // a Fetch). Forwarded up so the host can write the new external id into its cached
     // copy map — otherwise a re-selection would re-show the copy as unlinked and re-run
@@ -121,6 +130,8 @@ private:
     void showCopyImage(const std::string& copyId);
     // Hide the copy block, counter and edit button (plain / empty-state).
     void hideCopy();
+    // Set the wishlist button's label to the species' source count and enable it.
+    void updateWishlistButton(int dexNumber);
     // Reset the image to the loading placeholder and (re)request the current
     // species' official artwork — the shared fallback when no copy scan is shown.
     void requestArtworkFallback();
@@ -146,7 +157,7 @@ private:
     QWidget* copyDetail_;  // container for the copy labels; hidden outside copy mode
     QPushButton* editButton_;
     QPushButton* addCopyButton_;
-    WishlistSourcesEditor* wishlistEditor_;
+    QPushButton* wishlistButton_;  // "Wishlist (N)" — opens the species' wishlist page
     QPixmap originalPixmap_;  // full-resolution artwork; rescaled on resize
     QString placeholder_;     // text shown when there is no pixmap
 };

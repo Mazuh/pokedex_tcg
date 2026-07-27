@@ -95,6 +95,10 @@ private:
     // is showing) onto the inner stack; Back pops it, then refreshes and re-shows the
     // just-edited copy so a change (comment, image, binder move) is reflected.
     void openEditCopy(const QString& copyId);
+    // Push a WishlistEditPage for species `dexNumber` onto the inner stack; Back pops
+    // it and re-shows the species so the detail panel's "Wishlist (N)" button reflects
+    // any change. No table refresh — the browse columns don't depend on the wishlist.
+    void openWishlist(int dexNumber, const QString& name);
     // Move the highlight to the row for species `dex` (loading rows until it exists,
     // since it can sit past the first chunk) and re-show its copy `copyId` in the
     // panel — restoring the selection by IDENTITY after a refresh() re-rendered the
@@ -116,6 +120,7 @@ private:
     bool loadOwnedCopies();
 
     PokemonBrowseService& service_;
+    WishlistService& wishlist_;
     CardSearchService& cardSearch_;
     CardPriceLookupService& priceLookup_;
     CardCopyService& cardCopies_;

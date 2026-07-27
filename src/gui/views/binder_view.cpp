@@ -45,6 +45,7 @@
 #include "gui/views/splitter_style.h"
 #include "gui/views/status_labels.h"
 #include "gui/views/table_cell.h"
+#include "gui/views/wishlist_edit_page.h"
 
 namespace pokedex {
 
@@ -56,6 +57,7 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     : QWidget(parent),
       guide_(guide),
       binder_(binder),
+      wishlist_(wishlist),
       cardSearch_(cardSearch),
       priceLookup_(priceLookup),
       cardCopies_(cardCopies),
@@ -138,6 +140,8 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     connect(detail_, &PokemonDetailPanel::addCopyRequested, this, &BinderView::openAddCopy);
     // In copy mode, "Edit card" relays up to an in-place edit-page push.
     connect(detail_, &PokemonDetailPanel::editCopyRequested, this, &BinderView::openEditCopy);
+    // The "Wishlist (N)" button relays up to an in-place wishlist-page push.
+    connect(detail_, &PokemonDetailPanel::editWishlistRequested, this, &BinderView::openWishlist);
     // When the detail panel's Fetch auto-links a copy, write the id back into both cached
     // copy stores so a re-selection shows it linked (not re-resolved) and the header value
     // can count it once its prices land. No updateStats here: the fetch that immediately
@@ -537,6 +541,23 @@ void BinderView::openEditCopy(const QString& copyId) {
                                 refresh();
                                 reselectSpecies(dex, copyId);
                             });
+}
+
+void BinderView::openWishlist(int dexNumber, const QString& name) {
+    auto* page = new WishlistEditPage(wishlist_, dexNumber, name);
+    // Capture the shown copy so Back re-shows the same species/copy. A wishlist change
+    // can flip the species' CollectionStatus (Missing↔Wished), so recompute the guide
+    // before re-selecting — mirroring the edit-copy return.
+    const QString copyId = detail_->shownCopyId();
+    connect(page, &WishlistEditPage::backRequested, this, [this, page, dexNumber, copyId]() {
+        stack_->setCurrentIndex(0);
+        stack_->removeWidget(page);
+        page->deleteLater();
+        refresh();
+        reselectSpecies(dexNumber, copyId);
+    });
+    stack_->addWidget(page);
+    stack_->setCurrentWidget(page);
 }
 
 void BinderView::reselectSpecies(int dex, const QString& copyId) {

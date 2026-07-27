@@ -10,7 +10,11 @@
 #include <QStyle>
 #include <QVBoxLayout>
 
+#include <exception>
+#include <optional>
+
 #include "core/app/card_copy_service.h"
+#include "core/app/wishlist_service.h"
 #include "gui/services/card_image_store.h"
 #include "gui/services/card_price_lookup_service.h"
 #include "gui/services/card_search_service.h"
@@ -20,7 +24,6 @@
 #include "gui/views/foil_labels.h"
 #include "gui/views/rarity_labels.h"
 #include "gui/views/scaled_pixmap.h"
-#include "gui/views/wishlist_sources_editor.h"
 
 namespace pokedex {
 
@@ -128,9 +131,16 @@ PokemonDetailPanel::PokemonDetailPanel(MediaService& media, WishlistService& wis
                 &PokemonDetailPanel::copyLinked);
     }
 
-    // The wishlist sources editor sits below the art. The artwork keeps the
-    // stretch so it takes the slack; the editor stays at its natural height.
-    wishlistEditor_ = new WishlistSourcesEditor(wishlist_, this);
+    // The wishlist button sits below the art. It carries the sources count in its label
+    // ("Wishlist (2)" / "Wishlist (none)") and opens the species' wishlist on its own
+    // screen — the CRUD used to be embedded here, which crowded the card info. The
+    // request is relayed up (the panel is embedded, so it can't host the page itself).
+    wishlistButton_ = new QPushButton(this);
+    connect(wishlistButton_, &QPushButton::clicked, this, [this]() {
+        if (currentDex_ >= 0) {
+            Q_EMIT editWishlistRequested(currentDex_, name_->text());
+        }
+    });
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(16, 16, 16, 16);
@@ -142,7 +152,7 @@ PokemonDetailPanel::PokemonDetailPanel(MediaService& media, WishlistService& wis
     }
     layout->addWidget(editButton_);
     layout->addWidget(addCopyButton_);
-    layout->addWidget(wishlistEditor_);
+    layout->addWidget(wishlistButton_);
 
     // `this` is the receiver, so Qt auto-disconnects when the panel is destroyed
     // — an in-flight fetch that completes after a binder view closes is harmless.
@@ -167,7 +177,7 @@ void PokemonDetailPanel::showPokemon(int dexNumber, const QString& name,
     currentDex_ = dexNumber;
     name_->setText(name);
     addCopyButton_->setEnabled(true);
-    wishlistEditor_->setPokemon(dexNumber);
+    updateWishlistButton(dexNumber);
 
     // Copy mode: a species owned here (and a store to read the image from). Show
     // `preferCopyId` if it names one of the copies (so a just-edited copy stays on
@@ -297,8 +307,26 @@ void PokemonDetailPanel::clear() {
     placeholder_ = tr("Select a Pokémon to see its artwork.");
     renderImage();
     addCopyButton_->setEnabled(false);
-    wishlistEditor_->clear();
+    wishlistButton_->setEnabled(false);
+    wishlistButton_->setText(tr("Wishlist"));
     hideCopy();
+}
+
+void PokemonDetailPanel::updateWishlistButton(int dexNumber) {
+    // Read the current source count so the button advertises it ("Wishlist (2)" vs.
+    // "Wishlist (none)"). A best-effort read: a storage hiccup shows the plain label
+    // rather than crashing the panel — the wishlist page itself is the source of truth.
+    int count = 0;
+    try {
+        if (const std::optional<Wishlist> wl = wishlist_.forPokemon(dexNumber)) {
+            count = static_cast<int>(wl->sources.size());
+        }
+    } catch (const std::exception&) {
+        count = 0;
+    }
+    wishlistButton_->setText(count == 0 ? tr("Wishlist (none)")
+                                        : tr("Wishlist (%1)").arg(count));
+    wishlistButton_->setEnabled(true);
 }
 
 void PokemonDetailPanel::onReady(int dexNumber, MediaKind kind, const QPixmap& pixmap) {

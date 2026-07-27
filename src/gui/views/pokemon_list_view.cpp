@@ -27,6 +27,7 @@
 #include "gui/views/select_all_line_edit.h"
 #include "gui/views/splitter_style.h"
 #include "gui/views/table_cell.h"
+#include "gui/views/wishlist_edit_page.h"
 
 namespace pokedex {
 
@@ -50,6 +51,7 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService&
                                  QWidget* parent)
     : QWidget(parent),
       service_(service),
+      wishlist_(wishlist),
       cardSearch_(cardSearch),
       priceLookup_(priceLookup),
       cardCopies_(cardCopies),
@@ -111,6 +113,9 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService&
     connect(detail_, &PokemonDetailPanel::addCopyRequested, this, &PokemonListView::openAddCopy);
     // In copy mode, "Edit card" relays up to an in-place edit-page push.
     connect(detail_, &PokemonDetailPanel::editCopyRequested, this, &PokemonListView::openEditCopy);
+    // The "Wishlist (N)" button relays up to an in-place wishlist-page push.
+    connect(detail_, &PokemonDetailPanel::editWishlistRequested, this,
+            &PokemonListView::openWishlist);
     // When the detail panel's Fetch auto-links a copy, write the id back into the cached
     // owned_ map so a re-selection shows it linked rather than re-running the resolve.
     connect(detail_, &PokemonDetailPanel::copyLinked, this,
@@ -356,6 +361,23 @@ void PokemonListView::openEditCopy(const QString& copyId) {
                                 refresh();
                                 reselectSpecies(dex, copyId);
                             });
+}
+
+void PokemonListView::openWishlist(int dexNumber, const QString& name) {
+    auto* page = new WishlistEditPage(wishlist_, dexNumber, name);
+    // Capture the shown copy so Back can re-show the exact same species/copy (updating
+    // the wishlist button's counter) without re-rolling a random copy. The browse table
+    // doesn't depend on the wishlist, so no refresh() — the panel re-show suffices.
+    const QString copyId = detail_->shownCopyId();
+    connect(page, &WishlistEditPage::backRequested, this,
+            [this, page, dexNumber, name, copyId]() {
+                stack_->setCurrentIndex(0);
+                stack_->removeWidget(page);
+                page->deleteLater();
+                showSpeciesInPanel(dexNumber, name, copyId);
+            });
+    stack_->addWidget(page);
+    stack_->setCurrentWidget(page);
 }
 
 void PokemonListView::refresh() {
