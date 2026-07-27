@@ -573,8 +573,10 @@ void BinderView::activateRow(int row) {
     const bool ownedHere = it != ownedHere_.end() && !it->second.empty();
     const QString copyId = detail_->shownCopyId();
     activateCopyRow(
-        {this, ownedHere, species, copyId,
+        {this, ownedHere,
          tr("%1 has no cards filed in this binder yet.\nAdd one now?").arg(species),
+         tr("Edit card"), tr("Edit the shown card of %1?").arg(species),
+         /*ownedNeedsShownCopy=*/true, copyId,
          [this, dex, species]() { openAddCopy(dex, species); },
          [this, copyId]() { openEditCopy(copyId); }});
 }

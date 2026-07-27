@@ -534,6 +534,13 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
     updateButtonState();
 }
 
+void OwnedCardsView::searchFor(const QString& text) {
+    // setText fires textChanged → applyFilter immediately; if the section isn't visible
+    // yet the rows may not be loaded, but the text persists so the reload showEvent
+    // triggers on the way in re-applies it (repopulate() ends in applyFilter()).
+    search_->setText(text);
+}
+
 void OwnedCardsView::applyFilter() {
     // Compare the lowercased needle against each row's precomputed haystack (built
     // in reload()) — a plain substring test per row, no per-keystroke allocation.

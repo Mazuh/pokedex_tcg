@@ -59,6 +59,13 @@ public:
                    CardSearchService& cardSearch, CardPriceLookupService& priceLookup,
                    MediaService& media, WishlistService& wishlist, QWidget* parent = nullptr);
 
+    // Pre-fill the live search box with `text` (e.g. a species name) and apply it, so a
+    // caller can open this section already narrowed to a set of copies. The text persists
+    // through the reload showEvent triggers when this section next becomes visible, so it
+    // is safe to call before switching here. Used by MainWindow when the Pokémon browser
+    // asks to "search in My Cards" for a species.
+    void searchFor(const QString& text);
+
 protected:
     void showEvent(QShowEvent* event) override;
 

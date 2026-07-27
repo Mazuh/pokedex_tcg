@@ -324,10 +324,13 @@ void PokemonListView::activateRow(int row) {
     const bool owned = it != owned_.end() && !it->second.empty();
     const QString copyId = detail_->shownCopyId();
     activateCopyRow(
-        {this, owned, species, copyId,
+        {this, owned,
          tr("%1 has no cards in your collection yet.\nAdd one now?").arg(species),
+         tr("Search in My Cards"),
+         tr("Look for your %1 cards in My Cards?").arg(species),
+         /*ownedNeedsShownCopy=*/false, copyId,
          [this, dex, species]() { openAddCopy(dex, species); },
-         [this, copyId]() { openEditCopy(copyId); }});
+         [this, species]() { emit searchInMyCardsRequested(species); }});
 }
 
 void PokemonListView::openAddCopy(int dexNumber, const QString& name) {

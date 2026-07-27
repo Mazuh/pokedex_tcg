@@ -11,19 +11,23 @@ namespace pokedex {
 
 // GUI — the shared "activate a species row" gesture (double-click / Enter) for the
 // two copy-mode hosts: the Pokémon browser (PokemonListView) and a binder guide
-// (BinderView). Both do the same confirm-then-act flow — edit the copy the detail
-// panel is showing, or offer to add one when the species owns none on this surface
-// — and differ only in the "no copy" wording and in which inner stack the add/edit
-// pages push onto. Those variable pieces are passed in; the decision + the two
-// confirmation dialogs live here so a change to the flow is made once, not twice.
+// (BinderView). Both share the same confirm-then-act shape — offer to add a copy
+// when the species owns none on this surface, else confirm an owned-row action —
+// but the owned-row action itself diverges: the binder guide edits the copy the
+// detail panel is showing, while the browser jumps to "My Cards" pre-filtered to
+// the species. The variable pieces (both dialogs' wording, the callbacks, and
+// whether the owned action targets the shown copy) are passed in; the decision +
+// the two QMessageBox prompts live here so a change to the flow is made once.
 struct CopyRowActivation {
     QWidget* parent;
-    bool hasOwnedCopy;      // the species owns a copy on this surface
-    QString species;        // for the edit-confirmation wording
-    QString shownCopyId;    // the detail panel's currently shown copy ("" = none)
-    QString addPrompt;      // shown when hasOwnedCopy is false (host-specific wording)
-    std::function<void()> onAdd;   // push the species' add-copy page
-    std::function<void()> onEdit;  // push the shown copy's edit page
+    bool hasOwnedCopy;         // the species owns a copy on this surface
+    QString addPrompt;         // shown when hasOwnedCopy is false (host-specific wording)
+    QString ownedTitle;        // the owned-row confirmation's title (host-specific)
+    QString ownedPrompt;       // the owned-row confirmation's text (host-specific)
+    bool ownedNeedsShownCopy;  // the owned action targets the shown copy (edit) — guard on it
+    QString shownCopyId;       // the detail panel's shown copy ("" = none); checked iff above
+    std::function<void()> onAdd;    // push the species' add-copy page
+    std::function<void()> onOwned;  // the owned-row action (edit the shown copy / jump to My Cards)
 };
 
 inline void activateCopyRow(const CopyRowActivation& a) {
@@ -37,17 +41,16 @@ inline void activateCopyRow(const CopyRowActivation& a) {
         }
         return;
     }
-    // Owned: confirm editing the copy the detail panel is showing. Selection precedes
-    // activation, so a copy is already on screen.
-    if (a.shownCopyId.isEmpty()) {
-        return;  // defensive: nothing shown to edit
+    // Owned: confirm the host's owned-row action. An action that targets the shown copy
+    // (edit) needs one on screen; selection precedes activation, so it normally is.
+    if (a.ownedNeedsShownCopy && a.shownCopyId.isEmpty()) {
+        return;  // defensive: nothing shown to act on
     }
-    const auto choice = QMessageBox::question(
-        a.parent, QObject::tr("Edit card"),
-        QObject::tr("Edit the shown card of %1?").arg(a.species),
-        QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+    const auto choice = QMessageBox::question(a.parent, a.ownedTitle, a.ownedPrompt,
+                                              QMessageBox::Yes | QMessageBox::No,
+                                              QMessageBox::Yes);
     if (choice == QMessageBox::Yes) {
-        a.onEdit();
+        a.onOwned();
     }
 }
 

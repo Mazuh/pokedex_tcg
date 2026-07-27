@@ -97,14 +97,27 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
     sections_ = new QStackedWidget(this);
     sections_->addWidget(new BindersPage(binderService, guide, wishlist, media, cardSearch,
                                          priceLookup, cardCopies, cardImages, collectionPath));
-    sections_->addWidget(new PokemonListView(browse, wishlist, media, cardSearch, priceLookup,
-                                             cardCopies, cardImages, binderService));
-    sections_->addWidget(new OwnedCardsView(cardCopies, binderService, cardImages, cardSearch,
-                                            priceLookup, media, wishlist));
+    auto* pokemonView = new PokemonListView(browse, wishlist, media, cardSearch, priceLookup,
+                                            cardCopies, cardImages, binderService);
+    sections_->addWidget(pokemonView);
+    auto* ownedView = new OwnedCardsView(cardCopies, binderService, cardImages, cardSearch,
+                                         priceLookup, media, wishlist);
+    sections_->addWidget(ownedView);
     sections_->addWidget(new WishlistView(wishlist));
 
     connect(sidebar, &QListWidget::currentRowChanged, sections_,
             &QStackedWidget::setCurrentIndex);
+
+    // Double-clicking an owned species in the Pokémon browser jumps to "My Cards"
+    // pre-filtered to that species: set the filter first (it persists through the
+    // reload the section's showEvent triggers), then select the sidebar row — which
+    // switches sections and highlights it, keeping the sidebar in sync. Row 2 = My
+    // Cards, matching the sidebar/section order built above.
+    connect(pokemonView, &PokemonListView::searchInMyCardsRequested, this,
+            [sidebar, ownedView](const QString& species) {
+                ownedView->searchFor(species);
+                sidebar->setCurrentRow(2);
+            });
 
     // A draggable split: a narrow sidebar that keeps its size while the section
     // area takes the slack when the window resizes.
