@@ -185,14 +185,23 @@ CardPricesPanel::CardPricesPanel(CardPriceLookupService& lookup, CardSearchServi
         }
     });
     connect(&lookup_, &CardPriceLookupService::pricesFailed, this, [this](const QString& id) {
-        if (id == externalCardId_) {
-            fetching_ = false;
-            fetchButton_->setEnabled(true);
-            // Neutral wording: the failure may be a busy/flaky API OR a card the
-            // catalog no longer lists (a 404, which the transport fails fast) — don't
-            // assert "try again" when a retry may never help.
-            status_->setText(QStringLiteral("Couldn't fetch prices for this card right now."));
+        if (id != externalCardId_) {
+            return;
         }
+        if (!fetching_) {
+            // A background fetch for this same card, started by ANOTHER panel (the lookup
+            // service is app-wide and its signal carries only the id), failed. We never
+            // asked, and a failed fetch changes no cache — so leave our current display
+            // (valid cached prices and their "as of" line) untouched rather than painting a
+            // contradictory error over it.
+            return;
+        }
+        fetching_ = false;
+        fetchButton_->setEnabled(true);
+        // Neutral wording: the failure may be a busy/flaky API OR a card the
+        // catalog no longer lists (a 404, which the transport fails fast) — don't
+        // assert "try again" when a retry may never help.
+        status_->setText(QStringLiteral("Couldn't fetch prices for this card right now."));
     });
 
     // The Fetch button's invisible auto-link runs on the shared, debounced search
