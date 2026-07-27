@@ -290,14 +290,18 @@ std::vector<CardCandidate> parseCardSearchResponse(const std::string& jsonText,
     return candidates;
 }
 
-std::vector<CardPrice> parseCardPrices(const std::string& jsonText,
-                                       Timestamp fallbackObservedAt) {
+CardPricesParse parseCardPricesResult(const std::string& jsonText, Timestamp fallbackObservedAt) {
     const json root = parseJson(jsonText);
     const json* card = cardNode(root);
     if (card == nullptr) {
-        return {};
+        return {};  // cardPresent = false, no prices — a degraded/error body
     }
-    return extractCardPrices(*card, fallbackObservedAt);
+    return {.cardPresent = true, .prices = extractCardPrices(*card, fallbackObservedAt)};
+}
+
+std::vector<CardPrice> parseCardPrices(const std::string& jsonText,
+                                       Timestamp fallbackObservedAt) {
+    return parseCardPricesResult(jsonText, fallbackObservedAt).prices;
 }
 
 std::vector<std::string> resolveSetFilterToIds(const std::string& typed,

@@ -53,21 +53,34 @@ inline const CardCopy* findOwnedCopy(
 }
 
 // GUI — after an in-panel Fetch auto-resolved a copy's catalog link, write the new
-// external card id back into the bucketed-by-dex copy map, so a later re-selection
-// renders the copy as linked (and value stats that key on externalCardId include it)
-// instead of re-running the resolve. No-op when the id isn't in the map. Both copy-mode
-// hosts (the browser over `owned_`, a binder guide over `ownedHere_`) call this from the
-// panel's cardLinked signal, so it lives here rather than duplicated per view.
+// external card id back into the copy with id `copyId` inside a plain vector<CardCopy>, so
+// a later re-selection renders it as linked (and value stats that key on externalCardId
+// include it) instead of re-running the resolve. Returns whether the copy was found (so a
+// caller scanning several vectors can stop). Both the binder guide (over its filedCopies_)
+// and My Cards (over its loaded_) keep such a flat cache and learn the id from the panel's
+// cardLinked signal, so this find-by-id write lives here rather than hand-spelled per view.
+inline bool applyLinkedCardToVector(std::vector<CardCopy>& copies, const QString& copyId,
+                                    const QString& externalCardId) {
+    const std::string id = copyId.toStdString();
+    for (CardCopy& copy : copies) {
+        if (copy.id == id) {
+            copy.externalCardId = externalCardId.toStdString();
+            return true;
+        }
+    }
+    return false;
+}
+
+// GUI — the bucketed-by-dex twin: write the linked id into whichever bucket holds the copy,
+// delegating each bucket to applyLinkedCardToVector so the find-by-id write is defined once.
+// No-op when the id isn't in the map. Both copy-mode hosts (the browser over `owned_`, a
+// binder guide over `ownedHere_`) call this from the panel's cardLinked signal.
 inline void applyLinkedCardToBuckets(
     std::unordered_map<PokemonDexNum, std::vector<CardCopy>>& byDex, const QString& copyId,
     const QString& externalCardId) {
-    const std::string id = copyId.toStdString();
     for (auto& [dex, copies] : byDex) {
-        for (CardCopy& copy : copies) {
-            if (copy.id == id) {
-                copy.externalCardId = externalCardId.toStdString();
-                return;
-            }
+        if (applyLinkedCardToVector(copies, copyId, externalCardId)) {
+            return;
         }
     }
 }

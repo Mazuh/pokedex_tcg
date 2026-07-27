@@ -89,21 +89,65 @@ TEST(CardPriceServiceTest, RecordApiPricesPreservesManualAcrossRefetch) {
     EXPECT_EQ(manual, 1);
 }
 
-// A degraded response (valid card object, no price blocks) must NOT wipe prices we
-// already hold, nor bump the fetch stamp — so a flaky API can't blank a card's prices
-// for the whole TTL. Mirrors the set cache's empty-200 guard.
-TEST(CardPriceServiceTest, DegradedEmptyFetchKeepsExistingPrices) {
+// A card that comes back WITH a card object but NO price blocks (a delisted card, or a
+// set the API hasn't priced yet) is a real "no prices" answer: it clears the stale API
+// rows and re-stamps the fetch, caching the blank. This is what makes Refresh able to
+// reflect a card that lost its prices — the user's explicit insist.
+TEST(CardPriceServiceTest, CardPresentWithNoPricesClearsStalePrices) {
+    Fixture f;
+    f.service.recordApiPrices("base1-4", kPayload);
+    ASSERT_EQ(f.service.pricesFor("base1-4").size(), 2u);
+
+    f.now = at("2026-07-26T00:00:00Z");
+    const auto result = f.service.recordApiPrices(
+        "base1-4", R"({"data": {"id": "base1-4", "name": "Charizard"}})");
+    EXPECT_TRUE(result.empty());
+    EXPECT_TRUE(f.service.pricesFor("base1-4").empty());  // cleared — the card has no prices now
+    ASSERT_TRUE(f.service.fetchedAt("base1-4").has_value());
+    EXPECT_EQ(*f.service.fetchedAt("base1-4"), f.now);  // re-stamped to the fresh fetch
+}
+
+// A manual price survives a card-present-empty fetch: only the API rows are cleared.
+TEST(CardPriceServiceTest, CardPresentWithNoPricesKeepsManualRows) {
+    Fixture f;
+    f.service.recordApiPrices("base1-4", kPayload);
+    f.service.addManualPrice("base1-4", 5000, "USD", "paid at a con");
+    ASSERT_EQ(f.service.pricesFor("base1-4").size(), 3u);  // 2 API + 1 manual
+
+    const auto result = f.service.recordApiPrices(
+        "base1-4", R"({"data": {"id": "base1-4", "name": "Charizard"}})");
+    EXPECT_TRUE(result.empty());
+    const auto loaded = f.service.pricesFor("base1-4");
+    ASSERT_EQ(loaded.size(), 1u);  // the API rows cleared, the manual one kept
+    EXPECT_EQ(loaded.front().provenance, kManualPriceProvenance);
+}
+
+// A *degraded* response — NO card object at all (an error body / data:null, e.g. a
+// transport failure) — must NOT wipe prices we already hold, nor bump the fetch stamp, so
+// a flaky API can't blank a good card. Only a genuine card-present answer clears (above).
+TEST(CardPriceServiceTest, DegradedResponseWithoutCardKeepsExistingPrices) {
     Fixture f;
     f.service.recordApiPrices("base1-4", kPayload);
     ASSERT_EQ(f.service.pricesFor("base1-4").size(), 2u);
     const auto fetchedBefore = f.service.fetchedAt("base1-4");
 
     f.now = at("2026-07-26T00:00:00Z");
-    const auto result = f.service.recordApiPrices(
-        "base1-4", R"({"data": {"id": "base1-4", "name": "Charizard"}})");
+    // Valid JSON, but no card node (a degraded/error body) — cardPresent is false.
+    const auto result = f.service.recordApiPrices("base1-4", R"({"data": null})");
     EXPECT_TRUE(result.empty());
     EXPECT_EQ(f.service.pricesFor("base1-4").size(), 2u);      // preserved, not wiped
     EXPECT_EQ(f.service.fetchedAt("base1-4"), fetchedBefore);  // stamp untouched → will retry
+}
+
+// A degraded response on the FIRST fetch (no prior prices) must NOT stamp either, so the
+// card stays "not fetched" and the user's next Fetch/Refresh retries — rather than caching
+// a false "No market prices" verdict from a transient outage.
+TEST(CardPriceServiceTest, DegradedFirstFetchDoesNotStamp) {
+    Fixture f;
+    const auto result = f.service.recordApiPrices("sv3-5", R"({"data": null})");
+    EXPECT_TRUE(result.empty());
+    EXPECT_TRUE(f.service.pricesFor("sv3-5").empty());
+    EXPECT_FALSE(f.service.fetchedAt("sv3-5").has_value());  // never stamped → still fetchable
 }
 
 // A FIRST fetch that legitimately returns no prices still stamps, so a genuinely
@@ -120,33 +164,6 @@ TEST(CardPriceServiceTest, FirstFetchWithNoPricesStillStamps) {
 TEST(CardPriceServiceTest, RecordApiPricesThrowsOnBadJson) {
     Fixture f;
     EXPECT_THROW(f.service.recordApiPrices("base1-4", "}{"), CardCatalogParseError);
-}
-
-TEST(CardPriceServiceTest, NeedsRefreshWhenNeverFetchedOrOlderThanTtl) {
-    Fixture f;
-    using std::chrono::hours;
-
-    // Never fetched → always refresh.
-    EXPECT_TRUE(f.service.needsRefresh("base1-4", hours{24}));
-
-    f.service.recordApiPrices("base1-4", kPayload);  // fetched at now
-    // Just fetched → still fresh a few hours later.
-    f.now = at("2026-07-25T18:00:00Z");
-    EXPECT_FALSE(f.service.needsRefresh("base1-4", hours{24}));
-    // A day and a half later → stale.
-    f.now = at("2026-07-27T00:00:00Z");
-    EXPECT_TRUE(f.service.needsRefresh("base1-4", hours{24}));
-}
-
-TEST(CardPriceServiceTest, NeedsRefreshWhenTheClockMovedBackwardSinceTheFetch) {
-    Fixture f;
-    using std::chrono::hours;
-
-    f.service.recordApiPrices("base1-4", kPayload);  // fetched at 2026-07-25T12:00:00Z
-    // The clock is corrected backward to before the stored fetch stamp: the age is
-    // negative, which must read as stale (refetch), not "fresh forever".
-    f.now = at("2026-07-25T06:00:00Z");
-    EXPECT_TRUE(f.service.needsRefresh("base1-4", hours{24}));
 }
 
 TEST(CardPriceServiceTest, AddManualPriceStampsNowAndMintsId) {

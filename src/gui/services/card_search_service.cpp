@@ -205,6 +205,14 @@ void CardSearchService::fetchSets(int retriesLeft) {
                 // to it, rather than dropping set narrowing for the session.
                 qWarning() << "CardSearchService: could not parse set list:" << e.what();
                 fallBackToCache();
+                // A malformed 200 body is the server's (degraded) answer, not a transient
+                // failure worth retrying — same as the empty-200 branch above. Mark the
+                // table loaded even with NO cache to adopt, so we don't re-fire /v2/sets on
+                // every subsequent search (hammering a responsive-but-degraded free API).
+                // fallBackToCache already set setsLoaded_ when a cache existed; this covers
+                // the no-cache case. Narrowing is unavailable this session; the TTL retries
+                // next launch.
+                setsLoaded_ = true;
             }
         } else if (isTransient(reply) && retriesLeft > 0) {
             const int delay = backoffDelayMs(retriesLeft, kMaxSearchRetries, kBackoffBaseMs);

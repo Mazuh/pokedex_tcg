@@ -35,6 +35,7 @@
 #include "gui/views/edit_card_copy_page.h"
 #include "gui/views/condition_labels.h"
 #include "gui/views/foil_labels.h"
+#include "gui/views/owned_copy_buckets.h"
 #include "gui/views/ownership_labels.h"
 #include "gui/views/rarity_labels.h"
 #include "gui/views/region_labels.h"
@@ -209,13 +210,7 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     // re-selection renders it as already linked (no needless re-resolve).
     connect(pricesPanel_, &CardPricesPanel::cardLinked, this,
             [this](const QString& copyId, const QString& externalCardId) {
-                const std::string id = copyId.toStdString();
-                for (CardCopy& c : loaded_) {
-                    if (c.id == id) {
-                        c.externalCardId = externalCardId.toStdString();
-                        break;
-                    }
-                }
+                applyLinkedCardToVector(loaded_, copyId, externalCardId);
             });
     auto* rightPane = new QWidget;
     auto* rightLayout = new QVBoxLayout(rightPane);
@@ -327,7 +322,7 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
             [&](const CardCopy& c) {
                 // Condition ranks best-to-worst by enum value; rarity and foil rank by
                 // enum declaration order. An unset value stays nullopt so it can sink to
-                // the bottom in either direction (see compareOptionalRank), not just
+                // the bottom in either direction (see compareOptional), not just
                 // ascending.
                 const auto rank = [](auto opt) -> std::optional<int> {
                     return opt ? std::optional<int>(static_cast<int>(*opt)) : std::nullopt;

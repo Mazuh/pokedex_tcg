@@ -335,15 +335,26 @@ void CardPricesPanel::render() {
         return;
     }
 
+    // A soft-Removed copy is frozen history — no price affordance at all, whether or not it
+    // happens to be linked (mirrors the unlinked-Removed branch above). Never render a
+    // Fetch/Refresh that would spend a network call on a discarded card.
+    if (copyRemoved_) {
+        resetToMessage(QString());
+        return;
+    }
+
     // Read the cache defensively: render() runs from a selection-change slot, and a DB
     // read can throw (e.g. a second app instance holding the SQLite file lock, which
     // CLAUDE.md warns about). An exception escaping a Qt slot calls std::terminate — so
-    // degrade to a message rather than crash the app on select.
+    // degrade to a message rather than crash the app on select. One combined read for both
+    // the prices and the fetch stamp (see cachedPrices), so a selection consults the cache
+    // through one call and one error path.
     std::vector<CardPrice> cached;
     std::optional<Timestamp> fetchedAt;
     try {
-        cached = lookup_.cached(externalCardId_);
-        fetchedAt = lookup_.fetchedAt(externalCardId_);
+        CardPriceLookupService::CachedPrices snapshot = lookup_.cachedPrices(externalCardId_);
+        cached = std::move(snapshot.prices);
+        fetchedAt = snapshot.fetchedAt;
     } catch (const std::exception&) {
         resetToMessage(QStringLiteral("Couldn't read the stored prices."));
         return;
@@ -477,8 +488,8 @@ void CardPricesPanel::onFetchClicked() {
     fetchButton_->setEnabled(false);
     status_->setText(QStringLiteral("Fetching prices…"));
     status_->show();
-    // Force a network fetch — the button is an explicit user request for the latest.
-    lookup_.fetch(externalCardId_, /*force=*/true);
+    // The button is an explicit user request for the latest, so always hit the wire.
+    lookup_.fetch(externalCardId_);
 }
 
 void CardPricesPanel::onLinkResults(const std::vector<CardCandidate>& cards) {
@@ -536,7 +547,7 @@ void CardPricesPanel::onLinkResults(const std::vector<CardCandidate>& cards) {
     externalCardId_ = QString::fromStdString(match->id);
     linking_ = false;
     Q_EMIT cardLinked(QString::fromStdString(copyId_), externalCardId_);
-    lookup_.fetch(externalCardId_, /*force=*/true);  // pricesReady → fetching_=false, render()
+    lookup_.fetch(externalCardId_);  // pricesReady → fetching_=false, render()
 }
 
 }  // namespace pokedex

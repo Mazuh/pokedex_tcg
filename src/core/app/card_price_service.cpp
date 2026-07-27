@@ -1,9 +1,8 @@
 #include "core/app/card_price_service.h"
 
-#include <algorithm>
+#include <chrono>
 #include <utility>
 
-#include "core/app/cache_ttl.h"
 #include "core/app/card_catalog_parse.h"
 #include "core/app/card_price_cache.h"
 #include "core/app/uuid.h"
@@ -35,33 +34,24 @@ std::optional<Timestamp> CardPriceService::fetchedAt(const std::string& external
     return cache_.fetchedAt(externalCardId);
 }
 
-bool CardPriceService::needsRefresh(const std::string& externalCardId, std::chrono::seconds ttl) {
-    // Refresh when never fetched, expired, or the stamp is in the future (a clock
-    // moved backward) — the shared cacheIsFresh rule handles the last two, including
-    // the backward-clock guard the set cache uses too.
-    const std::optional<Timestamp> last = cache_.fetchedAt(externalCardId);
-    return !last || !cacheIsFresh(*last, clock_(), ttl);
-}
-
 std::vector<CardPrice> CardPriceService::recordApiPrices(const std::string& externalCardId,
                                                          const std::string& jsonPayload) {
     const Timestamp now = clock_();
     // A vendor block without a printed date falls back to the fetch time.
-    std::vector<CardPrice> prices = parseCardPrices(jsonPayload, now);
+    const CardPricesParse parsed = parseCardPricesResult(jsonPayload, now);
+    std::vector<CardPrice> prices = parsed.prices;
 
-    // A degraded response — the card object came back with no price blocks — must not
-    // wipe prices we already hold (mirrors the set cache's empty-200 guard). Only when
-    // there are no API-sourced rows yet do we store the empty result, which stamps the
-    // fetch so a genuinely price-less card reads "no prices" instead of re-offering
-    // Fetch forever. Manual rows are irrelevant to this check (storeApiPrices keeps them).
-    if (prices.empty()) {
-        const std::vector<CardPrice> existing = cache_.pricesFor(externalCardId);
-        const bool hasApiRows =
-            std::any_of(existing.begin(), existing.end(),
-                        [](const CardPrice& p) { return p.provenance != kManualPriceProvenance; });
-        if (hasApiRows) {
-            return {};  // keep the good cached prices; leave the fetch stamp untouched
-        }
+    // A *degraded* response — no card object came back at all (an error body / data:null /
+    // a failure the transport surfaced as a 200) — is NOT a real "no prices" answer: never
+    // store or stamp it, whether or not we already hold prices. Any cached prices stay
+    // intact, and a first-ever fetch stays unfetched (no stamp), so the next Fetch/Refresh
+    // retries rather than the card showing a false "No market prices" verdict. A card that
+    // DID come back (present) with no price blocks — a delisted card, or a set the API hasn't
+    // priced yet — is a genuine "no prices" answer and falls through below to clear + stamp,
+    // caching the blank so it isn't re-fetched until the user insists via Refresh. Manual
+    // rows are untouched either way (storeApiPrices keeps them).
+    if (prices.empty() && !parsed.cardPresent) {
+        return {};  // degraded: leave the cache and the (absent-or-old) stamp untouched
     }
 
     for (CardPrice& p : prices) {

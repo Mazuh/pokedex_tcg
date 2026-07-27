@@ -1,6 +1,5 @@
 #pragma once
 
-#include <chrono>
 #include <functional>
 #include <optional>
 #include <stdexcept>
@@ -52,11 +51,6 @@ public:
 
     // When we last fetched this card from the API, or nullopt if never.
     std::optional<Timestamp> fetchedAt(const std::string& externalCardId);
-
-    // Whether a fresh API fetch is warranted: true when the card was never fetched
-    // or its last fetch is at least `ttl` old. The anti-hammer gate the caller
-    // checks before doing the (rate-limited, flaky) network GET.
-    bool needsRefresh(const std::string& externalCardId, std::chrono::seconds ttl);
 
     // Parse a /v2/cards/{id} payload and persist its prices for `externalCardId`, replacing
     // that card's previously-cached API rows and stamping the fetch time to now();

@@ -359,4 +359,28 @@ TEST(ParseCardPricesTest, ThrowsOnInvalidJsonButMissingDataIsFine) {
     EXPECT_TRUE(parseCardPrices(R"({"foo": 1})", at("2000-01-01T00:00:00Z")).empty());
 }
 
+// parseCardPricesResult reports whether a card object was present, so a caller can tell a
+// price-less card (card present, empty prices) from a degraded response (no card at all).
+TEST(ParseCardPricesTest, ResultReportsCardPresenceApartFromPrices) {
+    // A card object with no price blocks: present, but no rows.
+    const auto priceless = pokedex::parseCardPricesResult(
+        R"({"data": {"id": "sv3-125", "name": "Gardevoir ex"}})", at("2000-01-01T00:00:00Z"));
+    EXPECT_TRUE(priceless.cardPresent);
+    EXPECT_TRUE(priceless.prices.empty());
+
+    // A card object with prices: present, with rows.
+    const auto priced = pokedex::parseCardPricesResult(
+        R"({"data": {"id": "sv3-125", "cardmarket": {"prices": {"trendPrice": 2.0}}}})",
+        at("2000-01-01T00:00:00Z"));
+    EXPECT_TRUE(priced.cardPresent);
+    EXPECT_EQ(priced.prices.size(), 1u);
+
+    // No card node at all (degraded/error body): absent.
+    EXPECT_FALSE(pokedex::parseCardPricesResult(R"({"data": null})", at("2000-01-01T00:00:00Z"))
+                     .cardPresent);
+    EXPECT_FALSE(
+        pokedex::parseCardPricesResult(R"({"errors": ["x"]})", at("2000-01-01T00:00:00Z"))
+            .cardPresent);
+}
+
 }  // namespace

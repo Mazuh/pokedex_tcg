@@ -7,8 +7,6 @@
 #include <QTimer>
 #include <QUrl>
 
-#include <chrono>
-
 #include "core/app/card_catalog_api.h"
 #include "core/app/card_price_service.h"
 #include "gui/services/http_status.h"
@@ -17,11 +15,6 @@
 namespace pokedex {
 
 namespace {
-
-// How long a fetched price stays "fresh" before needsRefresh() reports it stale.
-// Prices move roughly daily, but we never auto-refetch — this only labels the state
-// for the user, who forces a refresh when they want the latest — so a day is ample.
-constexpr auto kPriceTtl = std::chrono::hours(24);
 
 // Per-card retry/backoff: the API 5xx/504s under load, so a transient failure is
 // retried a few times with growing delays before it surfaces as pricesFailed().
@@ -34,8 +27,10 @@ CardPriceLookupService::CardPriceLookupService(const CardCatalogApi& api, CardPr
                                                QObject* parent)
     : QObject(parent), api_(api), prices_(prices), nam_(new QNetworkAccessManager(this)) {}
 
-std::vector<CardPrice> CardPriceLookupService::cached(const QString& externalCardId) {
-    return prices_.pricesFor(externalCardId.toStdString());
+CardPriceLookupService::CachedPrices CardPriceLookupService::cachedPrices(
+    const QString& externalCardId) {
+    const std::string id = externalCardId.toStdString();
+    return {prices_.pricesFor(id), prices_.fetchedAt(id)};
 }
 
 std::unordered_map<std::string, std::vector<CardPrice>> CardPriceLookupService::cachedMany(
@@ -43,18 +38,9 @@ std::unordered_map<std::string, std::vector<CardPrice>> CardPriceLookupService::
     return prices_.pricesForMany(externalCardIds);
 }
 
-std::optional<Timestamp> CardPriceLookupService::fetchedAt(const QString& externalCardId) {
-    return prices_.fetchedAt(externalCardId.toStdString());
-}
-
-void CardPriceLookupService::fetch(const QString& externalCardId, bool force) {
+void CardPriceLookupService::fetch(const QString& externalCardId) {
     if (externalCardId.isEmpty()) {
         return;  // an unlinked copy has nothing to fetch
-    }
-    // A fresh cache satisfies a non-forced fetch with no network call.
-    if (!force && !prices_.needsRefresh(externalCardId.toStdString(), kPriceTtl)) {
-        Q_EMIT pricesReady(externalCardId);
-        return;
     }
     if (inFlight_.contains(externalCardId)) {
         // Coalesce: a fetch for this id is already on the wire. Because the service is

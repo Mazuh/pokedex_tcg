@@ -36,6 +36,19 @@ std::vector<CardSetInfo> parseSetsResponse(const std::string& json);
 std::vector<CardCandidate> parseCardSearchResponse(const std::string& json,
                                                    const std::vector<CardSetInfo>& sets);
 
+// The outcome of parsing a /v2/cards/{id} price payload. `cardPresent` says whether the
+// response actually carried a resolvable card object (vs a degraded/error body with no
+// `data` card node); `prices` are its extracted rows. The distinction lets a caller tell a
+// genuinely price-less card (card present but no vendor blocks — a delisted card, or a set
+// the API hasn't priced yet) apart from a degraded response (no card object at all): the
+// former should overwrite the cache (caching the blank), the latter should preserve any
+// good cached prices. parseCardPrices() below drops `cardPresent` for callers that don't
+// need it.
+struct CardPricesParse {
+    bool cardPresent = false;
+    std::vector<CardPrice> prices;
+};
+
 // Parse a /v2/cards/{id} single-card response into price observations, reading the
 // `tcgplayer` (USD, per-variant) and `cardmarket` (EUR, flat) blocks. Each numeric
 // price becomes one CardPrice row keyed by the card's own id; a non-positive value
@@ -47,8 +60,12 @@ std::vector<CardCandidate> parseCardSearchResponse(const std::string& json,
 // parser stays clock-free and deterministic). A payload with neither block yields
 // no rows. Robust to `data` being an object (the single-card endpoint) or the first
 // element of a `data` array (a search response).
-std::vector<CardPrice> parseCardPrices(const std::string& json,
-                                       Timestamp fallbackObservedAt);
+std::vector<CardPrice> parseCardPrices(const std::string& json, Timestamp fallbackObservedAt);
+
+// As parseCardPrices, but also reports whether the payload contained a resolvable card
+// object (`cardPresent`) so the caller can distinguish a price-less card from a degraded
+// response — see CardPricesParse.
+CardPricesParse parseCardPricesResult(const std::string& json, Timestamp fallbackObservedAt);
 
 // Resolve a user-typed set filter to the set ids it matches, for reliable
 // set.id-based search narrowing. Matches an exact printed code (e.g. "OBF") OR a

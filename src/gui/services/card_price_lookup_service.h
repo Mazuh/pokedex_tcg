@@ -27,8 +27,8 @@ class CardPriceService;
 // just because a card was shown (the on-demand rule, so we never hammer the free API
 // for cards the user may not even own).
 //
-// Reads are free: cached()/fetchedAt()/needsRefresh() hit only the local cache, no
-// network. fetch() is the only method that may touch the wire.
+// Reads are free: cachedPrices()/cachedMany() hit only the local cache, no network.
+// fetch() is the only method that may touch the wire.
 class CardPriceLookupService : public QObject {
     Q_OBJECT
 
@@ -39,25 +39,29 @@ public:
     explicit CardPriceLookupService(const CardCatalogApi& api, CardPriceService& prices,
                                     QObject* parent = nullptr);
 
-    // The prices already cached for a card (empty if none) — no network.
-    std::vector<CardPrice> cached(const QString& externalCardId);
+    // A card's cached prices together with its last-fetch stamp, so a view rendering a
+    // selection consults the cache through one call and one error path instead of two
+    // (`cached` + `fetchedAt`). Prices and the stamp live in separate tables, so this is
+    // a single accessor over two small local reads — not a single query — but it keeps a
+    // per-selection read in one place. No network.
+    struct CachedPrices {
+        std::vector<CardPrice> prices;
+        std::optional<Timestamp> fetchedAt;  // nullopt if never fetched
+    };
+    CachedPrices cachedPrices(const QString& externalCardId);
 
     // The cached prices for many cards at once, keyed by external card id — one batched
-    // query instead of N cached() calls, for a caller totalling a collection's value
-    // (e.g. a binder header). No network.
+    // query instead of N cachedPrices() calls, for a caller totalling a collection's
+    // value (e.g. a binder header). No network.
     std::unordered_map<std::string, std::vector<CardPrice>> cachedMany(
         const std::vector<std::string>& externalCardIds);
 
-    // When we last fetched this card from the API, or nullopt if never — no network.
-    std::optional<Timestamp> fetchedAt(const QString& externalCardId);
-
     // Fetch this card's prices from the per-card endpoint, persist them (replacing the
     // API-sourced rows, keeping manual ones), and emit pricesReady(id). A blank id is
-    // ignored (an unlinked copy). When `force` is false and the cache is still fresh,
-    // emits pricesReady immediately from cache with NO network call; `force` (an
-    // explicit Refresh) always hits the wire. A fetch already in flight for the same
-    // id is coalesced. On terminal failure emits pricesFailed(id).
-    void fetch(const QString& externalCardId, bool force = false);
+    // ignored (an unlinked copy). Always driven by an explicit user action (a
+    // Fetch/Refresh button), so it always hits the wire — subject only to coalescing a
+    // fetch already in flight for the same id. On terminal failure emits pricesFailed(id).
+    void fetch(const QString& externalCardId);
 
 Q_SIGNALS:
     // Fired when a card's prices are available to (re-)read via cached(id) — after a

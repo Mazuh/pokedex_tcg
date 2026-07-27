@@ -14,6 +14,7 @@
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <exception>
 #include <map>
 #include <optional>
@@ -137,26 +138,31 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     connect(detail_, &PokemonDetailPanel::addCopyRequested, this, &BinderView::openAddCopy);
     // In copy mode, "Edit card" relays up to an in-place edit-page push.
     connect(detail_, &PokemonDetailPanel::editCopyRequested, this, &BinderView::openEditCopy);
-    // When the detail panel's Fetch auto-links a copy, write the id back into our cached
-    // copies so a re-selection shows it linked (not re-resolved) and the header value can
-    // count it once its prices land.
+    // When the detail panel's Fetch auto-links a copy, write the id back into both cached
+    // copy stores so a re-selection shows it linked (not re-resolved) and the header value
+    // can count it once its prices land. No updateStats here: the fetch that immediately
+    // follows the link emits pricesReady, which recomputes below — linking on its own can't
+    // change the total (no prices are cached for the new id yet).
     connect(detail_, &PokemonDetailPanel::copyLinked, this,
             [this](const QString& copyId, const QString& externalCardId) {
                 applyLinkedCardToBuckets(ownedHere_, copyId, externalCardId);
-                const std::string id = copyId.toStdString();
-                for (CardCopy& copy : filedCopies_) {
-                    if (copy.id == id) {
-                        copy.externalCardId = externalCardId.toStdString();
-                        break;
-                    }
-                }
-                updateStats(filedCopies_);
+                applyLinkedCardToVector(filedCopies_, copyId, externalCardId);
             });
-    // A price fetch (from the detail panel) can raise the binder's market-value total; the
-    // header is computed from cached prices at stat time, so recompute it when any card's
-    // prices land rather than only on a full reopen.
+    // A price fetch (from the detail panel, for a card filed here) can raise the binder's
+    // market-value total; the header is computed from cached prices at stat time, so
+    // recompute it when such a card's prices land rather than only on a full reopen. The
+    // lookup service is app-wide, so a pricesReady for a card NOT filed here (most of them)
+    // is ignored instead of re-running the whole batched value query on every fetch anywhere.
     connect(&priceLookup_, &CardPriceLookupService::pricesReady, this,
-            [this](const QString&) { updateStats(filedCopies_); });
+            [this](const QString& externalCardId) {
+                const std::string id = externalCardId.toStdString();
+                const bool filedHere =
+                    std::any_of(filedCopies_.begin(), filedCopies_.end(),
+                                [&](const CardCopy& c) { return c.externalCardId == id; });
+                if (filedHere) {
+                    updateStats(filedCopies_);
+                }
+            });
 
     // The list (top bar + search + table) on the left, the detail panel on the
     // right, in a draggable horizontal split. The list takes the slack.
@@ -369,7 +375,7 @@ void BinderView::sortEntries() {
     // allocate QStrings, and each row does a representativeCopy() lookup. A sortColumn_ < 0
     // keeps the guide's natural (dex) order. The copy columns are keyed as std::optional so
     // a species with no copy filed here sinks to the bottom in either direction (see
-    // compareOptionalField), not just ascending. Condition/rarity/foil rank by enum value
+    // compareOptional), not just ascending. Condition/rarity/foil rank by enum value
     // (best-to-worst condition; declaration order for rarity/foil) so the sort matches My
     // Cards' semantics rather than the labels' alphabetical order.
     struct Key {
