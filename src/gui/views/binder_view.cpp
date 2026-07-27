@@ -374,44 +374,75 @@ void BinderView::repopulate() {
 }
 
 void BinderView::sortEntries() {
-    // Precompute each row's keys once (via sortByKeys) rather than rebuilding them for
-    // both operands on every comparison — the name and the copy-derived text columns
-    // allocate QStrings, and each row does a representativeCopy() lookup. A sortColumn_ < 0
+    // Precompute each row's key once (via sortByKeys) rather than rebuilding it for both
+    // operands on every comparison — the name and the copy-derived text columns allocate
+    // QStrings, and the copy columns do a representativeCopy() lookup. A sortColumn_ < 0
     // keeps the guide's natural (dex) order. The copy columns are keyed as std::optional so
     // a species with no copy filed here sinks to the bottom in either direction (see
     // compareOptional), not just ascending. Condition/rarity/foil rank by enum value
     // (best-to-worst condition; declaration order for rarity/foil) so the sort matches My
     // Cards' semantics rather than the labels' alphabetical order.
     struct Key {
-        int dexNumber;
+        int dexNumber = 0;
         QString name;
         std::optional<QString> card;
         std::optional<QString> setName;
         std::optional<int> conditionRank;
         std::optional<int> rarityRank;
         std::optional<int> foilRank;
-        int statusRank;
+        int statusRank = 0;
     };
     const bool ascending = sortOrder_ == Qt::AscendingOrder;
+    const int column = sortColumn_;
     sortByKeys(
         entries_, sortColumn_, sortOrder_,
-        [this](const CardBinderEntry& e) {
+        [this, column](const CardBinderEntry& e) {
+            // Build ONLY the clicked column's key (as OwnedCardsView::repopulate does):
+            // the comparator reads a single field, so materializing every column on each
+            // header click — five QString allocations plus a representativeCopy() lookup
+            // per row — is pure waste that grows with the guide. Only the copy-derived
+            // columns (2–6) need the representative copy, so the dex/name/status columns
+            // skip that lookup entirely. Unset fields keep their default (0 / empty
+            // QString / nullopt), which the comparator never consults for other columns.
             Key key;
-            key.dexNumber = e.pokemon.dexNumber;
-            key.name = QString::fromStdString(e.pokemon.name);
-            key.statusRank = static_cast<int>(e.status);
-            if (const CardCopy* rep = representativeCopy(e.pokemon.dexNumber)) {
-                key.card = cardText(rep->cardRef);
-                key.setName = QString::fromStdString(rep->cardRef.setName);
-                if (rep->condition) {
-                    key.conditionRank = static_cast<int>(*rep->condition);
-                }
-                if (rep->rarity) {
-                    key.rarityRank = static_cast<int>(*rep->rarity);
-                }
-                if (rep->foil) {
-                    key.foilRank = static_cast<int>(*rep->foil);
-                }
+            switch (column) {
+                case 0:
+                    key.dexNumber = e.pokemon.dexNumber;
+                    break;
+                case 1:
+                    key.name = QString::fromStdString(e.pokemon.name);
+                    break;
+                case 2:
+                    if (const CardCopy* rep = representativeCopy(e.pokemon.dexNumber)) {
+                        key.card = cardText(rep->cardRef);
+                    }
+                    break;
+                case 3:
+                    if (const CardCopy* rep = representativeCopy(e.pokemon.dexNumber)) {
+                        key.setName = QString::fromStdString(rep->cardRef.setName);
+                    }
+                    break;
+                case 4:
+                    if (const CardCopy* rep = representativeCopy(e.pokemon.dexNumber);
+                        rep && rep->condition) {
+                        key.conditionRank = static_cast<int>(*rep->condition);
+                    }
+                    break;
+                case 5:
+                    if (const CardCopy* rep = representativeCopy(e.pokemon.dexNumber);
+                        rep && rep->rarity) {
+                        key.rarityRank = static_cast<int>(*rep->rarity);
+                    }
+                    break;
+                case 6:
+                    if (const CardCopy* rep = representativeCopy(e.pokemon.dexNumber);
+                        rep && rep->foil) {
+                        key.foilRank = static_cast<int>(*rep->foil);
+                    }
+                    break;
+                case 7:
+                    key.statusRank = static_cast<int>(e.status);
+                    break;
             }
             return key;
         },
