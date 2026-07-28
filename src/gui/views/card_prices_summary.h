@@ -24,11 +24,16 @@ struct CardCopy;
 // its one "Manage prices" button, which relays managePricesRequested() so an owning view pushes
 // the dedicated PricesEditPage — the same move the wishlist made off the inspector.
 //
-// It is strictly read-only and never touches the network: it renders whatever is already cached
-// (suppressed vendors filtered out, so a hidden vendor never surfaces here) and re-renders when
-// a fetch/clear/suppression elsewhere emits pricesReady for its card. Resolving an unlinked
-// copy and fetching happen on the page, not here — so this needs only the lookup service, not
-// CardCopyService.
+// It never mutates a copy and never networks on mere selection: it renders whatever is already
+// cached (suppressed vendors filtered out, so a hidden vendor never surfaces here) and re-renders
+// when a fetch/clear/suppression elsewhere emits pricesReady for its card. Its one active
+// affordance is an inline "Refresh" shown ONLY when the card has figures on screen — a plain
+// re-fetch of the stored id (`lookup.fetch(externalCardId)`), no resolve and no copy mutation, so
+// it still needs only the lookup service, not CardCopyService. It is deliberately absent when
+// nothing is shown (never fetched, fetched-empty, or a stale pre-tcgdex id yielding no figures):
+// the inline path can't re-resolve a legacy id, so those cases go through "Manage prices", whose
+// fetch re-resolves and links. So the inline button never dead-ends a fetch, and first-time
+// fetching (which resolves + links a copy) stays on the management page.
 class CardPricesSummary : public QWidget {
     Q_OBJECT
 
@@ -48,7 +53,8 @@ Q_SIGNALS:
     void managePricesRequested(const QString& copyId);
 
 private:
-    void render();  // rebuild the UI from the local cache for the current copy
+    void render();          // rebuild the UI from the local cache for the current copy
+    void onFetchClicked();  // re-fetch this (already-linked) card's prices — no resolve/link
 
     CardPriceLookupService& lookup_;
 
@@ -59,10 +65,14 @@ private:
     std::string preferredFinish_;  // the copy's foil → tcgdex finish (normal/holo/reverse)
     QString externalCardId_;       // empty == not yet linked (nothing cached to show)
     bool copyRemoved_ = false;     // a soft-Removed copy — frozen history, no price block
+    bool fetching_ = false;        // an inline Fetch/Refresh is in flight
+    QString fetchError_;           // transient note from the last failed inline fetch (cleared on
+                                   // a new fetch / a successful one / a copy change)
 
     QLabel* headline_;         // per-vendor figures; each vendor name links to a marketplace search
     QToolButton* infoButton_;  // "ⓘ" — the metrics + freshness popover
-    QLabel* status_;           // muted one-liner for the not-priced states
+    QLabel* status_;           // muted one-liner for the not-priced / fetching / error states
+    QPushButton* fetchButton_;   // inline "Fetch"/"Refresh" (linked copies only); re-fetch prices
     QPushButton* manageButton_;  // "Manage prices" — opens the dedicated page
 };
 
