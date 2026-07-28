@@ -62,6 +62,18 @@ public:
     // manual row — API-sourced rows are managed only through storeApiPrices.
     void removeManual(const std::string& id);
 
+    // Hide a vendor's price for a card (a per-card, per-vendor suppression), and un-hide it.
+    // These live in their own table (card_price_suppression), so a Refresh — which rewrites
+    // card_price — never disturbs them; only clear() drops them. Idempotent.
+    void suppressVendor(const std::string& externalCardId, const std::string& provenance);
+    void unsuppressVendor(const std::string& externalCardId, const std::string& provenance);
+
+    // The vendors currently suppressed for a card, and the same batched for many cards (for the
+    // card tables) — cards with no suppression are simply absent from the map.
+    std::vector<std::string> suppressedVendors(const std::string& externalCardId);
+    std::unordered_map<std::string, std::vector<std::string>> suppressedVendorsForMany(
+        const std::vector<std::string>& externalCardIds);
+
 private:
     Database& db_;
 };

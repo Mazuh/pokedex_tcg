@@ -14,7 +14,6 @@
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
 
-#include <algorithm>
 #include <exception>
 #include <map>
 #include <optional>
@@ -161,11 +160,7 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     // the batched cache read and rebuilding the table on every fetch anywhere.
     connect(&priceLookup_, &CardPriceLookupService::pricesReady, this,
             [this](const QString& externalCardId) {
-                const std::string id = externalCardId.toStdString();
-                const bool filedHere =
-                    std::any_of(filedCopies_.begin(), filedCopies_.end(),
-                                [&](const CardCopy& c) { return c.externalCardId == id; });
-                if (filedHere) {
+                if (anyCopyLinkedTo(filedCopies_, externalCardId)) {
                     loadCachedPrices();          // pick up the just-fetched prices
                     updateStats(filedCopies_);   // header value total
                     repopulate();                // the row's Prices cell
@@ -240,9 +235,9 @@ void BinderView::loadCachedPrices() {
     // Only Owned copies filed here count toward the value; read them all in ONE batched cache
     // query (loadCachedPricesFor). This is the only price read — both updateStats and
     // repopulate() consult the resulting map, so a header-sort reorder never re-queries.
-    pricesByExternalId_ = loadCachedPricesFor(
-        priceLookup_, filedCopies_,
-        [](const CardCopy& c) { return c.ownership == CardOwnership::Owned; });
+    const auto ownedHere = [](const CardCopy& c) { return c.ownership == CardOwnership::Owned; };
+    pricesByExternalId_ = loadCachedPricesFor(priceLookup_, filedCopies_, ownedHere);
+    suppressedByExternalId_ = loadSuppressedVendorsFor(priceLookup_, filedCopies_, ownedHere);
 }
 
 void BinderView::updateStats(const std::vector<CardCopy>& filedCopies) {
@@ -262,14 +257,15 @@ void BinderView::updateStats(const std::vector<CardCopy>& filedCopies) {
     // been priced. Every copy still counts (three of a card is worth 3×), by looking its id
     // up in the map.
     std::map<std::string, long long> totals;
+    std::vector<CardPrice> scratch;  // reused across copies; filled only for suppressed cards
     for (const CardCopy& copy : filedCopies) {
         if (copy.ownership != CardOwnership::Owned || copy.externalCardId.empty()) {
             continue;
         }
-        const auto it = pricesByExternalId_.find(copy.externalCardId);
-        if (it != pricesByExternalId_.end()) {
-            accumulateBestPrices(totals, it->second, finishForFoil(copy.foil));
-        }
+        accumulateBestPrices(
+            totals,
+            visiblePricesForCopy(pricesByExternalId_, suppressedByExternalId_, copy, scratch),
+            finishForFoil(copy.foil));
     }
 
     QString text = tr("Listed %1").arg(listed);
@@ -336,10 +332,13 @@ void BinderView::repopulate() {
         // The representative copy's cached market prices, inline ("$… · €…"); blank when the
         // copy is unlinked or its prices were never fetched. Cache-only (pricesByExternalId_),
         // so this stays a pure in-memory rebuild — no network, no re-query.
+        std::vector<CardPrice> priceScratch;
         table_->setItem(
             i, 8,
-            cell(rep ? priceAmountsInline(pricesForCopy(pricesByExternalId_, *rep),
-                                          finishForFoil(rep->foil))
+            cell(rep ? priceAmountsInline(
+                           visiblePricesForCopy(pricesByExternalId_, suppressedByExternalId_, *rep,
+                                                priceScratch),
+                           finishForFoil(rep->foil))
                      : QString()));
     }
 
@@ -454,8 +453,13 @@ void BinderView::sortEntries() {
                         // intentional tradeoff as the price table's amount sort — a rough
                         // magnitude ordering, not an exact worth). A copy with no cached price
                         // stays nullopt so it sinks to the bottom in either direction.
-                        const VendorBest best = vendorBest(
-                            pricesForCopy(pricesByExternalId_, *rep), finishForFoil(rep->foil));
+                        // visiblePricesForCopy returns a reference (into the price map, or into
+                        // `scratch` for a suppressed card); vendorBest returns pointers into it,
+                        // so both must outlive `best`'s reads below.
+                        std::vector<CardPrice> scratch;
+                        const std::vector<CardPrice>& visible = visiblePricesForCopy(
+                            pricesByExternalId_, suppressedByExternalId_, *rep, scratch);
+                        const VendorBest best = vendorBest(visible, finishForFoil(rep->foil));
                         if (best.tcg || best.cm) {
                             key.priceCents = (best.tcg ? best.tcg->amountCents : 0) +
                                              (best.cm ? best.cm->amountCents : 0);

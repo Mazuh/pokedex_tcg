@@ -14,6 +14,7 @@
 #include "core/domain/card_ownership.h"
 #include "core/domain/types.h"
 #include "gui/views/pokemon_detail_panel.h"
+#include "gui/views/price_labels.h"  // filterSuppressed
 
 namespace pokedex {
 
@@ -124,6 +125,74 @@ inline const std::vector<CardPrice>& pricesForCopy(
     return it == byExternalId.end() ? kEmpty : it->second;
 }
 
+// GUI — a copy's cached prices with its suppressed vendors already filtered out, so a hidden
+// vendor never reaches a table's Prices cell, its per-copy value, or its price-sort key — the
+// same filtering the detail panel's headline applies. `suppressedByExternalId` is keyed by the
+// same external card id as the price map (a card with none is absent). Returns a REFERENCE to the
+// cached rows with no copy in the common case (an empty suppression map — nobody has hidden a
+// vendor — or a copy with no suppression); only a card that actually has a suppression fills
+// `scratch` with the filtered rows and returns a reference to that. `scratch` must outlive the
+// returned reference; callers keep one per loop and reuse it, so a whole table rebuild allocates
+// only for the (rare) suppressed rows, not once per priced row.
+inline const std::vector<CardPrice>& visiblePricesForCopy(
+    const std::unordered_map<std::string, std::vector<CardPrice>>& byExternalId,
+    const std::unordered_map<std::string, std::vector<std::string>>& suppressedByExternalId,
+    const CardCopy& copy, std::vector<CardPrice>& scratch) {
+    const std::vector<CardPrice>& all = pricesForCopy(byExternalId, copy);
+    if (suppressedByExternalId.empty() || copy.externalCardId.empty()) {
+        return all;
+    }
+    const auto it = suppressedByExternalId.find(copy.externalCardId);
+    if (it == suppressedByExternalId.end()) {
+        return all;
+    }
+    scratch = filterSuppressed(all, it->second);
+    return scratch;
+}
+
+// GUI — whether any copy in `copies` is linked to `externalCardId` (a QString straight from the
+// app-wide pricesReady signal). Both card tables gate that signal through it so a fetch for a card
+// they don't hold — most fetches — is ignored instead of re-reading the cache and rebuilding the
+// whole table on every fetch anywhere.
+inline bool anyCopyLinkedTo(const std::vector<CardCopy>& copies, const QString& externalCardId) {
+    const std::string id = externalCardId.toStdString();
+    return std::any_of(copies.begin(), copies.end(),
+                       [&](const CardCopy& c) { return c.externalCardId == id; });
+}
+
+// GUI — the distinct linked (non-blank) external card ids among the copies matching `include`,
+// deduplicated in first-seen order. The single id-gathering pass both batched loads below feed to
+// their one query, so a reload is not N round-trips; extracted so the include/dedup rule can't
+// drift between the price load and the suppression load.
+template <typename Predicate>
+inline std::vector<std::string> distinctExternalIds(const std::vector<CardCopy>& copies,
+                                                    Predicate include) {
+    std::vector<std::string> ids;
+    std::unordered_set<std::string> seen;
+    for (const CardCopy& copy : copies) {
+        if (include(copy) && !copy.externalCardId.empty() &&
+            seen.insert(copy.externalCardId).second) {
+            ids.push_back(copy.externalCardId);
+        }
+    }
+    return ids;
+}
+
+// GUI — the by-external-id suppression map both card tables load alongside the price map: the
+// hidden vendors of every distinct linked id among the copies matching `include`, read in ONE
+// batched query (no network) so a reload is not N round-trips and a header sort never re-queries.
+// Best-effort — a storage failure yields an empty map (nothing filtered). `Lookup` needs
+// `suppressedVendorsMany(const std::vector<std::string>&)`.
+template <typename Lookup, typename Predicate>
+inline std::unordered_map<std::string, std::vector<std::string>> loadSuppressedVendorsFor(
+    Lookup& lookup, const std::vector<CardCopy>& copies, Predicate include) {
+    try {
+        return lookup.suppressedVendorsMany(distinctExternalIds(copies, include));
+    } catch (const std::exception&) {
+        return {};
+    }
+}
+
 // GUI — the by-external-id price map both card tables (My Cards, the binder guide) hold: the
 // distinct linked ids of the copies matching `include` (skipping unlinked ones), read in ONE
 // batched cache query (cachedMany, no network) so a reload is not N round-trips and a header
@@ -134,16 +203,8 @@ inline const std::vector<CardPrice>& pricesForCopy(
 template <typename Lookup, typename Predicate>
 inline std::unordered_map<std::string, std::vector<CardPrice>> loadCachedPricesFor(
     Lookup& lookup, const std::vector<CardCopy>& copies, Predicate include) {
-    std::vector<std::string> ids;
-    std::unordered_set<std::string> seen;
-    for (const CardCopy& copy : copies) {
-        if (include(copy) && !copy.externalCardId.empty() &&
-            seen.insert(copy.externalCardId).second) {
-            ids.push_back(copy.externalCardId);
-        }
-    }
     try {
-        return lookup.cachedMany(ids);
+        return lookup.cachedMany(distinctExternalIds(copies, include));
     } catch (const std::exception&) {
         return {};
     }

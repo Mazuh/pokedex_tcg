@@ -87,8 +87,22 @@ public:
     // Forget all cached prices (fetched AND manual) and the fetch stamp for a card, returning
     // it to the never-fetched state. A later fetch re-populates it. A no-op when nothing is
     // cached. (Prices are keyed by the card, not the copy, so this affects every copy that
-    // shares the id — the same as a fetch.)
+    // shares the id — the same as a fetch.) Also drops any vendor suppressions, so Clear is
+    // the one "ground zero" reset.
     void clearPrices(const std::string& externalCardId);
+
+    // Hide / un-hide a vendor's price for a card (a per-card, per-vendor suppression). A
+    // suppression survives a Refresh (recordTcgdexPrices never touches it) and is dropped only
+    // by clearPrices — the design that lets the user permanently remove a vendor whose tcgdex
+    // mapping is wrong for their card, while still refreshing the vendors they keep.
+    void suppressVendor(const std::string& externalCardId, const std::string& provenance);
+    void unsuppressVendor(const std::string& externalCardId, const std::string& provenance);
+
+    // The vendors currently suppressed for a card, and the same batched for many cards (for
+    // the card tables). Reads only. Cards with no suppression are absent from the map.
+    std::vector<std::string> suppressedVendors(const std::string& externalCardId);
+    std::unordered_map<std::string, std::vector<std::string>> suppressedVendorsForMany(
+        const std::vector<std::string>& externalCardIds);
 
     // The defaults, exposed so callers can wrap/compose them if needed.
     static Clock systemClock();

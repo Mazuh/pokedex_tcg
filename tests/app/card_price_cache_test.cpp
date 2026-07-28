@@ -190,4 +190,84 @@ TEST(CardPriceCacheTest, PricesForManyEmptyInputIsEmpty) {
     EXPECT_TRUE(cache.pricesForMany({}).empty());
 }
 
+TEST(CardPriceCacheTest, SuppressVendorRoundTripsAndIsIdempotent) {
+    Database db(":memory:");
+    db.migrate();
+    CardPriceCache cache(db);
+
+    EXPECT_TRUE(cache.suppressedVendors("base1-4").empty());
+
+    cache.suppressVendor("base1-4", "tcgplayer");
+    cache.suppressVendor("base1-4", "tcgplayer");  // idempotent — no duplicate row
+    ASSERT_EQ(cache.suppressedVendors("base1-4").size(), 1u);
+    EXPECT_EQ(cache.suppressedVendors("base1-4")[0], "tcgplayer");
+
+    // Un-hiding drops it; un-hiding again is a harmless no-op.
+    cache.unsuppressVendor("base1-4", "tcgplayer");
+    cache.unsuppressVendor("base1-4", "tcgplayer");
+    EXPECT_TRUE(cache.suppressedVendors("base1-4").empty());
+}
+
+TEST(CardPriceCacheTest, SuppressionIsIndependentOfPriceRowsAndSurvivesRefetch) {
+    Database db(":memory:");
+    db.migrate();
+    CardPriceCache cache(db);
+
+    // A vendor can be suppressed before any price is fetched, and the suppression is untouched
+    // by storeApiPrices (a Refresh) — that is the whole point: Refresh rewrites card_price but
+    // never card_price_suppression.
+    cache.suppressVendor("base1-4", "tcgplayer");
+    cache.storeApiPrices("base1-4",
+                         {makePrice("id1", "base1-4", "tcgplayer", "holofoil", "market", 80043,
+                                    "USD", "2026-07-25T00:00:00Z")},
+                         at("2026-07-25T12:00:00Z"));
+
+    EXPECT_EQ(cache.suppressedVendors("base1-4").size(), 1u);
+}
+
+TEST(CardPriceCacheTest, ClearAlsoDropsSuppressions) {
+    Database db(":memory:");
+    db.migrate();
+    CardPriceCache cache(db);
+
+    cache.suppressVendor("base1-4", "tcgplayer");
+    cache.storeApiPrices("base1-4",
+                         {makePrice("id1", "base1-4", "cardmarket", "", "trendPrice", 357, "EUR",
+                                    "2026-07-25T00:00:00Z")},
+                         at("2026-07-25T12:00:00Z"));
+
+    // Clear is the one "ground zero" reset: prices, the stamp, AND the suppression all go.
+    cache.clear("base1-4");
+    EXPECT_TRUE(cache.pricesFor("base1-4").empty());
+    EXPECT_FALSE(cache.fetchedAt("base1-4").has_value());
+    EXPECT_TRUE(cache.suppressedVendors("base1-4").empty());
+}
+
+TEST(CardPriceCacheTest, SuppressedVendorsForManyGroupsByCardAndOmitsEmpty) {
+    Database db(":memory:");
+    db.migrate();
+    CardPriceCache cache(db);
+
+    cache.suppressVendor("base1-4", "tcgplayer");
+    cache.suppressVendor("base1-4", "cardmarket");
+    cache.suppressVendor("sv3-125", "tcgplayer");
+
+    const auto byId = cache.suppressedVendorsForMany({"base1-4", "sv3-125", "sv3-999"});
+    EXPECT_EQ(byId.size(), 2u);
+    ASSERT_TRUE(byId.count("base1-4"));
+    EXPECT_EQ(byId.at("base1-4").size(), 2u);  // ordered by provenance: cardmarket, tcgplayer
+    EXPECT_EQ(byId.at("base1-4")[0], "cardmarket");
+    EXPECT_EQ(byId.at("base1-4")[1], "tcgplayer");
+    ASSERT_TRUE(byId.count("sv3-125"));
+    EXPECT_EQ(byId.at("sv3-125"), std::vector<std::string>{"tcgplayer"});
+    EXPECT_FALSE(byId.count("sv3-999"));  // a card with none is absent, never an empty entry
+}
+
+TEST(CardPriceCacheTest, SuppressedVendorsForManyEmptyInputIsEmpty) {
+    Database db(":memory:");
+    db.migrate();
+    CardPriceCache cache(db);
+    EXPECT_TRUE(cache.suppressedVendorsForMany({}).empty());
+}
+
 }  // namespace

@@ -1,5 +1,6 @@
 #include "gui/views/card_prices_panel.h"
 
+#include <QDesktopServices>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMessageBox>
@@ -97,29 +98,66 @@ const QString& priceInfoHtml() {
 // The headline, as rich text: one representative figure per vendor, one vendor PER LINE, with
 // the vendor NAME itself the link to a marketplace search for the card — so the vendor is
 // named once (not "TCGplayer $1" plus a separate "Listings: TCGplayer") and the two
-// currencies don't crowd one line and wrap unpredictably. Empty only when the card carries no
-// usable figure for either vendor (the caller then shows a plain "Market prices" label). Only
-// when `searchTerm` is blank — no name AND no set/number to search by — are the figures shown
-// as plain text.
-QString linkedHeadlineHtml(const QString& searchTerm, const std::vector<CardPrice>& prices,
+// currencies don't crowd one line and wrap unpredictably. Each shown figure carries a muted
+// "✕" that hides that vendor for this card (a per-card suppression); a hidden vendor that DOES
+// carry a price gets a "… hidden — restore" line instead. The ✕ / restore are in-app
+// "action:hide:<vendor>" / "action:show:<vendor>" links routed by onHeadlineLinkActivated (the
+// http marketplace links open a browser). Empty only when the card carries no usable figure for
+// either vendor and none is hidden (the caller then shows a plain "Market prices" label). Only
+// when `searchTerm` is blank — no name AND no set/number to search by — are the figures shown as
+// plain text.
+QString linkedHeadlineHtml(const QString& searchTerm, const std::vector<CardPrice>& cached,
+                           const std::vector<std::string>& suppressed,
                            const std::string& preferredFinish) {
-    const VendorBest best = vendorBest(prices, preferredFinish);
+    // Hold the filtered vector in a named local: vendorBest returns pointers INTO the vector it
+    // is given, so passing filterSuppressed(...) inline would dangle them the instant that
+    // temporary died (at the `;`), rendering garbage amounts. `cached` is already a named ref.
+    const std::vector<CardPrice> shownPrices = filterSuppressed(cached, suppressed);
+    const VendorBest shown = vendorBest(shownPrices, preferredFinish);
+    const VendorBest all = vendorBest(cached, preferredFinish);
+    const auto isSuppressed = [&](const char* key) {
+        return std::find(suppressed.begin(), suppressed.end(), key) != suppressed.end();
+    };
+
     QStringList lines;
     const auto lineFor = [&](const CardPrice* p, const char* vendorKey, const QString& label) {
         if (p == nullptr) {
             return;
         }
         const QString amount = formatMoney(p->amountCents, p->currency).toHtmlEscaped();
+        QString namePart;
         if (searchTerm.isEmpty()) {
-            lines << QStringLiteral("%1 %2").arg(label, amount);
+            namePart = label;
         } else {
-            lines << QStringLiteral("<a href=\"%1\">%2 ↗</a> %3")
-                         .arg(marketplaceSearchUrl(QString::fromLatin1(vendorKey), searchTerm).toHtmlEscaped(),
-                              label, amount);
+            namePart = QStringLiteral("<a href=\"%1\">%2 ↗</a>")
+                           .arg(marketplaceSearchUrl(QString::fromLatin1(vendorKey), searchTerm)
+                                    .toHtmlEscaped(),
+                                label);
         }
+        // A muted "hide this vendor" ✕ after the figure — the user removes a vendor whose
+        // tcgdex mapping is wrong for their card. Routed in-app (not a browser link).
+        const QString hide =
+            QStringLiteral(" <a href=\"action:hide:%1\" style=\"color:gray;"
+                           "text-decoration:none;\" title=\"Hide this vendor\">✕</a>")
+                .arg(QString::fromLatin1(vendorKey));
+        lines << namePart + QLatin1Char(' ') + amount + hide;
     };
-    lineFor(best.tcg, "tcgplayer", QStringLiteral("TCGplayer"));
-    lineFor(best.cm, "cardmarket", QStringLiteral("Cardmarket"));
+    lineFor(shown.tcg, "tcgplayer", QStringLiteral("TCGplayer"));
+    lineFor(shown.cm, "cardmarket", QStringLiteral("Cardmarket"));
+
+    // A "restore" line for each hidden vendor that actually carries a price (so restoring shows
+    // something) — muted, normal weight, so it reads as a footnote under the live figures.
+    const auto restoreFor = [&](const CardPrice* allP, const char* vendorKey, const QString& label) {
+        if (!isSuppressed(vendorKey) || allP == nullptr) {
+            return;
+        }
+        lines << QStringLiteral("<span style=\"color:gray;font-weight:normal;\">%1 hidden — "
+                                "<a href=\"action:show:%2\">restore</a></span>")
+                     .arg(label, QString::fromLatin1(vendorKey));
+    };
+    restoreFor(all.tcg, "tcgplayer", QStringLiteral("TCGplayer"));
+    restoreFor(all.cm, "cardmarket", QStringLiteral("Cardmarket"));
+
     return lines.join(QStringLiteral("<br>"));
 }
 
@@ -150,11 +188,14 @@ CardPricesPanel::CardPricesPanel(CardPriceLookupService& lookup, CardCopyService
     headline_ = new QLabel(this);
     headline_->setWordWrap(true);
     headline_->setTextFormat(Qt::RichText);
-    headline_->setOpenExternalLinks(true);
-    // setOpenExternalLinks alone does NOT make the links clickable — the label also needs
-    // link-interaction flags (the same pairing the About dialog / source_label use), else the
-    // vendor names render as links but a click does nothing.
+    // Route clicks ourselves (openExternalLinks OFF): the headline mixes http marketplace
+    // links with in-app "action:" links (hide/restore a vendor), so a single linkActivated
+    // handler dispatches by scheme. The label still needs link-interaction flags to be
+    // clickable at all (the same pairing the About dialog / source_label use).
+    headline_->setOpenExternalLinks(false);
     headline_->setTextInteractionFlags(Qt::TextBrowserInteraction);
+    connect(headline_, &QLabel::linkActivated, this,
+            &CardPricesPanel::onHeadlineLinkActivated);
     headline_->setStyleSheet(QStringLiteral("font-weight: 600;"));
 
     // "ⓘ" popover explaining the metrics — the same idiom the card-attribute pickers use.
@@ -219,18 +260,10 @@ CardPricesPanel::CardPricesPanel(CardPriceLookupService& lookup, CardCopyService
             // contradictory error over it.
             return;
         }
-        fetching_ = false;
-        fetchButton_->setEnabled(true);
-        // A failed fetch changes no cache, so any prices already shown are still valid and
-        // still clearable — re-show Clear (onFetchClicked hid it for the duration).
-        if (headline_->isVisible()) {
-            clearButton_->show();
-        }
         // Neutral wording: the failure may be a busy/flaky API OR a card the provider does
         // not list (a 404, which the transport fails fast) — don't assert "try again" when a
         // retry may never help.
-        status_->setText(QStringLiteral("Couldn't fetch prices for this card right now."));
-        status_->show();
+        reportFetchFailure(QStringLiteral("Couldn't fetch prices for this card right now."));
     });
 
     // When the (lazily fetched) tcgdex set table becomes available, a Fetch that was waiting
@@ -251,13 +284,7 @@ CardPricesPanel::CardPricesPanel(CardPriceLookupService& lookup, CardCopyService
             lookup_.fetch(externalCardId_);
             return;
         }
-        fetching_ = false;
-        fetchButton_->setEnabled(true);
-        if (headline_->isVisible()) {
-            clearButton_->show();  // still-shown prices remain clearable
-        }
-        status_->setText(QStringLiteral("Couldn't reach the pricing catalog. Please try again."));
-        status_->show();
+        reportFetchFailure(QStringLiteral("Couldn't reach the pricing catalog. Please try again."));
     });
 }
 
@@ -321,6 +348,18 @@ void CardPricesPanel::showFetchAffordance(const QString& message, const QString&
     fetchButton_->setEnabled(true);
 }
 
+void CardPricesPanel::reportFetchFailure(const QString& message) {
+    fetching_ = false;
+    fetchButton_->setEnabled(true);
+    // A failed fetch changes no cache, so any prices already shown are still valid and still
+    // clearable — re-show Clear (onFetchClicked hid it for the fetch's duration).
+    if (headline_->isVisible()) {
+        clearButton_->show();
+    }
+    status_->setText(message);
+    status_->show();
+}
+
 void CardPricesPanel::render() {
     if (fetching_) {
         return;  // onFetchClicked owns the UI until the reply lands
@@ -359,10 +398,12 @@ void CardPricesPanel::render() {
     // through one call and one error path.
     std::vector<CardPrice> cached;
     std::optional<Timestamp> fetchedAt;
+    std::vector<std::string> suppressed;
     try {
         CardPriceLookupService::CachedPrices snapshot = lookup_.cachedPrices(externalCardId_);
         cached = std::move(snapshot.prices);
         fetchedAt = snapshot.fetchedAt;
+        suppressed = lookup_.suppressedVendors(externalCardId_);
     } catch (const std::exception&) {
         resetToMessage(QStringLiteral("Couldn't read the stored prices."));
         return;
@@ -386,8 +427,8 @@ void CardPricesPanel::render() {
     // one representative figure per source (vendorBest), so the full per-metric spread is
     // left to the marketplace rather than shown as a raw cache table. (vendorBest never
     // picks the TCGplayer "high" outlier, so it can't surface here.)
-    const QString headline =
-        linkedHeadlineHtml(marketSearchTerm(cardRef_, speciesName_), cached, preferredFinish_);
+    const QString headline = linkedHeadlineHtml(marketSearchTerm(cardRef_, speciesName_), cached,
+                                                suppressed, preferredFinish_);
     headline_->setText(headline.isEmpty() ? QStringLiteral("Market prices") : headline);
     headline_->show();
 
@@ -449,6 +490,29 @@ void CardPricesPanel::onClearClicked() {
     lookup_.clearPrices(externalCardId_);
 }
 
+void CardPricesPanel::onHeadlineLinkActivated(const QString& href) {
+    // A marketplace search link — open it in the user's browser (we turned openExternalLinks
+    // off to intercept the "action:" links, so http(s) must be opened by hand here).
+    if (href.startsWith(QLatin1String("http"))) {
+        QDesktopServices::openUrl(QUrl(href));
+        return;
+    }
+    // In-app vendor suppression: "action:hide:<vendor>" / "action:show:<vendor>". Both persist
+    // via the lookup service, which emits pricesReady → this panel (and any other showing the
+    // card) re-renders with the vendor gone / back. A suppression survives Refresh; only Clear
+    // drops it.
+    if (externalCardId_.isEmpty()) {
+        return;
+    }
+    if (href.startsWith(QLatin1String("action:hide:"))) {
+        const QString vendor = href.mid(QStringLiteral("action:hide:").size());
+        lookup_.suppressVendor(externalCardId_, vendor);
+    } else if (href.startsWith(QLatin1String("action:show:"))) {
+        const QString vendor = href.mid(QStringLiteral("action:show:").size());
+        lookup_.unsuppressVendor(externalCardId_, vendor);
+    }
+}
+
 void CardPricesPanel::resolveAndFetch() {
     const std::optional<QString> id = lookup_.resolveTcgdexId(cardRef_);
     if (!id) {
@@ -464,14 +528,8 @@ void CardPricesPanel::resolveAndFetch() {
         // externalCardId_: a legitimately linked copy's tcgdex id would have re-resolved here,
         // so a non-empty id at this point is a stale/foreign key (e.g. a pre-tcgdex pokemontcg
         // id) whose GET would 404 with a misleading error. Report the accurate guidance.
-        fetching_ = false;
-        fetchButton_->setEnabled(true);
-        if (headline_->isVisible()) {
-            clearButton_->show();
-        }
-        status_->setText(QStringLiteral("Couldn't identify this card for pricing — check its "
-                                        "set and collector number in “Edit card…”."));
-        status_->show();
+        reportFetchFailure(QStringLiteral("Couldn't identify this card for pricing — check its "
+                                          "set and collector number in “Edit card…”."));
         return;
     }
 
@@ -481,13 +539,7 @@ void CardPricesPanel::resolveAndFetch() {
         try {
             copies_.linkCatalogCard(copyId_, id->toStdString());
         } catch (const std::exception& e) {
-            fetching_ = false;
-            fetchButton_->setEnabled(true);
-            if (headline_->isVisible()) {
-                clearButton_->show();
-            }
-            status_->setText(QStringLiteral("Couldn't look up this card right now."));
-            status_->show();
+            reportFetchFailure(QStringLiteral("Couldn't look up this card right now."));
             QMessageBox::warning(this, tr("Pokedex TCG"),
                                  tr("Could not link this card:\n%1").arg(QString::fromUtf8(e.what())));
             return;

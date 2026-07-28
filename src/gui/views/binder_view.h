@@ -144,6 +144,10 @@ private:
     // read once per refresh (loadCachedPrices) so both the header value stat and the
     // per-row Prices column read from one snapshot and a header-sort never re-queries.
     std::unordered_map<std::string, std::vector<CardPrice>> pricesByExternalId_;
+    // The suppressed vendors for those same copies (keyed by external card id), read in the same
+    // pass so a hidden vendor is left out of the Prices column, its sort, and the binder value
+    // total, exactly as the inspector's headline hides it. Empty for the no-suppression case.
+    std::unordered_map<std::string, std::vector<std::string>> suppressedByExternalId_;
     // Dex number currently shown in the detail panel (-1 = none), so a filter that
     // hides its row can clear the panel rather than leave stale artwork on screen.
     int shownDex_ = -1;

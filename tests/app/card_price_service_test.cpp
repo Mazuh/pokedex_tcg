@@ -230,4 +230,32 @@ TEST(CardPriceServiceTest, ClearPricesForgetsFetchedAndManualForOneCardOnly) {
     EXPECT_EQ(f.service.pricesFor("sv03-125").size(), 1u);
 }
 
+TEST(CardPriceServiceTest, SuppressVendorSurvivesRefreshButNotClear) {
+    Fixture f;
+    f.service.recordTcgdexPrices("base1-4", kPayload);  // tcgplayer + cardmarket rows
+    f.service.suppressVendor("base1-4", "tcgplayer");
+    EXPECT_EQ(f.service.suppressedVendors("base1-4"), std::vector<std::string>{"tcgplayer"});
+
+    // A Refresh rewrites the price rows but must NOT resurrect the suppressed vendor — the
+    // user's removal persists until they Clear.
+    f.service.recordTcgdexPrices("base1-4", kPayload);
+    EXPECT_EQ(f.service.suppressedVendors("base1-4"), std::vector<std::string>{"tcgplayer"});
+
+    // Clear is the one reset that also drops the suppression.
+    f.service.clearPrices("base1-4");
+    EXPECT_TRUE(f.service.suppressedVendors("base1-4").empty());
+}
+
+TEST(CardPriceServiceTest, SuppressedVendorsForManyBatchesAcrossCards) {
+    Fixture f;
+    f.service.suppressVendor("base1-4", "cardmarket");
+    f.service.suppressVendor("sv03-125", "tcgplayer");
+    f.service.unsuppressVendor("base1-4", "cardmarket");  // undo one — leaves nothing for base1-4
+
+    const auto byId = f.service.suppressedVendorsForMany({"base1-4", "sv03-125"});
+    EXPECT_FALSE(byId.count("base1-4"));  // its only suppression was undone
+    ASSERT_TRUE(byId.count("sv03-125"));
+    EXPECT_EQ(byId.at("sv03-125"), std::vector<std::string>{"tcgplayer"});
+}
+
 }  // namespace

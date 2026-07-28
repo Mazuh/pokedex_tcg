@@ -63,6 +63,10 @@ private:
     void render();          // rebuild the UI from the local cache for the current copy
     void onFetchClicked();  // the only path that spends a network request
     void onClearClicked();  // forget this card's cached prices (back to not-fetched)
+    // Route a headline link: an http(s) marketplace link opens in the browser; an in-app
+    // "action:hide:<vendor>" / "action:show:<vendor>" scheme suppresses / restores that vendor
+    // for the current card (the headline's per-vendor ✕ / restore affordance).
+    void onHeadlineLinkActivated(const QString& href);
     // Once the tcgdex set table is available, resolve this copy's card id from its set+number,
     // persist the link if it changed, then fetch its prices. Reports a hint when the set can't
     // be identified.
@@ -78,6 +82,10 @@ private:
     // "resolvable but unfetched" and "fetched but empty" states (resetToMessage hides the
     // button, so this re-shows it with `buttonText`).
     void showFetchAffordance(const QString& message, const QString& buttonText);
+    // End a failed Fetch: clear the in-flight flag, re-enable the Fetch button, re-show Clear if
+    // prices are still on screen (a failed fetch changes no cache, so they remain valid and
+    // clearable), and show `message`. The shared teardown for every fetch/resolve failure path.
+    void reportFetchFailure(const QString& message);
 
     CardPriceLookupService& lookup_;
     CardCopyService& copies_;

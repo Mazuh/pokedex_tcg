@@ -3,6 +3,7 @@
 #include <QString>
 #include <QStringList>
 
+#include <algorithm>
 #include <map>
 #include <optional>
 #include <string>
@@ -39,6 +40,28 @@ inline std::string finishForFoil(std::optional<CardFoil> foil) {
     return "";  // unreachable — the switch is exhaustive (a new CardFoil fails -Wswitch)
 }
 
+// GUI — drop every price row whose vendor the user has suppressed for this card, so a hidden
+// vendor never reaches the headline, the table Prices column, or a binder value total. The
+// suppressed list holds provenance tokens (kTcgplayerProvenance / kCardmarketProvenance);
+// manual rows are never suppressed. Returns the kept rows (the input unchanged when nothing is
+// suppressed, the common case).
+inline std::vector<CardPrice> filterSuppressed(const std::vector<CardPrice>& prices,
+                                               const std::vector<std::string>& suppressedVendors) {
+    if (suppressedVendors.empty()) {
+        return prices;
+    }
+    std::vector<CardPrice> kept;
+    kept.reserve(prices.size());
+    for (const CardPrice& p : prices) {
+        const bool hidden = std::find(suppressedVendors.begin(), suppressedVendors.end(),
+                                      p.provenance) != suppressedVendors.end();
+        if (!hidden) {
+            kept.push_back(p);
+        }
+    }
+    return kept;
+}
+
 // GUI — display helpers turning core CardPrice data into strings. Kept out of the
 // Qt-free core (which stores money as integer cents and vendor labels as plain
 // strings) so currency symbols and the "headline" presentation live on the GUI side.
@@ -71,32 +94,40 @@ inline QString formatMoney(long long cents, const std::string& currency) {
            QStringLiteral("%1").arg(frac, 2, 10, QLatin1Char('0'));
 }
 
-// The best available price for one vendor, trying `metrics` in preference order. Within the
-// first metric that has any row it prefers the row whose finish (`variant`) matches
-// `preferredFinish` — so a non-holo copy shows the non-holo price, not the highest finish —
-// and only when no row matches that finish (or `preferredFinish` is empty) falls back to the
-// highest value. Returns nullptr when the vendor has none of the listed metrics, so the
-// headline degrades to what the card carries rather than vanishing.
+// The best available price for one vendor, trying `metrics` in preference order. The copy's
+// finish (`preferredFinish`) takes priority OVER the metric ranking: a holo copy's holo figure
+// from a lower-preference metric still beats a different finish's figure from a higher one —
+// the finish is what the user actually owns, the metric is only which estimate we'd rather
+// quote. So it first looks for the preferred finish across ALL metrics in order, and only when
+// the card lists no row of that finish (or `preferredFinish` is empty) falls back to the
+// highest-value row of the most-preferred metric that has any row (any finish). Returns nullptr
+// when the vendor has none of the listed metrics, so the headline degrades to what the card
+// carries rather than vanishing.
 inline const CardPrice* bestPrice(const std::vector<CardPrice>& prices, const char* provenance,
                                   std::initializer_list<const char*> metrics,
                                   const std::string& preferredFinish = "") {
-    for (const char* metric : metrics) {
-        const CardPrice* finishMatch = nullptr;  // a row of the copy's actual finish
-        const CardPrice* highest = nullptr;      // the highest of this metric, any finish
-        for (const CardPrice& p : prices) {
-            if (p.provenance != provenance || p.metric != metric) {
-                continue;
+    if (!preferredFinish.empty()) {
+        for (const char* metric : metrics) {
+            const CardPrice* match = nullptr;  // a row of the copy's actual finish, this metric
+            for (const CardPrice& p : prices) {
+                if (p.provenance == provenance && p.metric == metric &&
+                    p.variant == preferredFinish &&
+                    (match == nullptr || p.amountCents > match->amountCents)) {
+                    match = &p;
+                }
             }
-            if (highest == nullptr || p.amountCents > highest->amountCents) {
-                highest = &p;
-            }
-            if (!preferredFinish.empty() && p.variant == preferredFinish &&
-                (finishMatch == nullptr || p.amountCents > finishMatch->amountCents)) {
-                finishMatch = &p;
+            if (match != nullptr) {
+                return match;
             }
         }
-        if (finishMatch != nullptr) {
-            return finishMatch;
+    }
+    for (const char* metric : metrics) {
+        const CardPrice* highest = nullptr;  // the highest of this metric, any finish
+        for (const CardPrice& p : prices) {
+            if (p.provenance == provenance && p.metric == metric &&
+                (highest == nullptr || p.amountCents > highest->amountCents)) {
+                highest = &p;
+            }
         }
         if (highest != nullptr) {
             return highest;

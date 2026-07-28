@@ -99,4 +99,23 @@ void CardPriceService::clearPrices(const std::string& externalCardId) {
     cache_.clear(externalCardId);
 }
 
+void CardPriceService::suppressVendor(const std::string& externalCardId,
+                                      const std::string& provenance) {
+    cache_.suppressVendor(externalCardId, provenance);
+}
+
+void CardPriceService::unsuppressVendor(const std::string& externalCardId,
+                                        const std::string& provenance) {
+    cache_.unsuppressVendor(externalCardId, provenance);
+}
+
+std::vector<std::string> CardPriceService::suppressedVendors(const std::string& externalCardId) {
+    return cache_.suppressedVendors(externalCardId);
+}
+
+std::unordered_map<std::string, std::vector<std::string>>
+CardPriceService::suppressedVendorsForMany(const std::vector<std::string>& externalCardIds) {
+    return cache_.suppressedVendorsForMany(externalCardIds);
+}
+
 }  // namespace pokedex

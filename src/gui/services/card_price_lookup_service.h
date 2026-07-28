@@ -76,10 +76,24 @@ public:
     // fetch already in flight for the same id. On terminal failure emits pricesFailed(id).
     void fetch(const QString& externalCardId);
 
-    // Forget this card's cached prices (fetched + manual) and its fetch stamp, then emit
-    // pricesReady(id) so every view showing the card re-reads the (now empty) cache and
-    // returns to the not-fetched state. No network. A blank id is ignored.
+    // Forget this card's cached prices (fetched + manual), its fetch stamp, AND its vendor
+    // suppressions, then emit pricesReady(id) so every view showing the card re-reads the (now
+    // empty) cache and returns to the not-fetched, nothing-hidden state. No network. A blank id
+    // is ignored.
     void clearPrices(const QString& externalCardId);
+
+    // Hide / un-hide a vendor for a card (a per-card, per-vendor suppression), then emit
+    // pricesReady(id) so every view showing the card re-renders with the vendor gone / back. No
+    // network. A blank id is ignored. A suppression persists across a Refresh; only clearPrices
+    // drops it — so a vendor whose tcgdex mapping is wrong for the copy stays hidden until Clear.
+    void suppressVendor(const QString& externalCardId, const QString& provenance);
+    void unsuppressVendor(const QString& externalCardId, const QString& provenance);
+
+    // A card's suppressed vendors, and the same batched for many cards (for the tables). No
+    // network. Cards with no suppression are absent from the map.
+    std::vector<std::string> suppressedVendors(const QString& externalCardId);
+    std::unordered_map<std::string, std::vector<std::string>> suppressedVendorsMany(
+        const std::vector<std::string>& externalCardIds);
 
     // Whether the tcgdex set table is loaded, so resolveTcgdexId can map a copy's set to a
     // tcgdex set id. False until the first successful ensureTcgdexSets().

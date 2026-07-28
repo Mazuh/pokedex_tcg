@@ -36,7 +36,11 @@ public:
     //        prices, keyed by external card id; also reference data).
     //   v8 — card_copy.external_card_id (links a copy to its external catalog card
     //        so its prices can be looked up; optional/blank for unlinked copies).
-    static constexpr int kSchemaVersion = 9;
+    //   v9 — card_set_cache keyed by (source, id) so a second provider (tcgdex)
+    //        caches its set table beside pokemontcg's; old rows re-tagged 'pokemontcg'.
+    //   v10 — card_price_suppression (external_card_id, provenance): a per-card, per-vendor
+    //        "hide this vendor's price" that survives a Refresh and is dropped only by Clear.
+    static constexpr int kSchemaVersion = 10;
 
     // Open (creating if absent) the database at `path`, or an in-memory database
     // when path == ":memory:". Throws StorageError on failure.

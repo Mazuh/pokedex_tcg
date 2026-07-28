@@ -204,12 +204,7 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     // (most of them) is ignored rather than re-reading + rebuilding on every fetch anywhere.
     connect(&priceLookup_, &CardPriceLookupService::pricesReady, this,
             [this](const QString& externalCardId) {
-                const std::string id = externalCardId.toStdString();
-                const bool present = std::any_of(loaded_.begin(), loaded_.end(),
-                                                 [&](const CardCopy& c) {
-                                                     return c.externalCardId == id;
-                                                 });
-                if (present) {
+                if (anyCopyLinkedTo(loaded_, externalCardId)) {
                     loadCachedPrices();
                     repopulate(selectedCopyId());
                 }
@@ -275,8 +270,9 @@ void OwnedCardsView::reload() {
 void OwnedCardsView::loadCachedPrices() {
     // A Removed copy is frozen history — its Prices cell stays blank (matching the inspector),
     // so only non-Removed copies feed the batched cache read. See loadCachedPricesFor.
-    pricesByExternalId_ =
-        loadCachedPricesFor(priceLookup_, loaded_, [](const CardCopy& c) { return !isRemoved(c); });
+    const auto notRemoved = [](const CardCopy& c) { return !isRemoved(c); };
+    pricesByExternalId_ = loadCachedPricesFor(priceLookup_, loaded_, notRemoved);
+    suppressedByExternalId_ = loadSuppressedVendorsFor(priceLookup_, loaded_, notRemoved);
 }
 
 void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
@@ -357,8 +353,13 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
                         // no price, and an unpriced/unlinked one stays nullopt, so both sink
                         // to the bottom in either direction.
                         if (!isRemoved(c)) {
-                            const VendorBest best = vendorBest(
-                                pricesForCopy(pricesByExternalId_, c), finishForFoil(c.foil));
+                            // visiblePricesForCopy returns a reference (into the price map, or
+                            // into `scratch` when this copy has a suppression); vendorBest then
+                            // returns pointers into it, so both must outlive `best`'s reads below.
+                            std::vector<CardPrice> scratch;
+                            const std::vector<CardPrice>& visible = visiblePricesForCopy(
+                                pricesByExternalId_, suppressedByExternalId_, c, scratch);
+                            const VendorBest best = vendorBest(visible, finishForFoil(c.foil));
                             if (best.tcg || best.cm) {
                                 key.priceCents = (best.tcg ? best.tcg->amountCents : 0) +
                                                  (best.cm ? best.cm->amountCents : 0);
@@ -441,11 +442,14 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
         // The copy's cached market prices, inline ("$… · €…"); blank when unlinked, never
         // fetched, or Removed (frozen history — matches the inspector). Cache-only
         // (pricesByExternalId_), so this stays a pure in-memory rebuild.
-        table_->setItem(row, 9,
-                        cell(isRemoved(c)
-                                 ? QString()
-                                 : priceAmountsInline(pricesForCopy(pricesByExternalId_, c),
-                                                      finishForFoil(c.foil))));
+        std::vector<CardPrice> priceScratch;
+        table_->setItem(
+            row, 9,
+            cell(isRemoved(c) ? QString()
+                              : priceAmountsInline(
+                                    visiblePricesForCopy(pricesByExternalId_,
+                                                         suppressedByExternalId_, c, priceScratch),
+                                    finishForFoil(c.foil))));
 
         // Gray out a Removed copy's whole row so the (bottom-sorted) history band
         // reads as inactive.

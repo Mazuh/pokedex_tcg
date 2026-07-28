@@ -181,6 +181,34 @@ void CardPriceLookupService::clearPrices(const QString& externalCardId) {
     Q_EMIT pricesReady(externalCardId);
 }
 
+void CardPriceLookupService::suppressVendor(const QString& externalCardId,
+                                            const QString& provenance) {
+    if (externalCardId.isEmpty()) {
+        return;
+    }
+    prices_.suppressVendor(externalCardId.toStdString(), provenance.toStdString());
+    // The visible spread changed for this id (a vendor is now hidden) — re-render every view.
+    Q_EMIT pricesReady(externalCardId);
+}
+
+void CardPriceLookupService::unsuppressVendor(const QString& externalCardId,
+                                              const QString& provenance) {
+    if (externalCardId.isEmpty()) {
+        return;
+    }
+    prices_.unsuppressVendor(externalCardId.toStdString(), provenance.toStdString());
+    Q_EMIT pricesReady(externalCardId);
+}
+
+std::vector<std::string> CardPriceLookupService::suppressedVendors(const QString& externalCardId) {
+    return prices_.suppressedVendors(externalCardId.toStdString());
+}
+
+std::unordered_map<std::string, std::vector<std::string>>
+CardPriceLookupService::suppressedVendorsMany(const std::vector<std::string>& externalCardIds) {
+    return prices_.suppressedVendorsForMany(externalCardIds);
+}
+
 void CardPriceLookupService::finishSucceeded(const QString& externalCardId) {
     inFlight_.remove(externalCardId);
     // The fresh result is delivered to every waiting panel, so a coalesced Refresh is

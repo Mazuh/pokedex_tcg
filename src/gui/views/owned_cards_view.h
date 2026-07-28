@@ -146,6 +146,10 @@ private:
     // read once per reload() so the Prices column (and its sort) draw from one snapshot and
     // a header-sort never re-queries.
     std::unordered_map<std::string, std::vector<CardPrice>> pricesByExternalId_;
+    // The suppressed vendors for those same linked copies (keyed by external card id), read in
+    // the same reload() pass so a hidden vendor is filtered out of the Prices column and its
+    // sort exactly as the inspector's headline hides it. Empty for the common no-suppression case.
+    std::unordered_map<std::string, std::vector<std::string>> suppressedByExternalId_;
     // Per-row lowercased search text, precomputed in reload() so filtering is a
     // plain substring compare with no per-keystroke allocation (row i ⇄ haystacks_[i]).
     std::vector<QString> haystacks_;

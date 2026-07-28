@@ -123,6 +123,27 @@ TEST(DatabaseTest, UpgradesAnExistingV8SetCachePreservingPokemontcgRows) {
                 " VALUES('tcgdex','sv3','','Obsidian Flames (tcgdex)',230);"));
 }
 
+// v10 adds card_price_suppression alongside the existing price cache; a DB already at v9
+// gains just that table, leaving its prior data intact.
+TEST(DatabaseTest, UpgradesAnExistingV9DatabaseByAddingPriceSuppression) {
+    Database db(":memory:");
+    db.migrate();  // a fresh DB is already current (>= v10) — roll the stamp back to v9…
+    // …then drop the v10 table so we exercise the v10 step in isolation, as if this were a
+    // pre-v10 file.
+    db.exec("DROP TABLE card_price_suppression;");
+    db.setUserVersion(9);
+
+    db.migrate();
+    EXPECT_EQ(db.userVersion(), Database::kSchemaVersion);
+
+    // The table exists with its (external_card_id, provenance) primary key: a row inserts,
+    // a duplicate is rejected.
+    EXPECT_NO_THROW(db.exec("INSERT INTO card_price_suppression(external_card_id,provenance)"
+                            " VALUES('sv3-125','tcgplayer');"));
+    EXPECT_ANY_THROW(db.exec("INSERT INTO card_price_suppression(external_card_id,provenance)"
+                             " VALUES('sv3-125','tcgplayer');"));
+}
+
 // Exercising the tables through DML proves they exist with the expected columns
 // — a stronger contract than name-matching against sqlite_master.
 TEST(DatabaseTest, TablesAcceptRowsAfterMigration) {

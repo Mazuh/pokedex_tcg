@@ -172,6 +172,20 @@ DROP TABLE card_set_cache_v8;
 UPDATE cache_meta SET key = 'sets_fetched_at:pokemontcg' WHERE key = 'sets_fetched_at';
 )sql";
 
+// v9 → v10: per-card vendor suppressions — a row (external_card_id, provenance) means "hide
+// this vendor's price for this card" (e.g. tcgplayer has no good match for a non-holo copy).
+// Kept SEPARATE from the price cache on purpose: a Refresh rewrites card_price but never
+// touches this table, so a suppression survives Refresh; Clear deletes it (CardPriceCache::
+// clear) so the card goes back to accepting the API as-is. Keyed by the card (like prices),
+// not the copy.
+constexpr char kMigrationV10[] = R"sql(
+CREATE TABLE card_price_suppression (
+  external_card_id  TEXT NOT NULL,
+  provenance        TEXT NOT NULL,
+  PRIMARY KEY (external_card_id, provenance)
+);
+)sql";
+
 }  // namespace
 
 Database::Database(const std::filesystem::path& path) {
@@ -280,6 +294,9 @@ void Database::migrate() {
         }
         if (from < 9) {
             exec(kMigrationV9);
+        }
+        if (from < 10) {
+            exec(kMigrationV10);
         }
         setUserVersion(kSchemaVersion);
     });

@@ -76,7 +76,12 @@ with a `source` column [PK `(source, id)`] so ONE table + one `CardSetCache` cla
 BOTH providers' set lists — pokemontcg.io [`source='pokemontcg'`] for search narrowing and
 tcgdex [`source='tcgdex'`] for price resolution — rather than a bespoke cache per vendor;
 the migration PRESERVES the existing rows re-tagged `source='pokemontcg'` [keeping the outage
-fallback] and renames the old fetch stamp; tcgdex populates on first price use),
+fallback] and renames the old fetch stamp; tcgdex populates on first price use; v10 added
+`card_price_suppression` [`(external_card_id, provenance)` PK], a per-card, per-vendor "hide this
+vendor's price" — kept in its OWN table, deliberately apart from `card_price`, so a Refresh
+[which rewrites `card_price`] never disturbs a suppression and only Clear
+[`CardPriceCache::clear`, which now also deletes suppressions] drops it; see the vendor-suppression
+note below),
 so a fresh DB runs the whole chain and an existing one
 only the tail — bump `kSchemaVersion` and add a step (never edit `kSchemaV1`) when
 the schema changes. `storage/` holds
@@ -128,12 +133,14 @@ midnight-UTC `observedAt`, clock-free), `parseTcgdexSets` (the flat `/v2/en/sets
 its tcgdex id, no search — only EXACT set matches are trusted [set name first, then the
 printed code AS a tcgdex set id for promos]; an unidentifiable set returns nullopt rather
 than a fuzzy guess, since a wrong link would show another card's prices),
-`CardPriceCache` (thin SQL over `card_price`/`card_price_fetch`,
+`CardPriceCache` (thin SQL over `card_price`/`card_price_fetch`/`card_price_suppression`,
 mirroring `CardSetCache`), and `CardPriceService` (the verbs, with an injectable
 clock/uuid like `CardCopyService`: `recordTcgdexPrices` [parse a fetched payload, replace
 the card's API-sourced rows, preserve `manual` rows, stamp the fetch — sharing its persist
 path with the retired `recordApiPrices`], `addManualPrice`/`removeManualPrice` [the human
-override — manual entry is the escape hatch for anything tcgdex can't price], `pricesFor`,
+override — manual entry is the escape hatch for anything tcgdex can't price],
+`suppressVendor`/`unsuppressVendor`/`suppressedVendors`/`suppressedVendorsForMany` [the
+vendor-suppression verbs — see the note below], `pricesFor`,
 `fetchedAt`, and `needsRefresh(key, ttl)` — the anti-hammer TTL gate). Prices are keyed by
 `external_card_id` — a **source-neutral** card identity (named for what it is, an external
 catalog's card id, not for any one provider) that is deliberately **independent of
@@ -188,7 +195,27 @@ per-vendor **listing links** are merged **into the headline** — the vendor nam
 the link ("TCGplayer ↗ $350.00"), pointing at a **marketplace name-search** for the card
 (tcgdex carries no stable per-listing URL we persist, so the vendor name searches that
 marketplace rather than deep-linking a product page). The headline's per-vendor pick
-(`vendorBest`) never selects the TCGplayer `high` outlier, so it can't surface. Prices ride along for free while **browsing**:
+(`vendorBest`) never selects the TCGplayer `high` outlier, so it can't surface. **Finish-aware
+pricing:** `vendorBest`/`priceAmountsInline`/`accumulateBestPrices` take a `preferredFinish`
+(`finishForFoil(copy.foil)` → tcgdex's `normal`/`holo`/`reverse`; the finer treatments all map
+to `holo`, an unset foil to `""`), so within a metric `bestPrice` prefers the row whose variant
+matches the copy's finish (a non-holo copy shows the **normal** figure, not the pricier holo one)
+and only falls back to the highest when no variant matches — the parser tags each row's finish
+(`card_catalog_parse::canonicalFinish`) precisely so `normal`/`holo`/`reverse` stay distinct
+here. **Vendor suppression:** each headline figure carries a muted "✕" (an in-app
+`action:hide:<vendor>` link, routed by `CardPricesPanel::onHeadlineLinkActivated` — http vendor
+links open a browser, `action:` links call `suppressVendor`/`unsuppressVendor`) that hides a
+vendor whose tcgdex mapping is wrong for the copy; a hidden vendor that still carries a price
+shows a "<vendor> hidden — restore" line instead. A suppression **persists across Refresh** and
+is dropped only by **Clear** (the one ground-zero reset — prices, fetch stamp, AND suppressions).
+`filterSuppressed` (in `price_labels.h`) drops suppressed rows before every display path — the
+panel headline AND both card tables' Prices column / value total / price-sort — so a hidden vendor
+never surfaces anywhere; the tables load a batched `suppressedVendorsMany` map beside the price
+map (`loadSuppressedVendorsFor` in `owned_copy_buckets.h`) and read through `visiblePricesForCopy`.
+NOTE: `vendorBest` returns pointers INTO the prices vector it is handed, so a caller must bind
+`filterSuppressed(...)`/`visiblePricesForCopy(...)` to a **named local** before calling
+`vendorBest` and then reading the result across statements — passing the temporary inline dangles
+those pointers (this bit the panel headline once, rendering "0.00"). Prices ride along for free while **browsing**:
 `parseCardSearchResponse` extracts the same tcgplayer/cardmarket blocks the search payload
 already carries into `CardCandidate.prices` (display-only, never persisted), and
 `CardFinderPanel` shows a subtle headline under the preview — no extra HTTP for a card the
