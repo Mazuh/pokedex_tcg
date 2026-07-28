@@ -15,6 +15,7 @@ namespace pokedex {
 
 class CardPriceLookupService;
 class CardCopyService;
+class CardPriceFetchController;
 struct CardCopy;
 
 // GUI — the reusable "market prices" block for one owned copy. Shared by every
@@ -67,14 +68,6 @@ private:
     // "action:hide:<vendor>" / "action:show:<vendor>" scheme suppresses / restores that vendor
     // for the current card (the headline's per-vendor ✕ / restore affordance).
     void onHeadlineLinkActivated(const QString& href);
-    // Once the tcgdex set table is available, resolve this copy's card id from its set+number,
-    // persist the link if it changed, then fetch its prices. Reports a hint when the set can't
-    // be identified.
-    void resolveAndFetch();
-    // Whether the current copy can be resolved to a tcgdex card id from what it records (a set
-    // + a collector number) — the gate for offering an invisible-link Fetch on an unlinked
-    // copy, and for re-resolving a linked one.
-    bool canResolve() const;
     // Hide the whole block down to a single status message (empty text hides that too) —
     // the shared teardown for the not-selected / unresolvable / read-failure states.
     void resetToMessage(const QString& text);
@@ -82,16 +75,16 @@ private:
     // "resolvable but unfetched" and "fetched but empty" states (resetToMessage hides the
     // button, so this re-shows it with `buttonText`).
     void showFetchAffordance(const QString& message, const QString& buttonText);
-    // End a failed Fetch: clear the in-flight flag, re-enable the Fetch button, re-show Clear if
-    // prices are still on screen (a failed fetch changes no cache, so they remain valid and
-    // clearable), and show `message`. The shared teardown for every fetch/resolve failure path.
+    // End a failed Fetch: re-enable the Fetch button, re-show Clear if prices are still on screen
+    // (a failed fetch changes no cache, so they remain valid and clearable), and show `message`.
     void reportFetchFailure(const QString& message);
 
     CardPriceLookupService& lookup_;
     CardCopyService& copies_;
+    CardPriceFetchController* fetcher_;  // the shared fetch/resolve/link state machine
 
     // The copy currently shown: its id, printed reference, and tcgdex link.
-    // externalCardId_ empty == not yet linked.
+    // externalCardId_ empty == not yet linked (kept in sync with fetcher_ on cardLinked).
     std::string copyId_;
     CardReference cardRef_;
     QString speciesName_;  // the copy's Pokémon name (blank for a species-free card) — the
@@ -100,11 +93,6 @@ private:
                                    // the headline shows the price of the finish it actually is
     QString externalCardId_;
     bool copyRemoved_ = false;  // a soft-Removed copy — frozen history, never auto-resolved
-
-    bool fetching_ = false;       // a Fetch (resolve and/or price fetch) is in flight
-    bool awaitingSets_ = false;   // waiting on the set table before resolveAndFetch()
-    bool triedSetRefresh_ = false;  // already forced one set-table refresh this Fetch (a stale
-                                    // cache missing a new set) — don't loop
 
     QLabel* headline_;         // per-vendor figures; each vendor name links to a marketplace search
     QToolButton* infoButton_;  // "ⓘ" — explains the metrics + price freshness, on click

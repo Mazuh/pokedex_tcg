@@ -93,7 +93,8 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService&
     // Copy mode is on here too (a CardImageStore is passed): a selected species that
     // owns copies shows one, so the double-click shortcut can offer to edit it. The
     // copies are aggregated across every binder (loadOwnedCopies).
-    detail_ = new PokemonDetailPanel(media, wishlist, &cardImages_, &priceLookup_, this);
+    detail_ =
+        new PokemonDetailPanel(media, wishlist, &cardImages_, &priceLookup_, &cardCopies_, this);
 
     connect(search_, &QLineEdit::textChanged, this, &PokemonListView::applyFilter);
     // Show the current row's Pokémon in the detail panel. currentCellChanged
@@ -117,6 +118,12 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService&
     // The summary's "Manage prices" button relays up to an in-place prices-page push.
     connect(detail_, &PokemonDetailPanel::managePricesRequested, this,
             &PokemonListView::openPrices);
+    // An inline fetch that auto-links a copy: write the id back into the cached owned_ map so a
+    // re-selection shows it linked rather than re-running the resolve.
+    connect(detail_, &PokemonDetailPanel::copyLinked, this,
+            [this](const QString& copyId, const QString& externalCardId) {
+                applyLinkedCardToBuckets(owned_, copyId, externalCardId);
+            });
     // Infinite scroll: append the next chunk as the user nears the bottom. The
     // complementary "viewport isn't full yet" case (first show, or the window
     // grew taller than the loaded rows, where no scrollbar exists) is handled by

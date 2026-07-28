@@ -57,7 +57,7 @@ QString joinParts(const QStringList& parts) {
 
 PokemonDetailPanel::PokemonDetailPanel(MediaService& media, WishlistService& wishlist,
                                        CardImageStore* images, CardPriceLookupService* prices,
-                                       QWidget* parent)
+                                       CardCopyService* copies, QWidget* parent)
     : QWidget(parent), media_(media), wishlist_(wishlist), images_(images) {
     name_ = new QLabel(this);
     name_->setAlignment(Qt::AlignHCenter | Qt::AlignVCenter);
@@ -135,14 +135,17 @@ PokemonDetailPanel::PokemonDetailPanel(MediaService& media, WishlistService& wis
     buttonRow->addWidget(addButton_);
     buttonRow->addWidget(editButton_);
 
-    // Read-only market-prices block (copy mode only): the per-vendor headline + marketplace
-    // links + ⓘ, plus a "Manage prices" button that opens the dedicated page. Built only when a
-    // price service was supplied (it comes with the image store from the hosts); hidden outside
-    // copy mode. Its manage request relays up so the host pushes the PricesEditPage.
-    if (prices) {
-        priceSummary_ = new CardPricesSummary(*prices, this);
+    // Market-prices block (copy mode only): the per-vendor headline + marketplace links + ⓘ, an
+    // inline Fetch/Refresh, and a "Manage prices" button that opens the dedicated page. Built only
+    // when both price services were supplied (they come with the image store from the hosts);
+    // hidden outside copy mode. Manage relays up so the host pushes the PricesEditPage; an inline
+    // fetch that links a copy relays up as copyLinked so the host updates its cached copy.
+    if (prices && copies) {
+        priceSummary_ = new CardPricesSummary(*prices, *copies, this);
         connect(priceSummary_, &CardPricesSummary::managePricesRequested, this,
                 &PokemonDetailPanel::managePricesRequested);
+        connect(priceSummary_, &CardPricesSummary::copyLinked, this,
+                &PokemonDetailPanel::copyLinked);
     }
 
     // The wishlist button sits below the art. It carries the sources count in its label

@@ -113,7 +113,8 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     // Cell padding so content clears the edges and the overlay scrollbar.
     table_->setStyleSheet("QTableView::item { padding-left: 8px; padding-right: 16px; }");
 
-    detail_ = new PokemonDetailPanel(media, wishlist, &cardImages_, &priceLookup_, this);
+    detail_ =
+        new PokemonDetailPanel(media, wishlist, &cardImages_, &priceLookup_, &cardCopies_, this);
 
     connect(search_, &QLineEdit::textChanged, this, &BinderView::applyFilter);
     // Show the current row's Pokémon in the detail panel. currentCellChanged
@@ -144,6 +145,13 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     connect(detail_, &PokemonDetailPanel::editWishlistRequested, this, &BinderView::openWishlist);
     // The summary's "Manage prices" button relays up to an in-place prices-page push.
     connect(detail_, &PokemonDetailPanel::managePricesRequested, this, &BinderView::openPrices);
+    // An inline fetch that auto-links a copy: write the id back into both cached copy stores so a
+    // re-selection shows it linked and the header value can count it once its prices land.
+    connect(detail_, &PokemonDetailPanel::copyLinked, this,
+            [this](const QString& copyId, const QString& externalCardId) {
+                applyLinkedCardToBuckets(ownedHere_, copyId, externalCardId);
+                applyLinkedCardToVector(filedCopies_, copyId, externalCardId);
+            });
     // A price fetch (from the detail panel, for a card filed here) can raise the binder's
     // market-value total AND fills in that card's row in the Prices column; both read the
     // local price cache, so re-read it and refresh the header + rows when such a card's

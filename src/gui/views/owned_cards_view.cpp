@@ -187,7 +187,7 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     // Add button records a species-free card (needs no selection) and the wishlist button
     // is hidden (a species-free card has no wishlist). It hosts the prices block, the
     // image (with artwork fallback), and the Add + Edit actions.
-    panel_ = new PokemonDetailPanel(media_, wishlist_, &images_, &priceLookup_, this);
+    panel_ = new PokemonDetailPanel(media_, wishlist_, &images_, &priceLookup_, &copies_, this);
     panel_->setAddMode(PokemonDetailPanel::AddMode::FreeCard);
     panel_->setWishlistVisible(false);
     connect(panel_, &PokemonDetailPanel::addCardRequested, this, &OwnedCardsView::addNewCard);
@@ -195,6 +195,12 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
             [this](const QString&) { editSelectedCard(); });
     // The summary's "Manage prices" button relays up to an in-place prices-page push.
     connect(panel_, &PokemonDetailPanel::managePricesRequested, this, &OwnedCardsView::openPrices);
+    // An inline fetch that auto-links a copy: learn its new id so a later re-selection renders it
+    // as already linked (no needless re-resolve).
+    connect(panel_, &PokemonDetailPanel::copyLinked, this,
+            [this](const QString& copyId, const QString& externalCardId) {
+                applyLinkedCardToVector(loaded_, copyId, externalCardId);
+            });
     // When a price fetch (from the inspector) lands for a card in this inventory, re-read
     // the price cache and rebuild the rows so the Prices column fills in — mirroring the
     // binder guide. The lookup service is app-wide, so a fetch for a card we don't hold

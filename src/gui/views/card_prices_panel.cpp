@@ -3,7 +3,6 @@
 #include <QDesktopServices>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QMessageBox>
 #include <QPushButton>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -19,6 +18,7 @@
 #include "core/domain/card_copy.h"
 #include "gui/services/card_price_lookup_service.h"
 #include "gui/views/card_copy_labels.h"  // speciesName(dexNumber)
+#include "gui/views/card_price_fetch_controller.h"
 #include "gui/views/price_headline.h"    // headlineHtml, marketSearchTerm, priceInfo…
 #include "gui/views/price_labels.h"
 
@@ -79,51 +79,23 @@ CardPricesPanel::CardPricesPanel(CardPriceLookupService& lookup, CardCopyService
 
     connect(fetchButton_, &QPushButton::clicked, this, &CardPricesPanel::onFetchClicked);
     connect(clearButton_, &QPushButton::clicked, this, &CardPricesPanel::onClearClicked);
-    // Re-render when a fetch we (or another view) triggered lands for our card.
-    connect(&lookup_, &CardPriceLookupService::pricesReady, this, [this](const QString& id) {
-        if (id == externalCardId_) {
-            fetching_ = false;
-            render();
-        }
-    });
-    connect(&lookup_, &CardPriceLookupService::pricesFailed, this, [this](const QString& id) {
-        if (id != externalCardId_) {
-            return;
-        }
-        if (!fetching_) {
-            // A background fetch for this same card, started by ANOTHER panel (the lookup
-            // service is app-wide and its signal carries only the id), failed. We never
-            // asked, and a failed fetch changes no cache — so leave our current display
-            // (valid cached prices and their "as of" line) untouched rather than painting a
-            // contradictory error over it.
-            return;
-        }
-        // Neutral wording: the failure may be a busy/flaky API OR a card the provider does
-        // not list (a 404, which the transport fails fast) — don't assert "try again" when a
-        // retry may never help.
-        reportFetchFailure(QStringLiteral("Couldn't fetch prices for this card right now."));
-    });
 
-    // When the (lazily fetched) tcgdex set table becomes available, a Fetch that was waiting
-    // on it can resolve the card and go on to fetch prices. The signal is app-wide, so act
-    // only if THIS panel is the one waiting.
-    connect(&lookup_, &CardPriceLookupService::tcgdexSetsResolved, this, [this](bool ok) {
-        if (!awaitingSets_) {
-            return;
-        }
-        awaitingSets_ = false;
-        if (ok) {
-            resolveAndFetch();
-            return;
-        }
-        // The set table is unavailable. If the copy already carries an id, fetch it as a
-        // best effort; otherwise there is nothing to look up — offer a retry.
-        if (!externalCardId_.isEmpty()) {
-            lookup_.fetch(externalCardId_);
-            return;
-        }
-        reportFetchFailure(QStringLiteral("Couldn't reach the pricing catalog. Please try again."));
+    // The shared fetch/resolve/link state machine drives the network; we only render its
+    // progress. It owns the in-flight flag and re-resolution, so a Fetch here never dead-ends a
+    // legacy id — the same path the inspector's inline Refresh uses.
+    fetcher_ = new CardPriceFetchController(lookup_, copies_, this);
+    connect(fetcher_, &CardPriceFetchController::statusMessage, this, [this](const QString& text) {
+        status_->setText(text);
+        status_->show();
     });
+    connect(fetcher_, &CardPriceFetchController::pricesChanged, this, [this]() { render(); });
+    connect(fetcher_, &CardPriceFetchController::fetchFailed, this,
+            [this](const QString& message) { reportFetchFailure(message); });
+    connect(fetcher_, &CardPriceFetchController::cardLinked, this,
+            [this](const QString& copyId, const QString& externalCardId) {
+                externalCardId_ = externalCardId;  // keep render()'s cache read in sync
+                Q_EMIT cardLinked(copyId, externalCardId);
+            });
 }
 
 void CardPricesPanel::showCopy(const CardCopy& copy) {
@@ -135,9 +107,7 @@ void CardPricesPanel::showCopy(const CardCopy& copy) {
     preferredFinish_ = finishForFoil(copy.foil);  // pick the price of the finish this copy is
     externalCardId_ = QString::fromStdString(copy.externalCardId);
     copyRemoved_ = copy.ownership == CardOwnership::Removed;
-    fetching_ = false;
-    awaitingSets_ = false;
-    triedSetRefresh_ = false;
+    fetcher_->setCopy(copy);
     render();
 }
 
@@ -148,22 +118,8 @@ void CardPricesPanel::clear() {
     preferredFinish_.clear();
     externalCardId_.clear();
     copyRemoved_ = false;
-    fetching_ = false;
-    awaitingSets_ = false;
-    triedSetRefresh_ = false;
+    fetcher_->clearCopy();
     render();
-}
-
-bool CardPricesPanel::canResolve() const {
-    // A soft-Removed copy is frozen history: never spend a resolve + fetch on a discarded
-    // card. Otherwise a set (name or printed code) plus a collector number is all tcgdex needs
-    // to address the card by set+number.
-    if (copyRemoved_ || copyId_.empty()) {
-        return false;
-    }
-    const bool hasSet = !cardRef_.setName.empty() || !cardRef_.expansionCode.empty();
-    const bool hasNumber = !cardRef_.collectorNumber.empty();
-    return hasSet && hasNumber;
 }
 
 void CardPricesPanel::resetToMessage(const QString& text) {
@@ -187,7 +143,7 @@ void CardPricesPanel::showFetchAffordance(const QString& message, const QString&
 }
 
 void CardPricesPanel::reportFetchFailure(const QString& message) {
-    fetching_ = false;
+    // The fetcher has already cleared its in-flight flag before signalling us.
     fetchButton_->setEnabled(true);
     // A failed fetch changes no cache, so any prices already shown are still valid and still
     // clearable — re-show Clear (onFetchClicked hid it for the fetch's duration).
@@ -199,7 +155,7 @@ void CardPricesPanel::reportFetchFailure(const QString& message) {
 }
 
 void CardPricesPanel::render() {
-    if (fetching_) {
+    if (fetcher_->isFetching()) {
         return;  // onFetchClicked owns the UI until the reply lands
     }
 
@@ -212,7 +168,7 @@ void CardPricesPanel::render() {
         return;
     }
 
-    const bool resolvable = canResolve();
+    const bool resolvable = fetcher_->canResolve();
     if (externalCardId_.isEmpty() && !resolvable) {
         // Nothing to look up: too little data to resolve a tcgdex card. Point to Edit to
         // complete it. (Linking itself is never named as a user action.)
@@ -287,40 +243,16 @@ void CardPricesPanel::render() {
 }
 
 void CardPricesPanel::onFetchClicked() {
-    if (fetching_) {
-        return;  // a fetch is already in flight
-    }
-    if (canResolve()) {
-        // Resolve the tcgdex card id from the copy's set+number, then fetch. This both links
-        // an unlinked copy and re-resolves one still on a pre-tcgdex id — invisibly.
-        fetching_ = true;
-        triedSetRefresh_ = false;  // this explicit Fetch gets one set-refresh retry
+    fetcher_->fetch();  // resolve/link/fetch; emits statusMessage → status line
+    if (fetcher_->isFetching()) {
+        // Own the UI for the fetch's duration — the fetcher's statusMessage already set the text.
         fetchButton_->setEnabled(false);
         clearButton_->hide();  // no Clear mid-fetch — it's guarded, so it would be a dead click
-        status_->setText(QStringLiteral("Looking up this card…"));
-        status_->show();
-        if (lookup_.tcgdexSetsReady()) {
-            resolveAndFetch();
-        } else {
-            awaitingSets_ = true;
-            lookup_.ensureTcgdexSets();  // tcgdexSetsResolved → resolveAndFetch()
-        }
-        return;
-    }
-    if (!externalCardId_.isEmpty()) {
-        // Not resolvable from what the copy records, but it already carries an id — fetch it
-        // directly. The button is an explicit user request for the latest, so hit the wire.
-        fetching_ = true;
-        fetchButton_->setEnabled(false);
-        clearButton_->hide();
-        status_->setText(QStringLiteral("Fetching prices…"));
-        status_->show();
-        lookup_.fetch(externalCardId_);
     }
 }
 
 void CardPricesPanel::onClearClicked() {
-    if (fetching_ || externalCardId_.isEmpty()) {
+    if (fetcher_->isFetching() || externalCardId_.isEmpty()) {
         return;  // nothing cached to clear (the button is hidden in those states anyway)
     }
     // Wipe the cache for this card; clearPrices emits pricesReady, whose handler re-renders us
@@ -368,43 +300,6 @@ void CardPricesPanel::onHeadlineLinkActivated(const QString& href) {
             }
         },
         Qt::QueuedConnection);
-}
-
-void CardPricesPanel::resolveAndFetch() {
-    const std::optional<QString> id = lookup_.resolveTcgdexId(cardRef_);
-    if (!id) {
-        // Couldn't identify the set from a (possibly cached) table. The set may simply be newer
-        // than our cached copy, so force ONE fresh /v2/en/sets fetch and retry before giving up.
-        if (!triedSetRefresh_) {
-            triedSetRefresh_ = true;
-            awaitingSets_ = true;
-            lookup_.ensureTcgdexSets(/*forceRefresh=*/true);  // tcgdexSetsResolved → retry
-            return;
-        }
-        // Still unidentifiable after a fresh table. Do NOT fall back to fetching
-        // externalCardId_: a legitimately linked copy's tcgdex id would have re-resolved here,
-        // so a non-empty id at this point is a stale/foreign key (e.g. a pre-tcgdex pokemontcg
-        // id) whose GET would 404 with a misleading error. Report the accurate guidance.
-        reportFetchFailure(QStringLiteral("Couldn't identify this card for pricing — check its "
-                                          "set and collector number in “Edit card…”."));
-        return;
-    }
-
-    if (*id != externalCardId_) {
-        // Persist the resolved link (new, or migrated off a pre-tcgdex id) before fetching, so
-        // a re-selection sees the copy as linked and the cache keys to the tcgdex id.
-        try {
-            copies_.linkCatalogCard(copyId_, id->toStdString());
-        } catch (const std::exception& e) {
-            reportFetchFailure(QStringLiteral("Couldn't look up this card right now."));
-            QMessageBox::warning(this, tr("Pokedex TCG"),
-                                 tr("Could not link this card:\n%1").arg(QString::fromUtf8(e.what())));
-            return;
-        }
-        externalCardId_ = *id;
-        Q_EMIT cardLinked(QString::fromStdString(copyId_), externalCardId_);
-    }
-    lookup_.fetch(externalCardId_);  // pricesReady → fetching_=false, render()
 }
 
 }  // namespace pokedex

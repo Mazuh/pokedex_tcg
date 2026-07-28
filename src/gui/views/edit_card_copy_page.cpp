@@ -154,10 +154,18 @@ EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardPriceLookupSer
     // Every action (Fetch/Refresh, Clear, hide/restore) lives behind its "Manage prices"
     // button, which pushes the dedicated PricesEditPage onto this page's own inner stack —
     // so opening the edit page never hits the price API and its cramped layout stays clean.
-    priceSummary_ = new CardPricesSummary(priceLookup, this);
+    priceSummary_ = new CardPricesSummary(priceLookup, copies, this);
     priceSummary_->showCopy(copy_);
     connect(priceSummary_, &CardPricesSummary::managePricesRequested, this,
             [this](const QString&) { openPrices(); });
+    // An inline fetch on the summary can resolve + link this copy; keep copy_ in sync so a later
+    // save/refresh (and the prices page opened here) sees it linked.
+    connect(priceSummary_, &CardPricesSummary::copyLinked, this,
+            [this](const QString& copyId, const QString& externalCardId) {
+                if (copyId.toStdString() == copy_.id) {
+                    copy_.externalCardId = externalCardId.toStdString();
+                }
+            });
 
     // --- Assemble -----------------------------------------------------------
     // The edit content is page 0 of an inner stack; the prices page pushes over it (like the

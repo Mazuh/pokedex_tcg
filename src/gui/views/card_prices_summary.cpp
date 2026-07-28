@@ -16,12 +16,14 @@
 #include "core/domain/card_ownership.h"
 #include "gui/services/card_price_lookup_service.h"
 #include "gui/views/card_copy_labels.h"  // speciesName(dexNumber)
+#include "gui/views/card_price_fetch_controller.h"
 #include "gui/views/price_headline.h"
 #include "gui/views/price_labels.h"
 
 namespace pokedex {
 
-CardPricesSummary::CardPricesSummary(CardPriceLookupService& lookup, QWidget* parent)
+CardPricesSummary::CardPricesSummary(CardPriceLookupService& lookup, CardCopyService& copies,
+                                     QWidget* parent)
     : QWidget(parent), lookup_(lookup) {
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -48,9 +50,10 @@ CardPricesSummary::CardPricesSummary(CardPriceLookupService& lookup, QWidget* pa
     status_->setWordWrap(true);
     status_->setStyleSheet(QStringLiteral("color: gray;"));
 
-    // Inline "Fetch"/"Refresh" — the one quick action kept in the summary (a plain re-fetch of an
-    // already-linked card's prices). Everything heavier (Clear, hide/restore, first-time linking,
-    // and future actions) lives behind "Manage prices", which opens the dedicated page.
+    // Inline "Fetch"/"Refresh" — the one quick action kept in the summary. It drives the shared
+    // controller, so it resolves + links an unlinked copy and re-resolves a legacy id just like
+    // the management page (never a dead-end). Everything heavier (Clear, hide/restore, future
+    // actions) lives behind "Manage prices".
     fetchButton_ = new QPushButton(this);
     manageButton_ = new QPushButton(tr("Manage prices"), this);
     auto* buttonRow = new QHBoxLayout;
@@ -63,43 +66,38 @@ CardPricesSummary::CardPricesSummary(CardPriceLookupService& lookup, QWidget* pa
     layout->addWidget(status_);
     layout->addLayout(buttonRow);
 
+    // The shared fetch/resolve/link state machine; we render its progress. It is the single
+    // subscriber to the lookup service's per-card signals, so this widget talks only to it.
+    fetcher_ = new CardPriceFetchController(lookup_, copies, this);
     connect(fetchButton_, &QPushButton::clicked, this, &CardPricesSummary::onFetchClicked);
     connect(manageButton_, &QPushButton::clicked, this, [this]() {
         if (!copyId_.empty()) {
             Q_EMIT managePricesRequested(QString::fromStdString(copyId_));
         }
     });
-
-    // Re-render when a fetch / clear / suppression (ours, or another view's — the lookup service
-    // is app-wide) changes our card's cache; clear any prior in-flight/error state for our card.
-    connect(&lookup_, &CardPriceLookupService::pricesReady, this, [this](const QString& id) {
-        if (id == externalCardId_) {
-            fetching_ = false;
-            fetchError_.clear();
-            render();
-        }
+    connect(fetcher_, &CardPriceFetchController::statusMessage, this,
+            [this](const QString& text) {
+                fetchStatus_ = text;
+                render();
+            });
+    // pricesChanged fires on our fetch landing OR another view touching this card — re-read.
+    connect(fetcher_, &CardPriceFetchController::pricesChanged, this, [this]() {
+        fetchStatus_.clear();
+        fetchError_.clear();
+        render();
     });
-    // Only OUR inline fetch surfaces a failure (a background fetch by another view, which we
-    // didn't start, leaves our cached display untouched — a failed fetch changes no cache).
-    connect(&lookup_, &CardPriceLookupService::pricesFailed, this, [this](const QString& id) {
-        if (id == externalCardId_ && fetching_) {
-            fetching_ = false;
-            fetchError_ = tr("Couldn't fetch prices right now.");
-            render();
-        }
-    });
-}
-
-void CardPricesSummary::onFetchClicked() {
-    // Only ever a re-fetch of an already-linked card (the button is shown only then). No resolve,
-    // no linkCatalogCard — so the summary needs no CardCopyService and never mutates the copy.
-    if (fetching_ || externalCardId_.isEmpty()) {
-        return;
-    }
-    fetching_ = true;
-    fetchError_.clear();
-    render();  // reflect the in-flight state (disabled button + "Fetching…")
-    lookup_.fetch(externalCardId_);
+    connect(fetcher_, &CardPriceFetchController::fetchFailed, this,
+            [this](const QString& message) {
+                fetchStatus_.clear();
+                fetchError_ = message;
+                render();
+            });
+    connect(fetcher_, &CardPriceFetchController::cardLinked, this,
+            [this](const QString& copyId, const QString& externalCardId) {
+                externalCardId_ = externalCardId;  // keep render()'s cache read in sync
+                Q_EMIT copyLinked(copyId, externalCardId);
+                render();
+            });
 }
 
 void CardPricesSummary::showCopy(const CardCopy& copy) {
@@ -109,8 +107,9 @@ void CardPricesSummary::showCopy(const CardCopy& copy) {
     preferredFinish_ = finishForFoil(copy.foil);
     externalCardId_ = QString::fromStdString(copy.externalCardId);
     copyRemoved_ = copy.ownership == CardOwnership::Removed;
-    fetching_ = false;
+    fetchStatus_.clear();
     fetchError_.clear();
+    fetcher_->setCopy(copy);
     render();
 }
 
@@ -121,9 +120,15 @@ void CardPricesSummary::clear() {
     preferredFinish_.clear();
     externalCardId_.clear();
     copyRemoved_ = false;
-    fetching_ = false;
+    fetchStatus_.clear();
     fetchError_.clear();
+    fetcher_->clearCopy();
     render();
+}
+
+void CardPricesSummary::onFetchClicked() {
+    fetchError_.clear();
+    fetcher_->fetch();  // emits statusMessage → render(); resolves/links as needed
 }
 
 void CardPricesSummary::render() {
@@ -137,45 +142,43 @@ void CardPricesSummary::render() {
         return;
     }
 
-    // Every non-removed copy gets the "Manage prices" affordance — that is where an unlinked copy
-    // is fetched (its first fetch resolves + links it) and where anything is changed.
+    // Every non-removed copy gets "Manage prices" — its fuller controls (and, for an unlinked
+    // copy, its first fetch's resolve + link).
     manageButton_->show();
 
-    if (externalCardId_.isEmpty()) {
-        // Not linked yet: no inline re-fetch (there's nothing linked to fetch), only Manage.
-        headline_->hide();
-        infoButton_->hide();
-        fetchButton_->hide();
-        status_->setText(tr("Not fetched yet."));
-        status_->show();
-        return;
-    }
+    const bool fetching = fetcher_->isFetching();
+    const bool canFetch = fetcher_->canFetch();
 
-    // Read the cache defensively: render() runs from a selection-change slot, and a DB read can
-    // throw (e.g. a second app instance holding the SQLite file lock). An exception escaping a
-    // Qt slot calls std::terminate — degrade to a message rather than crash.
+    // Read the cache defensively (only meaningful once linked): render() runs from a
+    // selection-change slot, and a DB read can throw (e.g. a second app instance holding the
+    // SQLite file lock). An exception escaping a Qt slot calls std::terminate — degrade instead.
     std::vector<CardPrice> cached;
     std::optional<Timestamp> fetchedAt;
     std::vector<std::string> suppressed;
-    try {
-        CardPriceLookupService::CachedPrices snapshot = lookup_.cachedPrices(externalCardId_);
-        cached = std::move(snapshot.prices);
-        fetchedAt = snapshot.fetchedAt;
-        suppressed = lookup_.suppressedVendors(externalCardId_);
-    } catch (const std::exception&) {
-        headline_->hide();
-        infoButton_->hide();
-        fetchButton_->hide();
-        status_->setText(tr("Couldn't read the stored prices."));
-        status_->show();
-        return;
+    if (!externalCardId_.isEmpty()) {
+        try {
+            CardPriceLookupService::CachedPrices snapshot = lookup_.cachedPrices(externalCardId_);
+            cached = std::move(snapshot.prices);
+            fetchedAt = snapshot.fetchedAt;
+            suppressed = lookup_.suppressedVendors(externalCardId_);
+        } catch (const std::exception&) {
+            headline_->hide();
+            infoButton_->hide();
+            fetchButton_->hide();
+            status_->setText(tr("Couldn't read the stored prices."));
+            status_->show();
+            return;
+        }
     }
 
     // The headline names each vendor once (suppressed vendors filtered out — a hidden vendor
     // never surfaces here), with no hide/restore affordance (withHideLinks=false): those are the
-    // page's job. Empty when the card carries no usable, non-hidden figure.
-    const QString headline = headlineHtml(marketSearchTerm(cardRef_, speciesName_), cached,
-                                          suppressed, preferredFinish_, /*withHideLinks=*/false);
+    // page's job. Empty when the card carries no usable, non-hidden figure (or isn't linked).
+    const QString headline =
+        externalCardId_.isEmpty()
+            ? QString()
+            : headlineHtml(marketSearchTerm(cardRef_, speciesName_), cached, suppressed,
+                           preferredFinish_, /*withHideLinks=*/false);
     const bool hasHeadline = !headline.isEmpty();
     if (hasHeadline) {
         headline_->setText(headline);
@@ -189,30 +192,34 @@ void CardPricesSummary::render() {
         infoButton_->setToolTip(priceInfoWithFreshness(
             priceDateOf(newest), fetchedAt ? priceDateOf(*fetchedAt) : QString()));
         infoButton_->show();
-        // Inline "Refresh" ONLY when there are figures to refresh — a plain re-fetch of the
-        // stored id (disabled mid-fetch). Deliberately NOT offered when nothing is shown (never
-        // fetched, fetched-empty, or a stale pre-tcgdex id that yields no figures): the inline
-        // path can't re-resolve a legacy id, so those go through "Manage prices", whose fetch
-        // (CardPricesPanel::resolveAndFetch) re-resolves it. Keeps the naive re-fetch off the
-        // states where it would dead-end.
-        fetchButton_->setText(tr("Refresh"));
-        fetchButton_->setEnabled(!fetching_);
-        fetchButton_->show();
     } else {
         headline_->hide();
         infoButton_->hide();
+    }
+
+    // The inline button whenever a fetch is possible (resolvable, or already linked): "Refresh"
+    // once fetched, "Fetch" before; disabled mid-fetch. The controller re-resolves a legacy id,
+    // so this never dead-ends. Absent only when there's nothing to fetch (no set/number).
+    if (canFetch) {
+        fetchButton_->setText(fetchedAt ? tr("Refresh") : tr("Fetch"));
+        fetchButton_->setEnabled(!fetching);
+        fetchButton_->show();
+    } else {
         fetchButton_->hide();
     }
 
-    // Status precedence: an in-flight fetch, then a failed-fetch note, then the empty-cache hint
-    // (a card with a visible headline and no fetch activity needs no status line).
+    // Status precedence: an in-flight fetch, then a failed-fetch note, then a hint (unresolvable,
+    // or nothing fetched yet) — a card with a visible headline and no fetch activity needs none.
     QString statusText;
-    if (fetching_) {
-        statusText = tr("Fetching prices…");
+    if (fetching) {
+        statusText = fetchStatus_.isEmpty() ? tr("Fetching prices…") : fetchStatus_;
     } else if (!fetchError_.isEmpty()) {
         statusText = fetchError_;
+    } else if (!canFetch) {
+        statusText = tr("Add this card's set and collector number (via “Edit card…”) to look up "
+                        "its market prices.");
     } else if (!hasHeadline) {
-        statusText = fetchedAt ? tr("No market prices to show.") : tr("Not fetched yet.");
+        statusText = fetchedAt ? tr("No market prices to show.") : tr("Prices not fetched yet.");
     }
     if (statusText.isEmpty()) {
         status_->hide();

@@ -17,6 +17,7 @@ namespace pokedex {
 
 class CardImageStore;
 class CardPriceLookupService;
+class CardCopyService;
 class CardPricesSummary;
 class MediaService;
 class WishlistService;
@@ -59,14 +60,15 @@ public:
     // and is always enabled, even with nothing selected (emits addCardRequested).
     enum class AddMode { SpeciesCopy, FreeCard };
 
-    // `prices`, when supplied (alongside `images`), adds the read-only market-prices block
-    // (CardPricesSummary) to copy mode: the per-vendor headline figures + marketplace links +
-    // ⓘ, plus a "Manage prices" button that relays managePricesRequested() so the host opens the
-    // dedicated PricesEditPage (where fetching/linking/clearing/hiding happen). Passing null (or
-    // no image store) omits the block, leaving the artwork-only behavior.
+    // `prices` and `copies`, when supplied together (alongside `images`), add the market-prices
+    // block (CardPricesSummary) to copy mode: the per-vendor headline figures + marketplace links
+    // + ⓘ, an inline Fetch/Refresh, and a "Manage prices" button that relays
+    // managePricesRequested() so the host opens the dedicated PricesEditPage. The inline fetch can
+    // resolve + link a copy, relayed up as copyLinked(). Passing either null (or no image store)
+    // omits the block, leaving the artwork-only behavior.
     PokemonDetailPanel(MediaService& media, WishlistService& wishlist,
                        CardImageStore* images = nullptr, CardPriceLookupService* prices = nullptr,
-                       QWidget* parent = nullptr);
+                       CardCopyService* copies = nullptr, QWidget* parent = nullptr);
 
     // Show `name` now and request its artwork. Not named show() so it doesn't
     // hide QWidget::show().
@@ -110,10 +112,13 @@ Q_SIGNALS:
     // The user clicked the "Wishlist (N)" button for the shown Pokémon. Carries the
     // species; the owning view pushes the WishlistEditPage for it.
     void editWishlistRequested(int dexNumber, const QString& name);
-    // The user clicked the read-only summary's "Manage prices" button. Carries the shown
-    // copy's id; the owning view pushes the PricesEditPage for it (where fetching/linking/
-    // clearing/hiding happen — the page relays its own cardLinked so the host stays in sync).
+    // The user clicked the summary's "Manage prices" button. Carries the shown copy's id; the
+    // owning view pushes the PricesEditPage for it.
     void managePricesRequested(const QString& copyId);
+    // The summary's inline Fetch resolved and persisted this copy's tcgdex link. Forwarded up so
+    // the host writes the new external id into its cached copy (as PricesEditPage's cardLinked
+    // does) — otherwise a re-selection re-runs the resolve and value stats keyed on the id miss it.
+    void copyLinked(const QString& copyId, const QString& externalCardId);
 
 protected:
     // Rescale the image when the image label resizes (on a panel resize, but also
