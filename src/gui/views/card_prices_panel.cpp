@@ -7,7 +7,6 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
-#include <algorithm>
 #include <exception>
 #include <optional>
 #include <string>
@@ -227,13 +226,10 @@ void CardPricesPanel::render() {
     headline_->show();
 
     // "as of" is the newest vendor date across the rows; also carry when WE fetched. Both
-    // move onto the ⓘ tooltip (no separate visible line), so a glance stays uncluttered.
-    Timestamp newest = cached.front().observedAt;
-    for (const CardPrice& p : cached) {
-        newest = std::max(newest, p.observedAt);
-    }
+    // move onto the ⓘ tooltip (no separate visible line), so a glance stays uncluttered
+    // (shared newestObservedAt).
     infoButton_->setToolTip(priceInfoWithFreshness(
-        priceDateOf(newest), fetchedAt ? priceDateOf(*fetchedAt) : QString()));
+        priceDateOf(newestObservedAt(cached)), fetchedAt ? priceDateOf(*fetchedAt) : QString()));
     infoButton_->show();
     status_->hide();  // freshness lives on the ⓘ tooltip now, not a visible line
     fetchButton_->show();

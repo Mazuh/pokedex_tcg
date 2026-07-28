@@ -519,8 +519,8 @@ largest" sentinel (e.g. keying `nullopt` as `INT_MAX`) only sinks it on the
 ascending click — descending then floats every blank row to the *top*. "No data"
 isn't a low value; it belongs last regardless of direction. Key the field as
 `std::optional` and compare via a direction-aware helper that pre-inverts the
-set-vs-unset case for the shell's flip (see `compareOptionalRank` in
-`owned_cards_view.cpp`, used for the Condition/Rarity/Foil columns).
+set-vs-unset case for the shell's flip (see `compareOptional` in
+`gui/views/sortable_table.h`, used for the Condition/Rarity/Foil/Prices columns).
 
 **Storage writes that span statements go in a transaction.** A repository `add`
 that writes more than one row (e.g. `Wishlist` — a parent row plus its source

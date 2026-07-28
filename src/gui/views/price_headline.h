@@ -37,6 +37,17 @@ inline QString priceDateOf(Timestamp when) {
     return QString::fromStdString(timestampToIso(when)).left(10);
 }
 
+// The newest vendor "as of" moment across a card's cached rows — the date the ⓘ tooltip shows.
+// Both price surfaces (the summary and the panel) derive it identically, so it lives here.
+// Precondition: `prices` is non-empty (callers only reach it once a headline was built).
+inline Timestamp newestObservedAt(const std::vector<CardPrice>& prices) {
+    Timestamp newest = prices.front().observedAt;
+    for (const CardPrice& p : prices) {
+        newest = std::max(newest, p.observedAt);
+    }
+    return newest;
+}
+
 // A marketplace search URL for a card — the click-through under each headline figure.
 // tcgdex is addressable by set+number but publishes no stable per-listing URL we carry, so
 // the vendor name links to a SEARCH on that marketplace rather than a direct product page.

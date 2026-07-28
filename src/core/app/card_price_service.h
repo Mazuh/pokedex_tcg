@@ -109,10 +109,12 @@ public:
     static IdGenerator uuidGenerator();
 
 private:
-    // Shared persistence for both record* verbs: key + mint ids onto the parsed rows and
-    // store them (stamping `now`), or, for a degraded response (no card, so `prices` empty
-    // and `cardPresent` false), leave the cache and stamp untouched and report it. See the
-    // recordApiPrices docstring for why the degraded case must not cache a false "no prices".
+    // Shared persistence path behind recordTcgdexPrices: key + mint ids onto the parsed rows
+    // and store them (stamping `now`), or, for a degraded response (no card, so `prices` empty
+    // and `cardPresent` false), leave the cache and stamp untouched and report it. The degraded
+    // case must NOT cache a false "no prices for this card": a transport/parse failure is not
+    // evidence the card is unpriced, and stamping it would make a later Refresh look up-to-date
+    // and hide the real prices behind a bogus empty cache.
     RecordedApiPrices persistParsedPrices(const std::string& externalCardId,
                                           std::vector<CardPrice> prices, bool cardPresent,
                                           Timestamp now);
