@@ -415,6 +415,28 @@ TEST(ParseTcgdexPricesTest, FallsBackToOversizedWhenNoStandardPrintingIsPriced) 
     EXPECT_EQ(prices.front().amountCents, 1250);
 }
 
+// The fallback keys on whether a standard printing CARRIES a pricing block, not on whether the
+// standard pass produced positive rows: a standard printing whose metrics are all noise (<=0,
+// dropped) still means the card's standard price is merely unlisted — the oversized (jumbo)
+// price must not stand in for it.
+TEST(ParseTcgdexPricesTest, DoesNotSubstituteOversizedWhenStandardCarriesAnAllNoisePricingBlock) {
+    constexpr const char* kStandardNoisy = R"json({
+      "id": "std-noise-1",
+      "variants_detailed": [
+        { "type": "holo", "size": "standard",
+          "pricing": { "cardmarket": { "unit": "EUR", "trend": 0, "low": 0 } } },
+        { "type": "holo", "size": "jumbo",
+          "pricing": { "cardmarket": { "unit": "EUR", "trend": 12.5 } } }
+      ]
+    })json";
+    const auto prices = parseTcgdexCardPrices(kStandardNoisy, at("2000-01-01T00:00:00Z"));
+    // No positive standard rows AND no jumbo substitution: the card is simply unpriced here.
+    EXPECT_TRUE(prices.empty());
+    for (const CardPrice& p : prices) {
+        EXPECT_NE(p.amountCents, 1250);
+    }
+}
+
 TEST(ParseTcgdexPricesTest, FallsBackToFetchTimeWhenVendorDateMissingOrMalformed) {
     constexpr const char* kNoDate = R"json({
       "id": "x-1",

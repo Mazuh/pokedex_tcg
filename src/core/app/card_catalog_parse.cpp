@@ -255,8 +255,14 @@ std::vector<CardPrice> extractTcgdexPrices(const json& card, Timestamp fallbackO
         return prices;
     }
 
-    // Prefer standard-size printings; only if none carry pricing do oversized ones stand in.
+    // Prefer standard-size printings; only if none carry pricing do oversized (jumbo/lenticular
+    // — a different product) ones stand in. Gate the fallback on whether a standard printing
+    // CARRIED a pricing block, not on whether the standard pass produced positive rows: a
+    // standard printing whose metrics are all noise (<=0 cents, dropped by priceCents) still
+    // means this card's standard price is simply unlisted — better to show nothing than a jumbo's
+    // price in its place.
     for (const bool standardOnly : {true, false}) {
+        bool sawPricingThisPass = false;
         for (const json& variant : *variants) {
             if (!variant.is_object()) {
                 continue;
@@ -270,6 +276,7 @@ std::vector<CardPrice> extractTcgdexPrices(const json& card, Timestamp fallbackO
             if (pricing == variant.end() || !pricing->is_object()) {
                 continue;
             }
+            sawPricingThisPass = true;
             // The printing's finish (normal/holo/reverse), tagged onto its cardmarket rows so a
             // copy's foil can select the matching price. tcgplayer carries its own finish keys.
             const std::string printingFinish = canonicalFinish(strField(variant, "type"));
@@ -301,8 +308,9 @@ std::vector<CardPrice> extractTcgdexPrices(const json& card, Timestamp fallbackO
                 }
             }
         }
-        if (!prices.empty()) {
-            break;  // standard printings priced this card — don't also add oversized rows
+        if (sawPricingThisPass) {
+            break;  // standard printings carry pricing — never substitute oversized rows,
+                    // even if every standard metric was noise and dropped
         }
     }
     return prices;
