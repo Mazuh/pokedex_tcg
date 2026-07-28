@@ -32,16 +32,18 @@ QString dateOf(Timestamp when) {
     return QString::fromStdString(timestampToIso(when)).left(10);
 }
 
-// A marketplace search URL for a card name — the click-through under each headline figure.
+// A marketplace search URL for a card — the click-through under each headline figure.
 // tcgdex is addressable by set+number but publishes no stable per-listing URL we carry, so
-// the vendor name links to a NAME SEARCH on that marketplace (always valid) rather than a
-// direct product page.
+// the vendor name links to a SEARCH on that marketplace rather than a direct product page.
+// Cardmarket's search needs the full set of form params (category=-1 = all categories,
+// searchMode=v2): a bare `searchString` alone does not resolve to results.
 QString marketplaceSearchUrl(const QString& vendor, const QString& searchTerm) {
     const QString q = QString::fromUtf8(QUrl::toPercentEncoding(searchTerm));
     if (vendor == QLatin1String("tcgplayer")) {
         return QStringLiteral("https://www.tcgplayer.com/search/pokemon/product?q=%1").arg(q);
     }
-    return QStringLiteral("https://www.cardmarket.com/en/Pokemon/Products/Search?searchString=%1")
+    return QStringLiteral("https://www.cardmarket.com/en/Pokemon/Products/Search"
+                          "?category=-1&searchString=%1&searchMode=v2")
         .arg(q);
 }
 
