@@ -335,9 +335,12 @@ void BinderView::repopulate() {
         // A representative owned copy filed here fills the printed-identity columns; a
         // species with none leaves them blank (rendered as an em-dash by cell()).
         const CardCopy* rep = representativeCopy(entry.pokemon.dexNumber);
-        // Set is the free-text slack column ("Base Set (BS)"); no tooltip (it would just
-        // repeat the cell).
-        table_->setItem(i, 2, cell(rep ? setLabel(rep->cardRef) : QString()));
+        // Set is the eliding Stretch column ("Base Set (BS)"); carry the full value as a
+        // tooltip so a long name stays readable when the column truncates it ("…").
+        const QString setText = rep ? setLabel(rep->cardRef) : QString();
+        auto* setCell = cell(setText);
+        setCell->setToolTip(setText);
+        table_->setItem(i, 2, setCell);
         table_->setItem(i, 3, cell(rep ? QString::fromStdString(rep->cardRef.collectorNumber)
                                        : QString()));
         table_->setItem(i, 4, cell(rep && rep->condition ? conditionAbbrev(*rep->condition)

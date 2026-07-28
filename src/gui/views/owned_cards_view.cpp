@@ -433,9 +433,14 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
         // Column 0 identifies the row: the species name, or (for a species-free
         // Trainer/Energy card) its printed card name so the row isn't blank.
         table_->setItem(row, 0, cell(speciesOrCardName(c)));
-        // Set shows the human name with its abbreviation ("Base Set (BS)"); it's the
-        // free-text slack column but carries no tooltip (it would just repeat the cell).
-        table_->setItem(row, 1, cell(setLabel(c.cardRef)));
+        // Set shows the human name with its abbreviation ("Base Set (BS)"). It's the
+        // eliding Stretch column, so carry the full value as a tooltip — a long set name
+        // truncates ("…") in a narrow window and would otherwise be unreadable on hover
+        // (mirrors the Binder column below).
+        const QString setText = setLabel(c.cardRef);
+        auto* setCell = cell(setText);
+        setCell->setToolTip(setText);
+        table_->setItem(row, 1, setCell);
         table_->setItem(row, 2, cell(QString::fromStdString(c.cardRef.collectorNumber)));
         table_->setItem(row, 3, cell(QString::fromStdString(c.cardRef.language)));
         // Condition is optional (ungraded copies) — blank renders as an em-dash.
