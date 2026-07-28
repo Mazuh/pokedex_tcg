@@ -128,7 +128,7 @@ PokemonDetailPanel::PokemonDetailPanel(MediaService& media, WishlistService& wis
         if (addMode_ == AddMode::FreeCard) {
             Q_EMIT addCardRequested();
         } else if (currentDex_ >= 0) {
-            Q_EMIT addCopyRequested(currentDex_, name_->text());
+            Q_EMIT addCopyRequested(currentDex_, speciesName_);
         }
     });
 
@@ -157,7 +157,7 @@ PokemonDetailPanel::PokemonDetailPanel(MediaService& media, WishlistService& wis
     wishlistButton_ = new QPushButton(this);
     connect(wishlistButton_, &QPushButton::clicked, this, [this]() {
         if (currentDex_ >= 0) {
-            Q_EMIT editWishlistRequested(currentDex_, name_->text());
+            Q_EMIT editWishlistRequested(currentDex_, speciesName_);
         }
     });
 
@@ -204,6 +204,7 @@ void PokemonDetailPanel::showPokemon(int dexNumber, const QString& name,
                                      const std::vector<CardCopy>& ownedCopiesHere,
                                      const QString& preferCopyId) {
     currentDex_ = dexNumber;
+    speciesName_ = name;
     name_->setText(name);
     updateWishlistButton(dexNumber);
 
@@ -239,6 +240,7 @@ void PokemonDetailPanel::showSingleCopy(const CardCopy& copy, int sameSpeciesTot
     // My Cards' exact-copy entry: the species (if any) drives only the artwork fallback
     // and the copy count; the wishlist button is hidden on this surface.
     currentDex_ = copy.pokemonDexNum ? *copy.pokemonDexNum : -1;
+    speciesName_ = copy.pokemonDexNum ? speciesName(*copy.pokemonDexNum) : QString();
     renderCopy(copy, sameSpeciesTotal);
 }
 
@@ -331,7 +333,7 @@ void PokemonDetailPanel::requestArtworkFallback() {
     }
     placeholder_ = tr("Loading…");
     renderImage();
-    media_.request({currentDex_, name_->text().toStdString()}, MediaKind::OfficialArtwork);
+    media_.request({currentDex_, speciesName_.toStdString()}, MediaKind::OfficialArtwork);
 }
 
 void PokemonDetailPanel::hideCopy() {
@@ -348,6 +350,7 @@ void PokemonDetailPanel::hideCopy() {
 
 void PokemonDetailPanel::clear() {
     currentDex_ = -1;
+    speciesName_.clear();
     name_->clear();
     showingCopyImage_ = false;
     originalPixmap_ = QPixmap();

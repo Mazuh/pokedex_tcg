@@ -157,6 +157,12 @@ private:
     AddMode addMode_ = AddMode::SpeciesCopy;
     bool wishlistVisible_ = true;
     int currentDex_ = -1;  // the dex we currently want shown; guards stale results
+    // The shown species' name, kept separate from the name_ label's text. The label
+    // titles by the CARD in copy mode (a "Charizard ex" printing reads "Charizard ex"),
+    // but the species name is what the Add/Wishlist emissions and the artwork media key
+    // need — so those read this, never name_->text(), which would leak the card title.
+    // Empty for a species-free card (no species to name).
+    QString speciesName_;
     QString shownCopyId_;  // id of the copy shown in copy mode ("" = not in copy mode)
     bool shownCopyRemoved_ = false;  // the shown copy is soft-Removed → no Edit affordance
     bool showingCopyImage_ = false;  // the image is a copy scan, not artwork → keep
