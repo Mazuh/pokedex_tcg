@@ -86,6 +86,8 @@ private:
     // externalCardId_ empty == not yet linked.
     std::string copyId_;
     CardReference cardRef_;
+    QString speciesName_;  // the copy's Pokémon name (blank for a species-free card) — the
+                           // marketplace search's name fallback when there is no printed card name
     QString externalCardId_;
     bool copyRemoved_ = false;  // a soft-Removed copy — frozen history, never auto-resolved
 

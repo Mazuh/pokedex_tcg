@@ -20,6 +20,7 @@
 #include "core/domain/card_copy.h"
 #include "core/storage/codecs.h"
 #include "gui/services/card_price_lookup_service.h"
+#include "gui/views/card_copy_labels.h"  // speciesName(dexNumber)
 #include "gui/views/price_labels.h"
 
 namespace pokedex {
@@ -38,7 +39,10 @@ QString dateOf(Timestamp when) {
 // Cardmarket's search needs the full set of form params (category=-1 = all categories,
 // searchMode=v2): a bare `searchString` alone does not resolve to results.
 QString marketplaceSearchUrl(const QString& vendor, const QString& searchTerm) {
-    const QString q = QString::fromUtf8(QUrl::toPercentEncoding(searchTerm));
+    // Keep '/' literal (exclude from encoding) so a collector number reads "25/185" in the
+    // query, not "25%2F185" — matching what a marketplace search box sends and dodging servers
+    // that treat an encoded slash specially. Everything else (spaces, &, …) is still encoded.
+    const QString q = QString::fromUtf8(QUrl::toPercentEncoding(searchTerm, "/"));
     if (vendor == QLatin1String("tcgplayer")) {
         return QStringLiteral("https://www.tcgplayer.com/search/pokemon/product?q=%1").arg(q);
     }
@@ -47,25 +51,29 @@ QString marketplaceSearchUrl(const QString& vendor, const QString& searchTerm) {
         .arg(q);
 }
 
-// The marketplace search term for a copy: its printed card name when it has one, else the set
-// code (or name) + the collector number — "MEP 013", the way a nameless promo is actually
-// found on the marketplaces. Empty only when the copy records neither a name nor a set/number.
-QString marketSearchTerm(const CardReference& ref) {
-    if (!ref.name.empty()) {
-        return QString::fromStdString(ref.name);
-    }
+// The marketplace search term for a copy — a NAME part plus a SET+NUMBER part, combined so the
+// search pins the exact printing ("Charizard VIV 25/185") rather than a name that matches many
+// ("Charizard") or a set+number that a marketplace may resolve to the wrong card. The name part
+// is the printed card name, else the species/Pokémon name (`speciesName`, blank for a
+// species-free Trainer/Energy card); the location part is the set code (or name) + the FULL
+// collector number as printed ("25/185"): TCGplayer's search needs the "/total" — "VIV 25"
+// matches nothing there while "VIV 25/185" does. (The tcgdex price lookup is separate and uses
+// only the printing part "25" for the card id; see resolveTcgdexCardId.) Any part may be absent;
+// empty only when the copy records nothing to search by.
+QString marketSearchTerm(const CardReference& ref, const QString& speciesName) {
     QStringList parts;
+    if (!ref.name.empty()) {
+        parts << QString::fromStdString(ref.name);
+    } else if (!speciesName.isEmpty()) {
+        parts << speciesName;
+    }
     const std::string set = !ref.expansionCode.empty() ? ref.expansionCode : ref.setName;
     if (!set.empty()) {
         parts << QString::fromStdString(set);
     }
-    // Just the printing part of the collector number ("013", "125/197" → "125").
-    QString number = QString::fromStdString(ref.collectorNumber).trimmed();
-    if (const int slash = number.indexOf(QLatin1Char('/')); slash >= 0) {
-        number = number.left(slash).trimmed();
-    }
+    const QString number = QString::fromStdString(ref.collectorNumber).trimmed();
     if (!number.isEmpty()) {
-        parts << number;
+        parts << number;  // the full "25/185" as printed — TCGplayer needs the /total
     }
     return parts.join(QLatin1Char(' '));
 }
@@ -255,6 +263,9 @@ CardPricesPanel::CardPricesPanel(CardPriceLookupService& lookup, CardCopyService
 void CardPricesPanel::showCopy(const CardCopy& copy) {
     copyId_ = copy.id;
     cardRef_ = copy.cardRef;
+    // The Pokémon name (from the copy's dex number) — the marketplace search's name fallback for
+    // a card with no printed name. Blank for a species-free card (no dex number).
+    speciesName_ = copy.pokemonDexNum ? speciesName(*copy.pokemonDexNum) : QString();
     externalCardId_ = QString::fromStdString(copy.externalCardId);
     copyRemoved_ = copy.ownership == CardOwnership::Removed;
     fetching_ = false;
@@ -266,6 +277,7 @@ void CardPricesPanel::showCopy(const CardCopy& copy) {
 void CardPricesPanel::clear() {
     copyId_.clear();
     cardRef_ = CardReference{};
+    speciesName_.clear();
     externalCardId_.clear();
     copyRemoved_ = false;
     fetching_ = false;
@@ -372,7 +384,7 @@ void CardPricesPanel::render() {
     // left to the marketplace rather than shown as a raw cache table. (vendorBest never
     // picks the TCGplayer "high" outlier, so it can't surface here.)
     const QString headline =
-        linkedHeadlineHtml(marketSearchTerm(cardRef_), cached);
+        linkedHeadlineHtml(marketSearchTerm(cardRef_, speciesName_), cached);
     headline_->setText(headline.isEmpty() ? QStringLiteral("Market prices") : headline);
     headline_->show();
 
