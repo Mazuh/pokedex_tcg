@@ -36,13 +36,36 @@ QString dateOf(Timestamp when) {
 // tcgdex is addressable by set+number but publishes no stable per-listing URL we carry, so
 // the vendor name links to a NAME SEARCH on that marketplace (always valid) rather than a
 // direct product page.
-QString marketplaceSearchUrl(const QString& vendor, const QString& cardName) {
-    const QString q = QString::fromUtf8(QUrl::toPercentEncoding(cardName));
+QString marketplaceSearchUrl(const QString& vendor, const QString& searchTerm) {
+    const QString q = QString::fromUtf8(QUrl::toPercentEncoding(searchTerm));
     if (vendor == QLatin1String("tcgplayer")) {
         return QStringLiteral("https://www.tcgplayer.com/search/pokemon/product?q=%1").arg(q);
     }
     return QStringLiteral("https://www.cardmarket.com/en/Pokemon/Products/Search?searchString=%1")
         .arg(q);
+}
+
+// The marketplace search term for a copy: its printed card name when it has one, else the set
+// code (or name) + the collector number — "MEP 013", the way a nameless promo is actually
+// found on the marketplaces. Empty only when the copy records neither a name nor a set/number.
+QString marketSearchTerm(const CardReference& ref) {
+    if (!ref.name.empty()) {
+        return QString::fromStdString(ref.name);
+    }
+    QStringList parts;
+    const std::string set = !ref.expansionCode.empty() ? ref.expansionCode : ref.setName;
+    if (!set.empty()) {
+        parts << QString::fromStdString(set);
+    }
+    // Just the printing part of the collector number ("013", "125/197" → "125").
+    QString number = QString::fromStdString(ref.collectorNumber).trimmed();
+    if (const int slash = number.indexOf(QLatin1Char('/')); slash >= 0) {
+        number = number.left(slash).trimmed();
+    }
+    if (!number.isEmpty()) {
+        parts << number;
+    }
+    return parts.join(QLatin1Char(' '));
 }
 
 // The "ⓘ" popover: what each figure means, so a lone "Cardmarket €26" isn't a mystery.
@@ -65,9 +88,10 @@ const QString& priceInfoHtml() {
 // the vendor NAME itself the link to a marketplace search for the card — so the vendor is
 // named once (not "TCGplayer $1" plus a separate "Listings: TCGplayer") and the two
 // currencies don't crowd one line and wrap unpredictably. Empty only when the card carries no
-// usable figure for either vendor (the caller then shows a plain "Market prices" label). When
-// no card name is known the figures are shown as plain text (nothing to search by).
-QString linkedHeadlineHtml(const QString& cardName, const std::vector<CardPrice>& prices) {
+// usable figure for either vendor (the caller then shows a plain "Market prices" label). Only
+// when `searchTerm` is blank — no name AND no set/number to search by — are the figures shown
+// as plain text.
+QString linkedHeadlineHtml(const QString& searchTerm, const std::vector<CardPrice>& prices) {
     const VendorBest best = vendorBest(prices);
     QStringList lines;
     const auto lineFor = [&](const CardPrice* p, const char* vendorKey, const QString& label) {
@@ -75,11 +99,11 @@ QString linkedHeadlineHtml(const QString& cardName, const std::vector<CardPrice>
             return;
         }
         const QString amount = formatMoney(p->amountCents, p->currency).toHtmlEscaped();
-        if (cardName.isEmpty()) {
+        if (searchTerm.isEmpty()) {
             lines << QStringLiteral("%1 %2").arg(label, amount);
         } else {
             lines << QStringLiteral("<a href=\"%1\">%2 ↗</a> %3")
-                         .arg(marketplaceSearchUrl(QString::fromLatin1(vendorKey), cardName).toHtmlEscaped(),
+                         .arg(marketplaceSearchUrl(QString::fromLatin1(vendorKey), searchTerm).toHtmlEscaped(),
                               label, amount);
         }
     };
@@ -325,7 +349,7 @@ void CardPricesPanel::render() {
     // left to the marketplace rather than shown as a raw cache table. (vendorBest never
     // picks the TCGplayer "high" outlier, so it can't surface here.)
     const QString headline =
-        linkedHeadlineHtml(QString::fromStdString(cardRef_.name), cached);
+        linkedHeadlineHtml(marketSearchTerm(cardRef_), cached);
     headline_->setText(headline.isEmpty() ? QStringLiteral("Market prices") : headline);
     headline_->show();
 
