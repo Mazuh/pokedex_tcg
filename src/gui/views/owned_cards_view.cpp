@@ -357,7 +357,8 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
                         // no price, and an unpriced/unlinked one stays nullopt, so both sink
                         // to the bottom in either direction.
                         if (!isRemoved(c)) {
-                            const VendorBest best = vendorBest(pricesForCopy(pricesByExternalId_, c));
+                            const VendorBest best = vendorBest(
+                                pricesForCopy(pricesByExternalId_, c), finishForFoil(c.foil));
                             if (best.tcg || best.cm) {
                                 key.priceCents = (best.tcg ? best.tcg->amountCents : 0) +
                                                  (best.cm ? best.cm->amountCents : 0);
@@ -441,8 +442,10 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
         // fetched, or Removed (frozen history — matches the inspector). Cache-only
         // (pricesByExternalId_), so this stays a pure in-memory rebuild.
         table_->setItem(row, 9,
-                        cell(isRemoved(c) ? QString()
-                                          : priceAmountsInline(pricesForCopy(pricesByExternalId_, c))));
+                        cell(isRemoved(c)
+                                 ? QString()
+                                 : priceAmountsInline(pricesForCopy(pricesByExternalId_, c),
+                                                      finishForFoil(c.foil))));
 
         // Gray out a Removed copy's whole row so the (bottom-sorted) history band
         // reads as inactive.

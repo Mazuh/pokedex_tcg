@@ -101,8 +101,9 @@ const QString& priceInfoHtml() {
 // usable figure for either vendor (the caller then shows a plain "Market prices" label). Only
 // when `searchTerm` is blank — no name AND no set/number to search by — are the figures shown
 // as plain text.
-QString linkedHeadlineHtml(const QString& searchTerm, const std::vector<CardPrice>& prices) {
-    const VendorBest best = vendorBest(prices);
+QString linkedHeadlineHtml(const QString& searchTerm, const std::vector<CardPrice>& prices,
+                           const std::string& preferredFinish) {
+    const VendorBest best = vendorBest(prices, preferredFinish);
     QStringList lines;
     const auto lineFor = [&](const CardPrice* p, const char* vendorKey, const QString& label) {
         if (p == nullptr) {
@@ -266,6 +267,7 @@ void CardPricesPanel::showCopy(const CardCopy& copy) {
     // The Pokémon name (from the copy's dex number) — the marketplace search's name fallback for
     // a card with no printed name. Blank for a species-free card (no dex number).
     speciesName_ = copy.pokemonDexNum ? speciesName(*copy.pokemonDexNum) : QString();
+    preferredFinish_ = finishForFoil(copy.foil);  // pick the price of the finish this copy is
     externalCardId_ = QString::fromStdString(copy.externalCardId);
     copyRemoved_ = copy.ownership == CardOwnership::Removed;
     fetching_ = false;
@@ -278,6 +280,7 @@ void CardPricesPanel::clear() {
     copyId_.clear();
     cardRef_ = CardReference{};
     speciesName_.clear();
+    preferredFinish_.clear();
     externalCardId_.clear();
     copyRemoved_ = false;
     fetching_ = false;
@@ -384,7 +387,7 @@ void CardPricesPanel::render() {
     // left to the marketplace rather than shown as a raw cache table. (vendorBest never
     // picks the TCGplayer "high" outlier, so it can't surface here.)
     const QString headline =
-        linkedHeadlineHtml(marketSearchTerm(cardRef_, speciesName_), cached);
+        linkedHeadlineHtml(marketSearchTerm(cardRef_, speciesName_), cached, preferredFinish_);
     headline_->setText(headline.isEmpty() ? QStringLiteral("Market prices") : headline);
     headline_->show();
 

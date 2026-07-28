@@ -331,25 +331,52 @@ constexpr const char* kTcgdexCard = R"json({
 TEST(ParseTcgdexPricesTest, NormalizesCardmarketMetricNamesToCanonicalVocabulary) {
     const auto prices = parseTcgdexCardPrices(kTcgdexCard, at("2000-01-01T00:00:00Z"));
     // tcgdex "trend"/"avg"/"low" → the canonical trendPrice/averageSellPrice/lowPrice the
-    // display's vendorBest looks up, keyed to the payload's own id, EUR, at the vendor date.
-    const CardPrice& trend = findPrice(prices, "cardmarket", "", "trendPrice");
+    // display's vendorBest looks up. Tagged with the printing's finish ("holo" here), keyed to
+    // the payload's own id, EUR, at the vendor date.
+    const CardPrice& trend = findPrice(prices, "cardmarket", "holo", "trendPrice");
     EXPECT_EQ(trend.amountCents, 502);
     EXPECT_EQ(trend.currency, "EUR");
     EXPECT_EQ(trend.externalCardId, "sv03-125");
     EXPECT_EQ(trend.observedAt, at("2026-07-27T00:00:00Z"));  // ISO date, midnight UTC
-    EXPECT_EQ(findPrice(prices, "cardmarket", "", "averageSellPrice").amountCents, 386);
-    EXPECT_EQ(findPrice(prices, "cardmarket", "", "lowPrice").amountCents, 199);
-    EXPECT_EQ(findPrice(prices, "cardmarket", "", "avg7").amountCents, 482);
+    EXPECT_EQ(findPrice(prices, "cardmarket", "holo", "averageSellPrice").amountCents, 386);
+    EXPECT_EQ(findPrice(prices, "cardmarket", "holo", "lowPrice").amountCents, 199);
+    EXPECT_EQ(findPrice(prices, "cardmarket", "holo", "avg7").amountCents, 482);
 }
 
-TEST(ParseTcgdexPricesTest, NormalizesTcgplayerMetricsAndKeepsThePerFinishVariant) {
+TEST(ParseTcgdexPricesTest, NormalizesTcgplayerMetricsAndFinish) {
     const auto prices = parseTcgdexCardPrices(kTcgdexCard, at("2000-01-01T00:00:00Z"));
-    const CardPrice& market = findPrice(prices, "tcgplayer", "holofoil", "market");
+    // The finish key "holofoil" is normalized to "holo" (the same token a copy's foil maps to).
+    const CardPrice& market = findPrice(prices, "tcgplayer", "holo", "market");
     EXPECT_EQ(market.amountCents, 571);
     EXPECT_EQ(market.currency, "USD");
     EXPECT_EQ(market.observedAt, at("2026-07-25T00:00:00Z"));
-    EXPECT_EQ(findPrice(prices, "tcgplayer", "holofoil", "mid").amountCents, 620);
-    EXPECT_EQ(findPrice(prices, "tcgplayer", "holofoil", "low").amountCents, 346);
+    EXPECT_EQ(findPrice(prices, "tcgplayer", "holo", "mid").amountCents, 620);
+    EXPECT_EQ(findPrice(prices, "tcgplayer", "holo", "low").amountCents, 346);
+}
+
+// A card printed in two finishes (the VIV Charizard case) keeps normal and holo prices
+// distinct — so the display can show the non-holo price for a non-holo copy instead of the
+// (higher) holo one.
+TEST(ParseTcgdexPricesTest, TagsEachPrintingFinishSoNormalAndHoloStayDistinct) {
+    constexpr const char* kTwoFinish = R"json({
+      "id": "swsh4-25",
+      "variants_detailed": [
+        {"type": "normal", "size": "standard",
+         "pricing": {"cardmarket": {"unit": "EUR", "trend": 1.98},
+                     "tcgplayer": {"unit": "USD", "normal": {"marketPrice": 1.60}}}},
+        {"type": "holo", "size": "standard",
+         "pricing": {"cardmarket": {"unit": "EUR", "trend": 9.04},
+                     "tcgplayer": {"unit": "USD", "holofoil": {"marketPrice": 5.71}}}},
+        {"type": "reverse", "size": "standard",
+         "pricing": {"cardmarket": {"unit": "EUR", "trend": 1.98}}}
+      ]
+    })json";
+    const auto prices = parseTcgdexCardPrices(kTwoFinish, at("2000-01-01T00:00:00Z"));
+    EXPECT_EQ(findPrice(prices, "cardmarket", "normal", "trendPrice").amountCents, 198);
+    EXPECT_EQ(findPrice(prices, "cardmarket", "holo", "trendPrice").amountCents, 904);
+    EXPECT_EQ(findPrice(prices, "cardmarket", "reverse", "trendPrice").amountCents, 198);
+    EXPECT_EQ(findPrice(prices, "tcgplayer", "normal", "market").amountCents, 160);
+    EXPECT_EQ(findPrice(prices, "tcgplayer", "holo", "market").amountCents, 571);
 }
 
 TEST(ParseTcgdexPricesTest, DoesNotReadNonPriceNumbersAsMoney) {

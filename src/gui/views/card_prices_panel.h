@@ -88,6 +88,8 @@ private:
     CardReference cardRef_;
     QString speciesName_;  // the copy's Pokémon name (blank for a species-free card) — the
                            // marketplace search's name fallback when there is no printed card name
+    std::string preferredFinish_;  // the copy's foil → tcgdex finish (normal/holo/reverse), so
+                                   // the headline shows the price of the finish it actually is
     QString externalCardId_;
     bool copyRemoved_ = false;  // a soft-Removed copy — frozen history, never auto-resolved
 

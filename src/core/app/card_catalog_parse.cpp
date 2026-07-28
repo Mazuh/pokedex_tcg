@@ -205,9 +205,23 @@ std::optional<std::string> canonicalCardmarketMetric(const std::string& key) {
     return std::nullopt;
 }
 
+// tcgdex's coarse pricing FINISH, normalized so the display can pick the price of the finish a
+// copy actually is (instead of always the highest, which shows a holo price for a non-holo
+// card). cardmarket keys prices by the printing's `type` (normal/holo/reverse/…); tcgplayer
+// nests them under finish keys (normal/holofoil/reverse-holofoil). Both collapse to one
+// vocabulary — "normal"/"holo"/"reverse" — the same tokens a CardFoil maps to (GUI-side). An
+// unrecognized finish (lenticular, 1stEdition…) is carried through verbatim: it just won't
+// match a copy's foil, so the pick falls back to the highest.
+std::string canonicalFinish(const std::string& raw) {
+    if (raw == "normal") return "normal";
+    if (raw == "holo" || raw == "holofoil") return "holo";
+    if (raw == "reverse" || raw == "reverse-holofoil") return "reverse";
+    return raw;
+}
+
 // Read whitelisted metrics out of one vendor pricing block into `out`. `canon` maps (and
-// whitelists) the source metric name; `variant` locates the number within the vendor
-// (a tcgplayer finish key, or "" for flat cardmarket).
+// whitelists) the source metric name; `variant` is the normalized finish (normal/holo/reverse)
+// this price belongs to, so a copy's foil can select the matching row.
 void collectTcgdexMetrics(const json& block, const char* provenance, const std::string& variant,
                           const std::string& currency, Timestamp observed,
                           std::optional<std::string> (*canon)(const std::string&),
@@ -256,19 +270,23 @@ std::vector<CardPrice> extractTcgdexPrices(const json& card, Timestamp fallbackO
             if (pricing == variant.end() || !pricing->is_object()) {
                 continue;
             }
+            // The printing's finish (normal/holo/reverse), tagged onto its cardmarket rows so a
+            // copy's foil can select the matching price. tcgplayer carries its own finish keys.
+            const std::string printingFinish = canonicalFinish(strField(variant, "type"));
 
-            // cardmarket (EUR, flat): one set of metrics per printing, no per-finish split.
+            // cardmarket (EUR, flat): one set of metrics per printing, keyed by the printing's
+            // finish so normal (€1.98) and holo (€9.04) prices stay distinguishable.
             if (const auto cm = pricing->find(kCardmarketProvenance);
                 cm != pricing->end() && cm->is_object()) {
                 const std::string currency = strField(*cm, "unit");
-                collectTcgdexMetrics(*cm, kCardmarketProvenance, /*variant=*/"",
+                collectTcgdexMetrics(*cm, kCardmarketProvenance, printingFinish,
                                      currency.empty() ? "EUR" : currency,
                                      tcgdexUpdatedAt(*cm).value_or(fallbackObservedAt),
                                      canonicalCardmarketMetric, externalCardId, prices);
             }
 
             // tcgplayer (USD): metrics are nested one level by finish ("holofoil"/"normal"/
-            // "reverse-holofoil"), each an object of named metrics.
+            // "reverse-holofoil"), each an object of named metrics — the finish is normalized.
             if (const auto tcg = pricing->find(kTcgplayerProvenance);
                 tcg != pricing->end() && tcg->is_object()) {
                 const std::string currency = strField(*tcg, "unit");
@@ -277,7 +295,7 @@ std::vector<CardPrice> extractTcgdexPrices(const json& card, Timestamp fallbackO
                     if (!metrics.is_object()) {
                         continue;  // skips the sibling "unit"/"updated" scalars
                     }
-                    collectTcgdexMetrics(metrics, kTcgplayerProvenance, finish,
+                    collectTcgdexMetrics(metrics, kTcgplayerProvenance, canonicalFinish(finish),
                                          currency.empty() ? "USD" : currency, observed,
                                          canonicalTcgplayerMetric, externalCardId, prices);
                 }
