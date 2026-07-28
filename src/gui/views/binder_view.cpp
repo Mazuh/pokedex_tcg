@@ -299,6 +299,9 @@ void BinderView::repopulate() {
     // stay 1:1 and aligned. Statuses are fixed until the next refresh, so filtering
     // then just toggles row visibility — no per-keystroke allocation.
     table_->setRowCount(static_cast<int>(entries_.size()));
+    std::vector<CardPrice> priceScratch;  // reused across rows (visiblePricesForCopy's contract):
+                                          // fills only for a suppressed-vendor card, so a whole
+                                          // rebuild allocates for those rows, not every priced row
     for (int i = 0; i < static_cast<int>(entries_.size()); ++i) {
         const CardBinderEntry& entry = entries_[i];
         auto* number = cell(QString::number(entry.pokemon.dexNumber));
@@ -324,7 +327,6 @@ void BinderView::repopulate() {
         // The representative copy's cached market prices, inline ("$… · €…"); blank when the
         // copy is unlinked or its prices were never fetched. Cache-only (pricesByExternalId_),
         // so this stays a pure in-memory rebuild — no network, no re-query.
-        std::vector<CardPrice> priceScratch;
         table_->setItem(
             i, 8,
             cell(rep ? priceAmountsInline(

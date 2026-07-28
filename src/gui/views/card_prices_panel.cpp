@@ -342,13 +342,32 @@ void CardPricesPanel::onHeadlineLinkActivated(const QString& href) {
     if (externalCardId_.isEmpty()) {
         return;
     }
+    bool hide = false;
+    QString vendor;
     if (href.startsWith(QLatin1String("action:hide:"))) {
-        const QString vendor = href.mid(QStringLiteral("action:hide:").size());
-        lookup_.suppressVendor(externalCardId_, vendor);
+        hide = true;
+        vendor = href.mid(QStringLiteral("action:hide:").size());
     } else if (href.startsWith(QLatin1String("action:show:"))) {
-        const QString vendor = href.mid(QStringLiteral("action:show:").size());
-        lookup_.unsuppressVendor(externalCardId_, vendor);
+        vendor = href.mid(QStringLiteral("action:show:").size());
+    } else {
+        return;
     }
+    // Defer the toggle: suppressVendor/unsuppressVendor SYNCHRONOUSLY emit pricesReady, whose
+    // handler re-renders headline_ via setText — but we are inside headline_'s OWN linkActivated
+    // emission, so rebuilding that label mid-signal is re-entrant. Queue it (bound to a snapshot
+    // of the current card) to run once the signal has unwound. `this` as the invoke context
+    // means a panel destroyed before then simply drops the call.
+    const QString cardId = externalCardId_;
+    QMetaObject::invokeMethod(
+        this,
+        [this, cardId, vendor, hide]() {
+            if (hide) {
+                lookup_.suppressVendor(cardId, vendor);
+            } else {
+                lookup_.unsuppressVendor(cardId, vendor);
+            }
+        },
+        Qt::QueuedConnection);
 }
 
 void CardPricesPanel::resolveAndFetch() {

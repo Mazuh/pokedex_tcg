@@ -401,6 +401,8 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
 
     table_->setRowCount(static_cast<int>(loaded_.size()));
     haystacks_.assign(loaded_.size(), QString());
+    std::vector<CardPrice> priceScratch;  // reused across rows (visiblePricesForCopy's contract):
+                                          // fills only for a suppressed-vendor card
     for (int row = 0; row < static_cast<int>(loaded_.size()); ++row) {
         const CardCopy& c = loaded_[row];
         // Column 0 identifies the row: the species name, or (for a species-free
@@ -439,7 +441,6 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
         // The copy's cached market prices, inline ("$… · €…"); blank when unlinked, never
         // fetched, or Removed (frozen history — matches the inspector). Cache-only
         // (pricesByExternalId_), so this stays a pure in-memory rebuild.
-        std::vector<CardPrice> priceScratch;
         table_->setItem(
             row, 9,
             cell(isRemoved(c) ? QString()
