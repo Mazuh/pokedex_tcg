@@ -30,7 +30,7 @@ CardSetInfo makeSet(std::string id, std::string code, std::string name, int tota
 TEST(CardSetCacheTest, EmptyBeforeAnyStore) {
     Database db(":memory:");
     db.migrate();
-    CardSetCache cache(db);
+    CardSetCache cache(db, "pokemontcg");
 
     EXPECT_FALSE(cache.fetchedAt().has_value());
     EXPECT_TRUE(cache.load().empty());
@@ -39,7 +39,7 @@ TEST(CardSetCacheTest, EmptyBeforeAnyStore) {
 TEST(CardSetCacheTest, StoreThenLoadRoundTripsFieldsOrderedById) {
     Database db(":memory:");
     db.migrate();
-    CardSetCache cache(db);
+    CardSetCache cache(db, "pokemontcg");
 
     const std::vector<CardSetInfo> sets = {
         makeSet("sv3", "OBF", "Obsidian Flames", 197),
@@ -67,7 +67,7 @@ TEST(CardSetCacheTest, StoreThenLoadRoundTripsFieldsOrderedById) {
 TEST(CardSetCacheTest, StoreReplacesTheWholeTable) {
     Database db(":memory:");
     db.migrate();
-    CardSetCache cache(db);
+    CardSetCache cache(db, "pokemontcg");
 
     cache.store({makeSet("sv1", "SVI", "Scarlet & Violet", 198),
                  makeSet("sv2", "PAL", "Paldea Evolved", 193)},
@@ -85,7 +85,7 @@ TEST(CardSetCacheTest, StoreReplacesTheWholeTable) {
 TEST(CardSetCacheTest, StoringEmptyClearsRowsButKeepsTimestamp) {
     Database db(":memory:");
     db.migrate();
-    CardSetCache cache(db);
+    CardSetCache cache(db, "pokemontcg");
 
     cache.store({makeSet("sv3", "OBF", "Obsidian Flames", 197)},
                 at("2026-07-24T00:00:00Z"));
@@ -94,6 +94,33 @@ TEST(CardSetCacheTest, StoringEmptyClearsRowsButKeepsTimestamp) {
     EXPECT_TRUE(cache.load().empty());
     ASSERT_TRUE(cache.fetchedAt().has_value());
     EXPECT_EQ(*cache.fetchedAt(), at("2026-07-25T00:00:00Z"));
+}
+
+// Two providers share the one table without interfering: each source has its own rows and its
+// own fetch stamp, even when they use the SAME set id string ("sv03" here) with different data.
+TEST(CardSetCacheTest, SourcesAreIsolatedInTheSharedTable) {
+    Database db(":memory:");
+    db.migrate();
+    CardSetCache pokemontcg(db, "pokemontcg");
+    CardSetCache tcgdex(db, "tcgdex");
+
+    pokemontcg.store({makeSet("sv3", "OBF", "Obsidian Flames", 197)}, at("2026-07-24T00:00:00Z"));
+    tcgdex.store({makeSet("sv03", "", "Obsidian Flames", 230), makeSet("mep", "", "MEP", 60)},
+                 at("2026-07-25T00:00:00Z"));
+
+    // Each source reads back only its own rows and its own stamp.
+    ASSERT_EQ(pokemontcg.load().size(), 1u);
+    EXPECT_EQ(pokemontcg.load()[0].id, "sv3");
+    EXPECT_EQ(*pokemontcg.fetchedAt(), at("2026-07-24T00:00:00Z"));
+
+    ASSERT_EQ(tcgdex.load().size(), 2u);
+    EXPECT_EQ(tcgdex.load()[0].id, "mep");  // ordered by id within the source
+    EXPECT_EQ(*tcgdex.fetchedAt(), at("2026-07-25T00:00:00Z"));
+
+    // Replacing one source's rows leaves the other's intact.
+    tcgdex.store({makeSet("sv03", "", "Obsidian Flames", 230)}, at("2026-07-26T00:00:00Z"));
+    EXPECT_EQ(pokemontcg.load().size(), 1u);
+    EXPECT_EQ(tcgdex.load().size(), 1u);
 }
 
 }  // namespace

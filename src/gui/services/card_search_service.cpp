@@ -12,7 +12,7 @@
 
 #include <chrono>
 
-#include "core/app/cache_ttl.h"
+#include "gui/services/set_cache_read.h"
 #include "core/app/card_catalog_api.h"
 #include "core/app/card_catalog_parse.h"
 #include "core/app/card_set_cache.h"
@@ -40,10 +40,6 @@ constexpr double kSustainedPerSecond = 5.0;
 // would OR that many set.id clauses into the query URL (risking the API's length
 // limit), so treat it as unnarrowed.
 constexpr std::size_t kMaxNarrowSets = 12;
-// How long a cached set table stays fresh. The set table changes only a few times a
-// year (a new expansion), so a day is plenty — it means at most one /v2/sets fetch
-// per day rather than one per launch, sparing the daily-flaky public API.
-constexpr auto kSetCacheTtl = std::chrono::hours(24);
 
 std::int64_t monotonicNowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -112,21 +108,14 @@ bool CardSearchService::loadSetsFromCache(bool requireFresh) {
     // A cache read failure (corrupt/locked DB) must never break search — treat it as
     // "no cache" and let the network path take over.
     try {
-        const std::optional<Timestamp> fetchedAt = cache_->fetchedAt();
-        if (!fetchedAt) {
-            return false;  // never fetched
+        // The startup fast-path demands a fresh cache; the post-failure fallback accepts any
+        // age. Shared with the pricing set cache (readSetCache) so the freshness rule + TTL
+        // can't drift between them.
+        std::optional<std::vector<CardSetInfo>> cached = readSetCache(*cache_, requireFresh);
+        if (!cached) {
+            return false;
         }
-        // The startup fast-path demands a fresh cache (within kSetCacheTtl, and not
-        // future-dated — see cacheIsFresh); the post-failure fallback accepts any age.
-        if (requireFresh &&
-            !cacheIsFresh(*fetchedAt, std::chrono::system_clock::now(), kSetCacheTtl)) {
-            return false;  // stale (or future) — the caller will re-fetch
-        }
-        std::vector<CardSetInfo> cached = cache_->load();
-        if (cached.empty()) {
-            return false;  // an empty table is no better than no table
-        }
-        sets_ = std::move(cached);
+        sets_ = std::move(*cached);
         setsLoading_ = false;
         // Adopting a cache does not by itself finalize the load state: the startup
         // fast-path (requireFresh) marks the table loaded, and so does the

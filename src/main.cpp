@@ -106,17 +106,22 @@ int main(int argc, char *argv[]) {
         // the small, near-static set table, which the CardSetCache persists in the
         // workspace DB so the daily-flaky /v2/sets fetch is skipped on most launches.
         pokedex::PokemonTcgIoApi cardApi;
-        pokedex::CardSetCache setCache(db);
+        // One card_set_cache table, one CardSetCache class, scoped per provider: the metadata
+        // catalog (pokemontcg.io) and the pricing provider (tcgdex) each cache their own set
+        // list under their own source, rather than a bespoke cache per vendor.
+        pokedex::CardSetCache setCache(db, "pokemontcg");
+        pokedex::CardSetCache tcgdexSetCache(db, "tcgdex");
         pokedex::CardSearchService cardSearch(cardApi, &setCache);
 
         // On-demand card prices: the Qt-free cache/service persist in the workspace DB,
         // the GUI transport fetches per card from tcgdex (the free pricing provider, which —
         // unlike the pokemontcg.io metadata catalog — covers new sets and is addressable by
         // set+number). Prices are fetched only when the user asks (a Fetch/Refresh button),
-        // never on view.
+        // never on view; the tcgdex set table (for resolving a copy's set+number to a card id)
+        // is disk-cached through the shared CardSetCache so it isn't re-fetched every session.
         pokedex::CardPriceCache priceCache(db);
         pokedex::CardPriceService cardPrices(priceCache);
-        pokedex::CardPriceLookupService priceLookup(cardPrices);
+        pokedex::CardPriceLookupService priceLookup(cardPrices, &tcgdexSetCache);
 
         pokedex::MainWindow window(
             service, guide, browse, wishlist, media, cardSearch, priceLookup, cardCopies,

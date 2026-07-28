@@ -83,6 +83,46 @@ TEST(DatabaseTest, UpgradesAnExistingV2DatabaseByAddingCardName) {
     EXPECT_EQ(stmt.columnText(1), "");
 }
 
+// v9 unifies the set cache across providers WITHOUT losing the existing (pokemontcg) rows —
+// they are the disk fallback that keeps set-narrowing working during a /v2/sets outage, so an
+// upgrade must preserve them (re-tagged) rather than drop them, and rename the fetch stamp.
+TEST(DatabaseTest, UpgradesAnExistingV8SetCachePreservingPokemontcgRows) {
+    Database db(":memory:");
+    // Stand up the v8 set cache (id PRIMARY KEY, no source) + cache_meta, with a cached set and
+    // its single fetch stamp, and mark the DB v8 so migrate() runs only the v9 step.
+    db.exec(
+        "CREATE TABLE card_set_cache(id TEXT PRIMARY KEY, ptcgo_code TEXT NOT NULL,"
+        " name TEXT NOT NULL, printed_total INTEGER NOT NULL);");
+    db.exec("CREATE TABLE cache_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);");
+    db.exec(
+        "INSERT INTO card_set_cache(id,ptcgo_code,name,printed_total)"
+        " VALUES('sv3','OBF','Obsidian Flames',197);");
+    db.exec("INSERT INTO cache_meta(key,value) VALUES('sets_fetched_at','2026-07-20T00:00:00Z');");
+    db.setUserVersion(8);
+
+    db.migrate();
+    EXPECT_EQ(db.userVersion(), Database::kSchemaVersion);
+
+    // The pre-existing row survives, re-tagged source='pokemontcg'.
+    Statement row(db, "SELECT source, name FROM card_set_cache WHERE id = 'sv3';");
+    ASSERT_TRUE(row.step());
+    EXPECT_EQ(row.columnText(0), "pokemontcg");
+    EXPECT_EQ(row.columnText(1), "Obsidian Flames");
+
+    // The old fetch stamp is renamed to the per-source key (not orphaned, keeping its age).
+    Statement stamp(db, "SELECT value FROM cache_meta WHERE key = 'sets_fetched_at:pokemontcg';");
+    ASSERT_TRUE(stamp.step());
+    EXPECT_EQ(stamp.columnText(0), "2026-07-20T00:00:00Z");
+    Statement orphan(db, "SELECT COUNT(*) FROM cache_meta WHERE key = 'sets_fetched_at';");
+    ASSERT_TRUE(orphan.step());
+    EXPECT_EQ(orphan.columnInt(0), 0);
+
+    // The new (source, id) primary key lets another provider reuse the same id string.
+    EXPECT_NO_THROW(
+        db.exec("INSERT INTO card_set_cache(source,id,ptcgo_code,name,printed_total)"
+                " VALUES('tcgdex','sv3','','Obsidian Flames (tcgdex)',230);"));
+}
+
 // Exercising the tables through DML proves they exist with the expected columns
 // — a stronger contract than name-matching against sqlite_master.
 TEST(DatabaseTest, TablesAcceptRowsAfterMigration) {

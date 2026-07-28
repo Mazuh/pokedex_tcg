@@ -7,10 +7,14 @@
 #include <QTimer>
 #include <QUrl>
 
+#include <chrono>
+
 #include "core/app/card_catalog_parse.h"
 #include "core/app/card_price_service.h"
+#include "core/app/card_set_cache.h"
 #include "gui/services/http_status.h"
 #include "gui/services/network_log.h"
+#include "gui/services/set_cache_read.h"
 
 namespace pokedex {
 
@@ -29,8 +33,12 @@ QString tcgdexSetsUrl() { return QString::fromLatin1(kTcgdexBase) + QStringLiter
 
 }  // namespace
 
-CardPriceLookupService::CardPriceLookupService(CardPriceService& prices, QObject* parent)
-    : QObject(parent), prices_(prices), nam_(new QNetworkAccessManager(this)) {}
+CardPriceLookupService::CardPriceLookupService(CardPriceService& prices, CardSetCache* setCache,
+                                               QObject* parent)
+    : QObject(parent),
+      prices_(prices),
+      setCache_(setCache),
+      nam_(new QNetworkAccessManager(this)) {}
 
 CardPriceLookupService::CachedPrices CardPriceLookupService::cachedPrices(
     const QString& externalCardId) {
@@ -53,16 +61,41 @@ std::optional<QString> CardPriceLookupService::resolveTcgdexId(const CardReferen
     return std::nullopt;
 }
 
-void CardPriceLookupService::ensureTcgdexSets() {
-    if (tcgdexSetsLoaded_) {
-        Q_EMIT tcgdexSetsResolved(true);  // already have it — no network
+void CardPriceLookupService::ensureTcgdexSets(bool forceRefresh) {
+    if (tcgdexSetsLoaded_ && !forceRefresh) {
+        Q_EMIT tcgdexSetsResolved(true);  // already in memory — no disk read, no network
         return;
     }
     if (tcgdexSetsFetching_) {
         return;  // a fetch is on the wire; its completion will emit for every waiting caller
     }
+    // Prefer a fresh disk cache (no network) — the common case after the first fetch, even
+    // across launches while the table stays within the TTL. A forceRefresh skips this so a
+    // resolve miss can pick up a newly-published set the cached copy predates.
+    if (!forceRefresh && loadSetsFromCache(/*requireFresh=*/true)) {
+        Q_EMIT tcgdexSetsResolved(true);
+        return;
+    }
     tcgdexSetsFetching_ = true;
     startSetsFetch(kApiMaxRetries);
+}
+
+bool CardPriceLookupService::loadSetsFromCache(bool requireFresh) {
+    if (setCache_ == nullptr) {
+        return false;
+    }
+    try {
+        std::optional<std::vector<CardSetInfo>> cached = readSetCache(*setCache_, requireFresh);
+        if (!cached) {
+            return false;
+        }
+        tcgdexSets_ = std::move(*cached);
+        tcgdexSetsLoaded_ = true;
+        return true;
+    } catch (const std::exception& e) {
+        qWarning() << "CardPriceLookupService: reading the tcgdex set cache failed:" << e.what();
+        return false;
+    }
 }
 
 void CardPriceLookupService::startSetsFetch(int retriesLeft) {
@@ -80,22 +113,41 @@ void CardPriceLookupService::startSetsFetch(int retriesLeft) {
             qWarning().noquote() << "CardPriceLookupService: tcgdex set table fetch failed —"
                                  << httpStatusNote(reply) << ":" << reply->errorString();
             tcgdexSetsFetching_ = false;
-            Q_EMIT tcgdexSetsResolved(false);
+            // The API is down — narrow from a stale cached copy (any age) if we have one, so
+            // pricing survives an outage. Mirrors CardSearchService's fallback.
+            const bool haveStale = loadSetsFromCache(/*requireFresh=*/false);
+            Q_EMIT tcgdexSetsResolved(haveStale);
             return;
         }
+        std::vector<CardSetInfo> parsed;
         try {
-            tcgdexSets_ = parseTcgdexSets(reply->readAll().toStdString());
+            parsed = parseTcgdexSets(reply->readAll().toStdString());
         } catch (const std::exception& e) {
             qWarning() << "CardPriceLookupService: could not parse tcgdex set table:" << e.what();
             tcgdexSetsFetching_ = false;
-            Q_EMIT tcgdexSetsResolved(false);
+            Q_EMIT tcgdexSetsResolved(loadSetsFromCache(/*requireFresh=*/false));
             return;
         }
         tcgdexSetsFetching_ = false;
-        // A syntactically valid but empty table is not usable for resolution; treat it as a
-        // failed load so the caller retries rather than reporting a false "can't find set".
-        tcgdexSetsLoaded_ = !tcgdexSets_.empty();
-        Q_EMIT tcgdexSetsResolved(tcgdexSetsLoaded_);
+        // A syntactically valid but EMPTY table is a degraded response (a partial outage
+        // 200-ing an empty array), not a real "no sets" answer — so, like the network- and
+        // parse-error branches, fall back to a stale cached copy rather than blanking a user
+        // who has a good set table on disk.
+        if (parsed.empty()) {
+            Q_EMIT tcgdexSetsResolved(loadSetsFromCache(/*requireFresh=*/false));
+            return;
+        }
+        tcgdexSets_ = std::move(parsed);
+        tcgdexSetsLoaded_ = true;
+        if (setCache_ != nullptr) {
+            try {
+                setCache_->store(tcgdexSets_, std::chrono::system_clock::now());
+            } catch (const std::exception& e) {
+                qWarning() << "CardPriceLookupService: persisting the tcgdex set cache failed:"
+                           << e.what();  // non-fatal: the in-memory table still works this session
+            }
+        }
+        Q_EMIT tcgdexSetsResolved(true);
     });
 }
 

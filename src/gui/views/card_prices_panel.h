@@ -90,6 +90,8 @@ private:
 
     bool fetching_ = false;       // a Fetch (resolve and/or price fetch) is in flight
     bool awaitingSets_ = false;   // waiting on the set table before resolveAndFetch()
+    bool triedSetRefresh_ = false;  // already forced one set-table refresh this Fetch (a stale
+                                    // cache missing a new set) — don't loop
 
     QLabel* headline_;         // per-vendor figures; each vendor name links to a marketplace search
     QToolButton* infoButton_;  // "ⓘ" — explains the metrics + price freshness, on click

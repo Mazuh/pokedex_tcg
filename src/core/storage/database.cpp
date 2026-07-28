@@ -140,6 +140,38 @@ CREATE INDEX idx_card_price_external_id ON card_price(external_card_id);
 constexpr char kMigrationV8[] =
     "ALTER TABLE card_copy ADD COLUMN external_card_id TEXT NOT NULL DEFAULT '';";
 
+// v8 → v9: make the set cache serve MORE THAN ONE provider from one table. The catalog
+// (pokemontcg.io) and the pricing provider (tcgdex) each publish their own set list with
+// their own id scheme ("sv3" vs "sv03"), so a set is stored once per provider — a `source`
+// discriminator, part of the primary key so the two providers' ids can't collide. Both go
+// through the single CardSetCache class (scoped by source), rather than a second bespoke
+// per-vendor cache. Per-source TTL lives in cache_meta under key "sets_fetched_at:<source>".
+//
+// The existing rows were all pokemontcg's, so they are PRESERVED (re-tagged source
+// 'pokemontcg') rather than dropped — the set cache exists precisely so set-narrowing
+// survives an outage of the daily-flaky /v2/sets, and dropping it would strand the very
+// first post-upgrade launch with no stale fallback if that API were down. The old single
+// fetch stamp is renamed to the per-source key so the preserved rows keep their real age.
+constexpr char kMigrationV9[] = R"sql(
+ALTER TABLE card_set_cache RENAME TO card_set_cache_v8;
+
+CREATE TABLE card_set_cache (
+  source         TEXT NOT NULL,
+  id             TEXT NOT NULL,
+  ptcgo_code     TEXT NOT NULL,
+  name           TEXT NOT NULL,
+  printed_total  INTEGER NOT NULL,
+  PRIMARY KEY (source, id)
+);
+
+INSERT INTO card_set_cache(source, id, ptcgo_code, name, printed_total)
+  SELECT 'pokemontcg', id, ptcgo_code, name, printed_total FROM card_set_cache_v8;
+
+DROP TABLE card_set_cache_v8;
+
+UPDATE cache_meta SET key = 'sets_fetched_at:pokemontcg' WHERE key = 'sets_fetched_at';
+)sql";
+
 }  // namespace
 
 Database::Database(const std::filesystem::path& path) {
@@ -245,6 +277,9 @@ void Database::migrate() {
         }
         if (from < 8) {
             exec(kMigrationV8);
+        }
+        if (from < 9) {
+            exec(kMigrationV9);
         }
         setUserVersion(kSchemaVersion);
     });

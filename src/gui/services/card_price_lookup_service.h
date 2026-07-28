@@ -19,6 +19,7 @@ class QNetworkAccessManager;
 namespace pokedex {
 
 class CardPriceService;
+class CardSetCache;
 
 // GUI — the transport half of the card-price module: fetches ONE card's market
 // prices on demand and persists them via the Qt-free CardPriceService. The sibling
@@ -43,8 +44,13 @@ class CardPriceLookupService : public QObject {
     Q_OBJECT
 
 public:
-    // `prices` must outlive this service (like the other GUI transports).
-    explicit CardPriceLookupService(CardPriceService& prices, QObject* parent = nullptr);
+    // `prices` must outlive this service (like the other GUI transports). `setCache`, when
+    // supplied, is a tcgdex-scoped CardSetCache the set table is loaded from / persisted to,
+    // so the /v2/en/sets fetch is skipped on most launches (a 24h TTL) and a stale copy still
+    // resolves ids when the API is down — the same disk-cache treatment the catalog set table
+    // gets. Null disables persistence (the table is then fetched fresh each session).
+    explicit CardPriceLookupService(CardPriceService& prices, CardSetCache* setCache = nullptr,
+                                    QObject* parent = nullptr);
 
     // A card's cached prices together with its last-fetch stamp, so a view rendering a
     // selection consults the cache through one call and one error path instead of two
@@ -81,9 +87,12 @@ public:
     std::optional<QString> resolveTcgdexId(const CardReference& ref) const;
 
     // Ensure the tcgdex set table is loaded, then emit tcgdexSetsResolved(ok). If it is
-    // already loaded this emits immediately (ok=true) without a network hit; otherwise it
-    // fetches /v2/en/sets once (coalescing concurrent callers onto the one in-flight fetch).
-    void ensureTcgdexSets();
+    // already loaded (or a fresh disk copy exists) this emits immediately (ok=true) without a
+    // network hit; otherwise it fetches /v2/en/sets once (coalescing concurrent callers onto
+    // the one in-flight fetch). `forceRefresh` bypasses both the in-memory table and the
+    // fresh-disk shortcut to fetch a current list — the caller uses it after a resolve MISS,
+    // since a set released since the cached copy would otherwise stay unknown until the TTL.
+    void ensureTcgdexSets(bool forceRefresh = false);
 
 Q_SIGNALS:
     // Fired when a card's prices are available to (re-)read via cachedPrices(id) — after a
@@ -97,6 +106,10 @@ Q_SIGNALS:
 private:
     void startFetch(const QString& externalCardId, int retriesLeft);
     void startSetsFetch(int retriesLeft);
+    // Load the tcgdex set table from the disk cache into memory. `requireFresh` demands the
+    // cache be within the TTL (the no-network fast path); false accepts any age (the
+    // post-failure stale fallback). Returns true when a non-empty table was adopted.
+    bool loadSetsFromCache(bool requireFresh);
     // Terminal outcomes of an in-flight price fetch. On success the coalesced-Refresh flag is
     // cleared (the fresh result covers every waiting panel); on failure, if a Refresh
     // coalesced onto this now-failed attempt, it is re-issued as a genuine fresh fetch
@@ -105,6 +118,7 @@ private:
     void finishFailed(const QString& externalCardId);
 
     CardPriceService& prices_;
+    CardSetCache* setCache_;  // tcgdex-scoped disk cache for the set table (may be null)
     QNetworkAccessManager* nam_;
     QSet<QString> inFlight_;  // ids with a fetch on the wire, to coalesce duplicates
     // ids for which an explicit Fetch/Refresh arrived while a fetch was already on the

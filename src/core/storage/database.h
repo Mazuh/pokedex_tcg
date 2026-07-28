@@ -36,7 +36,7 @@ public:
     //        prices, keyed by external card id; also reference data).
     //   v8 — card_copy.external_card_id (links a copy to its external catalog card
     //        so its prices can be looked up; optional/blank for unlinked copies).
-    static constexpr int kSchemaVersion = 8;
+    static constexpr int kSchemaVersion = 9;
 
     // Open (creating if absent) the database at `path`, or an in-memory database
     // when path == ":memory:". Throws StorageError on failure.

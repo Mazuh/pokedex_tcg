@@ -214,6 +214,7 @@ void CardPricesPanel::showCopy(const CardCopy& copy) {
     copyRemoved_ = copy.ownership == CardOwnership::Removed;
     fetching_ = false;
     awaitingSets_ = false;
+    triedSetRefresh_ = false;
     render();
 }
 
@@ -224,6 +225,7 @@ void CardPricesPanel::clear() {
     copyRemoved_ = false;
     fetching_ = false;
     awaitingSets_ = false;
+    triedSetRefresh_ = false;
     render();
 }
 
@@ -346,6 +348,7 @@ void CardPricesPanel::onFetchClicked() {
         // Resolve the tcgdex card id from the copy's set+number, then fetch. This both links
         // an unlinked copy and re-resolves one still on a pre-tcgdex id — invisibly.
         fetching_ = true;
+        triedSetRefresh_ = false;  // this explicit Fetch gets one set-refresh retry
         fetchButton_->setEnabled(false);
         status_->setText(QStringLiteral("Looking up this card…"));
         status_->show();
@@ -371,11 +374,18 @@ void CardPricesPanel::onFetchClicked() {
 void CardPricesPanel::resolveAndFetch() {
     const std::optional<QString> id = lookup_.resolveTcgdexId(cardRef_);
     if (!id) {
-        // The set table is loaded but this copy's set/number couldn't be exactly identified.
-        // Do NOT fall back to fetching externalCardId_: a legitimately linked copy's tcgdex id
-        // would have re-resolved here, so a non-empty id at this point is a stale/foreign key
-        // (e.g. a pre-tcgdex pokemontcg id) whose GET would 404 with a misleading error. Report
-        // the accurate guidance instead.
+        // Couldn't identify the set from a (possibly cached) table. The set may simply be newer
+        // than our cached copy, so force ONE fresh /v2/en/sets fetch and retry before giving up.
+        if (!triedSetRefresh_) {
+            triedSetRefresh_ = true;
+            awaitingSets_ = true;
+            lookup_.ensureTcgdexSets(/*forceRefresh=*/true);  // tcgdexSetsResolved → retry
+            return;
+        }
+        // Still unidentifiable after a fresh table. Do NOT fall back to fetching
+        // externalCardId_: a legitimately linked copy's tcgdex id would have re-resolved here,
+        // so a non-empty id at this point is a stale/foreign key (e.g. a pre-tcgdex pokemontcg
+        // id) whose GET would 404 with a misleading error. Report the accurate guidance.
         fetching_ = false;
         fetchButton_->setEnabled(true);
         status_->setText(QStringLiteral("Couldn't identify this card for pricing — check its "

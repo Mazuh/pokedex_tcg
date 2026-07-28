@@ -71,7 +71,12 @@ any `card_copy`, see the `CardPriceCache` note below; v8 added
 `card_copy.external_card_id`, the link from an owned copy to its priced tcgdex card
 [blank = unlinked] so the copy's prices can be looked up — resolved invisibly from the
 copy's printed set+number on the first Fetch [`CardCopyService::linkCatalogCard`
-persists it], no catalog search or user action involved),
+persists it], no catalog search or user action involved; v9 rebuilt `card_set_cache`
+with a `source` column [PK `(source, id)`] so ONE table + one `CardSetCache` class caches
+BOTH providers' set lists — pokemontcg.io [`source='pokemontcg'`] for search narrowing and
+tcgdex [`source='tcgdex'`] for price resolution — rather than a bespoke cache per vendor;
+the migration PRESERVES the existing rows re-tagged `source='pokemontcg'` [keeping the outage
+fallback] and renames the old fetch stamp; tcgdex populates on first price use),
 so a fresh DB runs the whole chain and an existing one
 only the tail — bump `kSchemaVersion` and add a step (never edit `kSchemaV1`) when
 the schema changes. `storage/` holds
@@ -95,11 +100,16 @@ id generator like `BinderService`), `WishlistService` (the manage-sources verbs)
 `PokemonExternalApi` but for *cards*), its concrete `PokemonTcgIoApi` (pokemontcg.io
 URL/Lucene query building), the DTOs (`card_catalog_dto.h`: `CardSetInfo`,
 `CardCandidate`), `card_catalog_parse` (nlohmann/json parsers/mappers — see the
-JSON note in the tech stack), and `CardSetCache` (the cross-launch persistence of
-the `/v2/sets` table — a `vector<CardSetInfo>` — in the `card_set_cache`/`cache_meta`
-tables; it lives in `app/` rather than `storage/` precisely because its row type
-`CardSetInfo` is an app projection, so a storage-layer repo would invert the
-layering: `app/` may use `storage/`, not vice versa). The **card-price seam** uses a
+JSON note in the tech stack), and `CardSetCache` (the cross-launch persistence of a set
+table — a `vector<CardSetInfo>` — in the `card_set_cache`/`cache_meta` tables). A
+`CardSetCache` is **scoped to one `source` at construction** (`"pokemontcg"` / `"tcgdex"`):
+every read/write is filtered to that source and rows for both providers coexist in the one
+table (keyed by `(source, id)`), with a per-source fetch stamp (`sets_fetched_at:<source>`).
+So the catalog's set list (search narrowing) and the pricing provider's (price resolution)
+share one table + one class + one TTL/disk-cache mechanism instead of a bespoke cache each —
+the two just pick different sources. It lives in `app/` rather than `storage/` precisely
+because its row type `CardSetInfo` is an app projection, so a storage-layer repo would invert
+the layering: `app/` may use `storage/`, not vice versa. The **card-price seam** uses a
 **separate pricing provider from the metadata catalog**: pokemontcg.io remains the
 metadata source (search/autofill/images), but **tcgdex** (`api.tcgdex.net`, a free
 aggregator — a *pricing provider*, not an authoritative source of truth) is the **sole
@@ -139,9 +149,12 @@ freshness rule (incl. the backward-clock guard) is the shared `cacheIsFresh` hel
 GET stays GUI-side: `gui/services/CardPriceLookupService` (mirrors `CardSearchService`,
 sharing the `gui/services/http_status.h` retry-classification helpers) fetches one card's
 prices from tcgdex's `/v2/en/cards/{id}` and persists them through `recordTcgdexPrices`; it
-also **lazily fetches and holds the tcgdex set table** (`/v2/en/sets`, once per session via
-`ensureTcgdexSets`) so `resolveTcgdexId(ref)` can map a copy's set+number to a tcgdex id
-with no search. It builds tcgdex URLs directly (no `CardCatalogApi` — pokemontcg.io's
+also **lazily loads the tcgdex set table** so `resolveTcgdexId(ref)` can map a copy's
+set+number to a tcgdex id with no search: `ensureTcgdexSets` reads it from the tcgdex-scoped
+`CardSetCache` (disk, no network) when fresh within a 24h TTL, else fetches `/v2/en/sets`,
+persists it, and falls back to a stale cached copy if the fetch fails — the same disk-cache
+treatment the catalog set table gets (mirrors `CardSearchService`), so most launches skip the
+fetch entirely. It builds tcgdex URLs directly (no `CardCatalogApi` — pokemontcg.io's
 `resolveCardById` was removed with the pokemontcg price path). It is strictly **on-demand**
 — `cached`/`fetchedAt` never touch the network; only `fetch()` and the one-time set-table
 load (both behind an explicit Fetch/Refresh) do — so merely viewing a card never hits the
