@@ -1,11 +1,13 @@
 #pragma once
 
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 #include "core/app/card_catalog_dto.h"
 #include "core/app/card_price_dto.h"
+#include "core/domain/card_reference.h"
 #include "core/domain/types.h"
 
 namespace pokedex {
@@ -36,36 +38,57 @@ std::vector<CardSetInfo> parseSetsResponse(const std::string& json);
 std::vector<CardCandidate> parseCardSearchResponse(const std::string& json,
                                                    const std::vector<CardSetInfo>& sets);
 
-// The outcome of parsing a /v2/cards/{id} price payload. `cardPresent` says whether the
-// response actually carried a resolvable card object (vs a degraded/error body with no
-// `data` card node); `prices` are its extracted rows. The distinction lets a caller tell a
-// genuinely price-less card (card present but no vendor blocks — a delisted card, or a set
-// the API hasn't priced yet) apart from a degraded response (no card object at all): the
-// former should overwrite the cache (caching the blank), the latter should preserve any
-// good cached prices. parseCardPrices() below drops `cardPresent` for callers that don't
-// need it.
+// The outcome of parsing a per-card price payload. `cardPresent` says whether the response
+// actually carried a resolvable card object (vs a degraded/error body with no card node);
+// `prices` are its extracted rows. The distinction lets a caller tell a genuinely price-less
+// card (card present but no vendor blocks — a delisted card, or a set the provider hasn't
+// priced yet) apart from a degraded response (no card object at all): the former should
+// overwrite the cache (caching the blank), the latter should preserve any good cached prices.
 struct CardPricesParse {
     bool cardPresent = false;
     std::vector<CardPrice> prices;
 };
 
-// Parse a /v2/cards/{id} single-card response into price observations, reading the
-// `tcgplayer` (USD, per-variant) and `cardmarket` (EUR, flat) blocks. Each numeric
-// price becomes one CardPrice row keyed by the card's own id; a non-positive value
-// (a zero/absent metric — e.g. cardmarket's germanProLow) is skipped as noise. The
-// returned rows have an empty `id` (the caller mints one on persist) and provenance
-// "tcgplayer"/"cardmarket". `observedAt` is the vendor block's printed `updatedAt`
-// date (format "YYYY/MM/DD", taken at midnight UTC); `fallbackObservedAt` is used
-// when that date is missing or malformed (the caller passes the fetch time, so the
-// parser stays clock-free and deterministic). A payload with neither block yields
-// no rows. Robust to `data` being an object (the single-card endpoint) or the first
-// element of a `data` array (a search response).
-std::vector<CardPrice> parseCardPrices(const std::string& json, Timestamp fallbackObservedAt);
+// Parse a tcgdex /v2/en/cards/{id} single-card response into price observations. tcgdex is
+// the app's sole automated pricing PROVIDER (a free aggregator, not a source of truth):
+// unlike pokemontcg.io it covers brand-new sets and is addressable by set+collector-number,
+// so a card the metadata catalog hasn't ingested can still be priced. Its payload differs
+// from pokemontcg.io's: prices live under `variants_detailed[].pricing.{cardmarket,
+// tcgplayer}`, and — crucially — tcgdex's metric NAMES ("trend"/"avg"/"marketPrice"…) are
+// normalized here to a canonical vocabulary ("trendPrice"/"averageSellPrice"/"market"… —
+// pokemontcg.io's names, still emitted for the finder hint), so the cache and every display
+// stay source-agnostic (the same CardPrice rows, the same vendorBest pick). Only known price
+// metrics are read — the vendor blocks also carry non-price numbers (`idProduct`,
+// `productId`) a blind scan would misread as money. cardmarket is EUR and flat; tcgplayer is
+// USD and nested by finish. Standard-size variants are preferred (an oversized jumbo/
+// lenticular printing is a different product); a card with only oversized printings still
+// yields their prices. Dates are ISO-8601 (`updated`); a missing/malformed one uses
+// `fallbackObservedAt`. Non-positive / sub-cent metrics are dropped as noise. Rows carry an
+// empty id (minted on persist) and the payload's own card id. Throws CardCatalogParseError on
+// non-JSON. `...Result` additionally reports `cardPresent` (an error/404 body has no card).
+std::vector<CardPrice> parseTcgdexCardPrices(const std::string& json, Timestamp fallbackObservedAt);
+CardPricesParse parseTcgdexCardPricesResult(const std::string& json, Timestamp fallbackObservedAt);
 
-// As parseCardPrices, but also reports whether the payload contained a resolvable card
-// object (`cardPresent`) so the caller can distinguish a price-less card from a degraded
-// response — see CardPricesParse.
-CardPricesParse parseCardPricesResult(const std::string& json, Timestamp fallbackObservedAt);
+// Parse a tcgdex /v2/en/sets response — a FLAT JSON array of {id, name, cardCount}, not the
+// pokemontcg.io "data"-wrapped shape — into the set table that maps a copy's printed set to
+// a tcgdex set id (see resolveTcgdexCardId). Entries with an empty id are skipped; ptcgoCode
+// is left blank (tcgdex publishes none) and printedTotal carries cardCount.total. A
+// non-array payload yields no sets rather than throwing.
+std::vector<CardSetInfo> parseTcgdexSets(const std::string& json);
+
+// Resolve a copy's printed identity to a tcgdex card id ("mep-013" == setId "-" localId) for
+// the price lookup, using the tcgdex set table (parseTcgdexSets) to map the set to a tcgdex
+// set id. Because tcgdex is addressable by set+number this needs no catalog SEARCH — pricing
+// is derived directly from what the copy already records. Only EXACT set matches are trusted
+// (a wrong link would show another card's prices): the set name equal to a tcgdex set NAME
+// (the main-set path — the tcgdex id "sv03" is nothing like the printed "OBF", but the names
+// match), tried first, then the expansion code AS a tcgdex set id (promos whose printed code
+// is the id, e.g. "MEP"→"mep"). The localId is the collector number's leading printing part
+// ("125/197"→"125", "013"→"013"). Returns nullopt when no collector number is recorded or the
+// set can't be exactly identified — the caller then shows a "can't price this yet" hint
+// rather than guessing a wrong card (no fuzzy substring matching, no existence check).
+std::optional<std::string> resolveTcgdexCardId(const CardReference& ref,
+                                               const std::vector<CardSetInfo>& tcgdexSets);
 
 // Resolve a user-typed set filter to the set ids it matches, for reliable
 // set.id-based search narrowing. Matches an exact printed code (e.g. "OBF") OR a

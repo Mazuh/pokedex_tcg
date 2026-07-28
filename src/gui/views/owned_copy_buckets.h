@@ -3,8 +3,10 @@
 #include <QString>
 
 #include <algorithm>
+#include <exception>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "core/app/card_price_dto.h"
@@ -120,6 +122,31 @@ inline const std::vector<CardPrice>& pricesForCopy(
     }
     const auto it = byExternalId.find(copy.externalCardId);
     return it == byExternalId.end() ? kEmpty : it->second;
+}
+
+// GUI — the by-external-id price map both card tables (My Cards, the binder guide) hold: the
+// distinct linked ids of the copies matching `include` (skipping unlinked ones), read in ONE
+// batched cache query (cachedMany, no network) so a reload is not N round-trips and a header
+// sort never re-queries. Best-effort — a storage failure yields an empty map (blank Prices
+// cells) rather than crashing. Templated on the lookup service and the predicate so the two
+// views (differing only in which copies count — Owned vs non-Removed) share one definition.
+// `Lookup` needs `cachedMany(const std::vector<std::string>&)`.
+template <typename Lookup, typename Predicate>
+inline std::unordered_map<std::string, std::vector<CardPrice>> loadCachedPricesFor(
+    Lookup& lookup, const std::vector<CardCopy>& copies, Predicate include) {
+    std::vector<std::string> ids;
+    std::unordered_set<std::string> seen;
+    for (const CardCopy& copy : copies) {
+        if (include(copy) && !copy.externalCardId.empty() &&
+            seen.insert(copy.externalCardId).second) {
+            ids.push_back(copy.externalCardId);
+        }
+    }
+    try {
+        return lookup.cachedMany(ids);
+    } catch (const std::exception&) {
+        return {};
+    }
 }
 
 }  // namespace pokedex

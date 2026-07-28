@@ -101,14 +101,6 @@ HttpRequest PokemonTcgIoApi::resolveSearch(const CardSearchQuery& query) const {
     return request;
 }
 
-HttpRequest PokemonTcgIoApi::resolveCardById(const std::string& cardId) const {
-    // The card id is a path segment, so it is URL-encoded (real ids are unreserved
-    // ASCII and pass through unchanged, but encoding keeps a malformed id safe).
-    HttpRequest request;
-    request.url = std::string(kBase) + "/cards/" + urlEncode(cardId);
-    return request;
-}
-
 HttpRequest PokemonTcgIoApi::resolveSets() const {
     HttpRequest request;
     request.url = std::string(kBase) + "/sets?pageSize=" + kPageSize;

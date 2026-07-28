@@ -11,6 +11,8 @@ manage my physical card collection using local files.
 - Organize your physical cards into binders.
 - Record card copies with printing details, condition and ownership.
 - Search the pokemontcg.io catalog to autofill a card and its image.
+- Fetch a card's market prices on demand (via the tcgdex pricing aggregator), even for
+  brand-new sets — resolved straight from the card's set and collector number.
 - Keep a wishlist of the cards and sources you're still after.
 
 ## Instructions
@@ -97,6 +99,8 @@ app would not exist without them:
 
 - [**Pokémon TCG API**](https://github.com/PokemonTCG/pokemon-tcg-api)
   ([pokemontcg.io](https://pokemontcg.io)) — card catalog, printings, and images.
+- [**TCGdex**](https://www.tcgdex.dev) — the market-price aggregator behind the
+  on-demand price lookup (a free provider; prices are rough guidance, not a valuation).
 - [**PokeAPI/sprites**](https://github.com/PokeAPI/sprites) — the official
   Pokémon artwork (fetched directly from the sprites repo).
 - [**lgreski/pokemonData**](https://github.com/lgreski/pokemonData) — the

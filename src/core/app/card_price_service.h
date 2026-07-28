@@ -27,10 +27,10 @@ public:
 // does not — minting ids and reading the clock — both injectable so tests are
 // deterministic.
 //
-// The HTTP GET itself lives GUI-side (the URL comes from
-// CardCatalogApi::resolveCardById): core never does I/O, so the caller fetches the
-// per-card payload and hands its JSON to recordApiPrices. A card's prices are keyed
-// by the external card id and are independent of any owned CardCopy.
+// The HTTP GET itself lives GUI-side (CardPriceLookupService fetches the tcgdex
+// per-card payload): core never does I/O, so the caller hands the payload's JSON to
+// recordTcgdexPrices. A card's prices are keyed by the external card id and are
+// independent of any owned CardCopy.
 class CardPriceService {
 public:
     using Clock = std::function<Timestamp()>;
@@ -52,27 +52,27 @@ public:
     // When we last fetched this card from the API, or nullopt if never.
     std::optional<Timestamp> fetchedAt(const std::string& externalCardId);
 
-    // The outcome of recordApiPrices. `stored` are the freshly persisted API rows (empty
+    // The outcome of recordTcgdexPrices. `stored` are the freshly persisted API rows (empty
     // when the card came back with no vendor blocks). `degraded` is true when NO card
-    // object came back at all (an error body / data:null / a 200 the transport couldn't
-    // turn into a card): nothing was stored or stamped, so the caller must treat the fetch
-    // as FAILED (let the user retry) rather than as a successful "no prices" answer — a
-    // genuinely price-less card (card present, no blocks) has degraded=false and an empty
-    // `stored`, and IS stamped so it isn't re-offered forever. See CardPricesParse.
+    // object came back at all (an error body / a 200 the transport couldn't turn into a
+    // card): nothing was stored or stamped, so the caller must treat the fetch as FAILED
+    // (let the user retry) rather than as a successful "no prices" answer — a genuinely
+    // price-less card (card present, no blocks) has degraded=false and an empty `stored`,
+    // and IS stamped so it isn't re-offered forever. See CardPricesParse.
     struct RecordedApiPrices {
         std::vector<CardPrice> stored;
         bool degraded = false;
     };
 
-    // Parse a /v2/cards/{id} payload and persist its prices for `externalCardId`, replacing
-    // that card's previously-cached API rows and stamping the fetch time to now();
-    // manual rows are preserved. The parsed rows are re-keyed to `externalCardId` (the id we
-    // fetched) so a read finds them regardless of the payload's own id field. Returns the
-    // freshly stored API prices, plus a `degraded` flag distinguishing a no-card response
-    // (nothing stored/stamped) from a genuine price-less answer. Throws CardCatalogParseError
-    // if the payload is not valid JSON.
-    RecordedApiPrices recordApiPrices(const std::string& externalCardId,
-                                      const std::string& jsonPayload);
+    // Parse a tcgdex /v2/en/cards/{id} payload (parseTcgdexCardPrices) and persist its prices
+    // for `externalCardId` — the app's sole automated pricing PROVIDER. Replaces that card's
+    // API-sourced rows and stamps the fetch time to now(); manual rows are preserved. The
+    // parsed rows are re-keyed to `externalCardId` (the id we fetched) so a read finds them
+    // regardless of the payload's own id field. Returns the freshly stored API prices, plus a
+    // `degraded` flag distinguishing a no-card response (nothing stored/stamped) from a genuine
+    // price-less answer. Throws CardCatalogParseError if the payload is not valid JSON.
+    RecordedApiPrices recordTcgdexPrices(const std::string& externalCardId,
+                                         const std::string& jsonPayload);
 
     // Pin a manual price for a card. `amountCents` must be positive and `currency`
     // non-blank (trimmed) — else CardPriceError. observedAt is stamped to now().
@@ -81,7 +81,7 @@ public:
                              std::string currency, std::string note = "");
 
     // Delete a manual price by id. A no-op if the id is unknown or names an
-    // API-sourced row (those are managed only by recordApiPrices).
+    // API-sourced row (those are managed only by recordTcgdexPrices).
     void removeManualPrice(const std::string& id);
 
     // The defaults, exposed so callers can wrap/compose them if needed.
@@ -89,6 +89,14 @@ public:
     static IdGenerator uuidGenerator();
 
 private:
+    // Shared persistence for both record* verbs: key + mint ids onto the parsed rows and
+    // store them (stamping `now`), or, for a degraded response (no card, so `prices` empty
+    // and `cardPresent` false), leave the cache and stamp untouched and report it. See the
+    // recordApiPrices docstring for why the degraded case must not cache a false "no prices".
+    RecordedApiPrices persistParsedPrices(const std::string& externalCardId,
+                                          std::vector<CardPrice> prices, bool cardPresent,
+                                          Timestamp now);
+
     CardPriceCache& cache_;
     Clock clock_;
     IdGenerator idGenerator_;

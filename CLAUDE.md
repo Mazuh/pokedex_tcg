@@ -19,8 +19,8 @@ See `README.md` for the product vision; the domain glossary now lives in the
   format* or export target — out of scope.
 - **JSON (parsing only):** nlohmann/json (fetched via CMake `FetchContent`,
   `JSON_SystemInclude ON`, linked PRIVATE into `pokedex_core`) — used **only** to
-  parse the external card-catalog (pokemontcg.io) API responses in
-  `core/app/card_catalog_parse`. It never appears in a public core header (the
+  parse the external card-catalog API responses (pokemontcg.io for metadata, tcgdex for
+  prices) in `core/app/card_catalog_parse`. It never appears in a public core header (the
   parsers take `std::string`, return plain structs) and is never a storage format.
 - **Build:** CMake + Ninja
 - **Tests:** GoogleTest (fetched via CMake `FetchContent`) run through CTest
@@ -66,13 +66,12 @@ v4 `card_copy.rarity`; v5 `card_copy.foil`; v6 added `card_set_cache` +
 `cache_meta`, the TTL'd local cache of the external `/v2/sets` table — reference
 data, not collection source-of-truth, see the `CardSetCache` note below; v7 added
 `card_price` + `card_price_fetch`, the on-demand cache of a card's market prices —
-also external reference data, keyed by the pokemontcg.io card id and independent of
+also external reference data, keyed by the tcgdex card id and independent of
 any `card_copy`, see the `CardPriceCache` note below; v8 added
-`card_copy.external_card_id`, the link from an owned copy to its catalog card [blank =
-unlinked] so the copy's prices can be looked up — set when a copy is added from the
-finder, or attached later via the Edit page's "Link prices to this card"
-[`CardCopyService::linkCatalogCard`, the after-the-fact linker for copies that predate
-the link]),
+`card_copy.external_card_id`, the link from an owned copy to its priced tcgdex card
+[blank = unlinked] so the copy's prices can be looked up — resolved invisibly from the
+copy's printed set+number on the first Fetch [`CardCopyService::linkCatalogCard`
+persists it], no catalog search or user action involved),
 so a fresh DB runs the whole chain and an existing one
 only the tail — bump `kSchemaVersion` and add a step (never edit `kSchemaV1`) when
 the schema changes. `storage/` holds
@@ -100,65 +99,82 @@ JSON note in the tech stack), and `CardSetCache` (the cross-launch persistence o
 the `/v2/sets` table — a `vector<CardSetInfo>` — in the `card_set_cache`/`cache_meta`
 tables; it lives in `app/` rather than `storage/` precisely because its row type
 `CardSetInfo` is an app projection, so a storage-layer repo would invert the
-layering: `app/` may use `storage/`, not vice versa). The **card-price seam** is the
-same shape: `CardCatalogApi::resolveCardById` → `/v2/cards/{id}` (the per-card
-endpoint whose response embeds the market prices), `card_catalog_parse::parseCardPrices`
-(pure parser of the `tcgplayer`/`cardmarket` blocks — one `CardPrice` row per
-vendor×variant×metric, dropping any value that rounds to ≤0 cents as noise; the vendor
-`YYYY/MM/DD` date → midnight-UTC `observedAt` with a caller-supplied fallback so the
-parser stays clock-free), `CardPriceCache` (thin SQL over `card_price`/`card_price_fetch`,
+layering: `app/` may use `storage/`, not vice versa). The **card-price seam** uses a
+**separate pricing provider from the metadata catalog**: pokemontcg.io remains the
+metadata source (search/autofill/images), but **tcgdex** (`api.tcgdex.net`, a free
+aggregator — a *pricing provider*, not an authoritative source of truth) is the **sole
+automated pricing feed**. It is used because — unlike pokemontcg.io — it covers
+brand-new sets and is addressable by set+collector-number, so a card the metadata
+catalog hasn't ingested (a fresh promo like MEP) can still be priced. The seam:
+`card_catalog_parse::parseTcgdexCardPrices` (pure parser of a `/v2/en/cards/{id}` payload
+— the `variants_detailed[].pricing.{tcgplayer,cardmarket}` blocks — one `CardPrice` row
+per vendor×variant×metric, dropping ≤0-cent noise; tcgdex's metric NAMES are **normalized
+to the same canonical vocabulary** the pokemontcg parser emitted [`trend`→`trendPrice`,
+`marketPrice`→`market`, …] so the cache and every display helper stay source-agnostic;
+only whitelisted price keys are read, since the blocks also carry non-price numbers
+[`idProduct`/`productId`] a blind scan would misread as money; ISO-8601 `updated` date →
+midnight-UTC `observedAt`, clock-free), `parseTcgdexSets` (the flat `/v2/en/sets` array →
+`vector<CardSetInfo>`) and `resolveTcgdexCardId(ref, sets)` (a copy's printed set+number →
+its tcgdex id, no search — only EXACT set matches are trusted [set name first, then the
+printed code AS a tcgdex set id for promos]; an unidentifiable set returns nullopt rather
+than a fuzzy guess, since a wrong link would show another card's prices),
+`CardPriceCache` (thin SQL over `card_price`/`card_price_fetch`,
 mirroring `CardSetCache`), and `CardPriceService` (the verbs, with an injectable
-clock/uuid like `CardCopyService`: `recordApiPrices` [parse a fetched payload, replace
-the card's API-sourced rows, preserve `manual` rows, stamp the fetch], `addManualPrice`/
-`removeManualPrice`, `pricesFor`, `fetchedAt`, and `needsRefresh(key, ttl)` — the
-anti-hammer TTL gate the caller checks before the network GET). Prices are keyed by
-`external_card_id` — a **source-neutral** card identity (named for what it is, an
-external catalog's card id, not for any one provider) that is deliberately
-**independent of `card_copy`** (deleting a copy never removes pricing; a card carries
-many prices at once because there is no single true price). Today that id is always a
-pokemontcg.io card id (`"sv3-125"` = setId+"-"+number), the only price source wired up;
-the naming keeps the schema open to another catalog without a rename (a source with a
-different id scheme would need a mapping to the same key). Money is stored as integer
+clock/uuid like `CardCopyService`: `recordTcgdexPrices` [parse a fetched payload, replace
+the card's API-sourced rows, preserve `manual` rows, stamp the fetch — sharing its persist
+path with the retired `recordApiPrices`], `addManualPrice`/`removeManualPrice` [the human
+override — manual entry is the escape hatch for anything tcgdex can't price], `pricesFor`,
+`fetchedAt`, and `needsRefresh(key, ttl)` — the anti-hammer TTL gate). Prices are keyed by
+`external_card_id` — a **source-neutral** card identity (named for what it is, an external
+catalog's card id, not for any one provider) that is deliberately **independent of
+`card_copy`** (deleting a copy never removes pricing; a card carries many prices at once
+because there is no single true price). Today that id is always a tcgdex card id
+(`"mep-013"` = setId+"-"+localId), derivable directly from the copy's set+number; the
+source-neutral naming keeps the schema open to another provider without a rename. Money is
+stored as integer
 cents (`Statement::bindInt64`/`columnInt64`), and multi-statement writes go through
 `Database::transaction(body)` (the shared BEGIN/ROLLBACK/COMMIT guard); the TTL
 freshness rule (incl. the backward-clock guard) is the shared `cacheIsFresh` helper
 (`core/app/cache_ttl.h`), used by both this cache and the GUI set cache. The transport
 GET stays GUI-side: `gui/services/CardPriceLookupService` (mirrors `CardSearchService`,
 sharing the `gui/services/http_status.h` retry-classification helpers) fetches one card's
-prices via `resolveCardById` and persists them through `recordApiPrices`. It is strictly
-**on-demand** — `cached`/`fetchedAt`/`needsRefresh` never touch the network; only
-`fetch()` (behind an explicit Fetch/Refresh button) does — so merely viewing a card never
-hits the API. The reusable `gui/views/CardPricesPanel` is driven by `showCopy(copy)` /
-`clear()` (it carries the copy's link context — id, `CardReference`, species — not just an
-`external_card_id`) and renders the states [nothing-selected / unresolvable (unlinked, too
-little data) / ready-to-fetch (linked OR auto-resolvable) / has-prices (a headline of one
-figure per vendor, each vendor **name itself the link** to its marketplace listing, one
-vendor **per line**; the "as of"/fetched dates live on the ⓘ tooltip) / fetched-empty].
-There is **no "show all prices" table** — the full per-metric spread is deliberately left
-to the marketplace links, so the panel stays a compact headline + Fetch/Refresh + ⓘ. It
-appears on **every** owned-copy surface: the Edit page, the My Cards detail
-(`OwnedCardsView`), and the binder-guide / Pokémon-browser copy detail
-(`PokemonDetailPanel` copy mode, fed by `BinderView` and `PokemonListView`, which pass it
-`CardPriceLookupService` + `CardSearchService` + `CardCopyService`).
-**Linking is invisible — never a UI verb.** A copy that isn't yet linked but records enough
-identity (a set + species/name) still shows a "Fetch prices" button; the first Fetch
-resolves the catalog card itself (`onFetchClicked` → search scoped by the copy's set [name,
-else printed code] + species/name → single match, disambiguated by collector number →
-`linkCatalogCard`), persists the link, then fetches — all as one action, emitting
-`cardLinked` so the host updates its cached copy. 0 or N matches is reported ("couldn't
-find" / "open Edit to pick"), never guessed; only a copy with too little data to resolve
-(no set) shows a hint to complete it in Edit — the dead-end "not linked" message is gone.
-The auto-link runs on the shared, debounced `CardSearchService` (request id matched before a
-reply is adopted, since the service is app-wide) with a watchdog `QTimer` recovering the
-Fetch button if a superseded search never replies. The Edit page keeps its finder-based
-manual "Link prices to this card" as the disambiguation fallback for the ambiguous case.
-The panel also carries an
+prices from tcgdex's `/v2/en/cards/{id}` and persists them through `recordTcgdexPrices`; it
+also **lazily fetches and holds the tcgdex set table** (`/v2/en/sets`, once per session via
+`ensureTcgdexSets`) so `resolveTcgdexId(ref)` can map a copy's set+number to a tcgdex id
+with no search. It builds tcgdex URLs directly (no `CardCatalogApi` — pokemontcg.io's
+`resolveCardById` was removed with the pokemontcg price path). It is strictly **on-demand**
+— `cached`/`fetchedAt` never touch the network; only `fetch()` and the one-time set-table
+load (both behind an explicit Fetch/Refresh) do — so merely viewing a card never hits the
+API. The reusable `gui/views/CardPricesPanel` is driven by `showCopy(copy)` / `clear()`
+(it carries the copy's link context — id, `CardReference` — not just an `external_card_id`)
+and renders the states [nothing-selected / unresolvable (no set/number) / ready-to-fetch
+(resolvable OR already linked) / has-prices (a headline of one figure per vendor, each
+vendor **name itself the link** to a marketplace search, one vendor **per line**; the "as
+of"/fetched dates live on the ⓘ tooltip) / fetched-empty]. There is **no "show all prices"
+table** — the full per-metric spread is deliberately left to the marketplace links, so the
+panel stays a compact headline + Fetch/Refresh + ⓘ. It appears on **every** owned-copy
+surface: the Edit page, the My Cards detail (`OwnedCardsView`), and the binder-guide /
+Pokémon-browser copy detail (`PokemonDetailPanel` copy mode, fed by `BinderView` and
+`PokemonListView`, which pass it `CardPriceLookupService` + `CardCopyService` — the panel no
+longer needs `CardSearchService`, since pricing resolves from set+number, not a search).
+**Linking is invisible — never a UI verb.** A copy that isn't yet linked but records a set +
+collector number still shows a "Fetch prices" button; the first Fetch resolves the tcgdex
+card id directly from that printed set+number (`onFetchClicked` → `ensureTcgdexSets` →
+`resolveTcgdexId` → `linkCatalogCard`), persists the link, then fetches — all as one action,
+emitting `cardLinked` so the host updates its cached copy. A copy still linked to a pre-tcgdex
+id is transparently **re-resolved** on its next Fetch (the resolve runs whenever the copy is
+resolvable, updating the link only when the id changed). An unidentifiable set is reported
+("couldn't identify this card for pricing — check its set and number in Edit"), never guessed;
+too little data (no set/number) shows a hint to complete it in Edit. (There is no longer a
+manual "Link prices to this card" button on the Edit page — that was pokemontcg-specific and
+is superseded by the invisible set+number resolution; disambiguating a genuinely ambiguous
+set name is a possible future enhancement.) The panel also carries an
 "ⓘ" popover (same idiom as the card-attribute pickers) explaining the metrics **and the
 price freshness** (the vendor "as of" date + the day we fetched, set per-render). The
 per-vendor **listing links** are merged **into the headline** — the vendor name is itself
-the link ("TCGplayer ↗ $350.00"), built deterministically as `prices.pokemontcg.io/<vendor>/<id>`
-(a stable redirect to the real marketplace page, so no fetch or stored URL) — rather than a
-separate "Listings:" line that named each vendor twice. The headline's per-vendor pick
+the link ("TCGplayer ↗ $350.00"), pointing at a **marketplace name-search** for the card
+(tcgdex carries no stable per-listing URL we persist, so the vendor name searches that
+marketplace rather than deep-linking a product page). The headline's per-vendor pick
 (`vendorBest`) never selects the TCGplayer `high` outlier, so it can't surface. Prices ride along for free while **browsing**:
 `parseCardSearchResponse` extracts the same tcgplayer/cardmarket blocks the search payload
 already carries into `CardCandidate.prices` (display-only, never persisted), and

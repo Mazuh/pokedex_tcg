@@ -9,35 +9,42 @@
 #include <unordered_map>
 #include <vector>
 
+#include "core/app/card_catalog_dto.h"
 #include "core/app/card_price_dto.h"
+#include "core/domain/card_reference.h"
 #include "core/domain/types.h"
 
 class QNetworkAccessManager;
 
 namespace pokedex {
 
-class CardCatalogApi;
 class CardPriceService;
 
 // GUI — the transport half of the card-price module: fetches ONE card's market
-// prices from the external per-card endpoint on demand and persists them via the
-// Qt-free CardPriceService. The sibling of CardSearchService, but deliberately much
-// simpler: there is no browse/stream, just "fetch this card's prices" driven by an
-// explicit user action (a Fetch/Refresh button) — the app never fetches a price
-// just because a card was shown (the on-demand rule, so we never hammer the free API
-// for cards the user may not even own).
+// prices on demand and persists them via the Qt-free CardPriceService. The sibling
+// of CardSearchService, but deliberately much simpler: there is no browse/stream,
+// just "fetch this card's prices" driven by an explicit user action (a Fetch/Refresh
+// button) — the app never fetches a price just because a card was shown (the
+// on-demand rule, so we never hammer a free API for cards the user may not even own).
+//
+// The pricing PROVIDER is tcgdex (https://api.tcgdex.net) — a free aggregator, not an
+// authoritative source of truth. It is used because, unlike the pokemontcg.io metadata
+// catalog, it covers brand-new sets and is addressable by set+collector-number, so a card
+// the metadata catalog hasn't ingested can still be priced. A card is addressed by its
+// tcgdex id ("mep-013" == setId "-" localId); an owned copy that isn't yet linked to one is
+// resolved to it directly from its printed set+number via the tcgdex set table (no catalog
+// SEARCH), which this service lazily fetches and holds for the session (resolveTcgdexId /
+// ensureTcgdexSets).
 //
 // Reads are free: cachedPrices()/cachedMany() hit only the local cache, no network.
-// fetch() is the only method that may touch the wire.
+// fetch() (and the one-time set-table fetch behind ensureTcgdexSets) are the only methods
+// that may touch the wire.
 class CardPriceLookupService : public QObject {
     Q_OBJECT
 
 public:
-    // `api` and `prices` must outlive this service (like the other GUI transports).
-    // `api` is reused from the search service's composition — the same pokemontcg.io
-    // adapter resolves both search and per-card URLs.
-    explicit CardPriceLookupService(const CardCatalogApi& api, CardPriceService& prices,
-                                    QObject* parent = nullptr);
+    // `prices` must outlive this service (like the other GUI transports).
+    explicit CardPriceLookupService(CardPriceService& prices, QObject* parent = nullptr);
 
     // A card's cached prices together with its last-fetch stamp, so a view rendering a
     // selection consults the cache through one call and one error path instead of two
@@ -56,29 +63,47 @@ public:
     std::unordered_map<std::string, std::vector<CardPrice>> cachedMany(
         const std::vector<std::string>& externalCardIds);
 
-    // Fetch this card's prices from the per-card endpoint, persist them (replacing the
-    // API-sourced rows, keeping manual ones), and emit pricesReady(id). A blank id is
-    // ignored (an unlinked copy). Always driven by an explicit user action (a
+    // Fetch this card's prices from the tcgdex per-card endpoint, persist them (replacing
+    // the API-sourced rows, keeping manual ones), and emit pricesReady(id). A blank id is
+    // ignored (an unresolved copy). Always driven by an explicit user action (a
     // Fetch/Refresh button), so it always hits the wire — subject only to coalescing a
     // fetch already in flight for the same id. On terminal failure emits pricesFailed(id).
     void fetch(const QString& externalCardId);
 
+    // Whether the tcgdex set table is loaded, so resolveTcgdexId can map a copy's set to a
+    // tcgdex set id. False until the first successful ensureTcgdexSets().
+    bool tcgdexSetsReady() const { return tcgdexSetsLoaded_; }
+
+    // Resolve a copy's printed identity to a tcgdex card id for the price lookup, using the
+    // in-memory set table. Returns nullopt when the table isn't loaded yet or the set/number
+    // can't be identified (see core resolveTcgdexCardId). No network — call ensureTcgdexSets
+    // first if tcgdexSetsReady() is false.
+    std::optional<QString> resolveTcgdexId(const CardReference& ref) const;
+
+    // Ensure the tcgdex set table is loaded, then emit tcgdexSetsResolved(ok). If it is
+    // already loaded this emits immediately (ok=true) without a network hit; otherwise it
+    // fetches /v2/en/sets once (coalescing concurrent callers onto the one in-flight fetch).
+    void ensureTcgdexSets();
+
 Q_SIGNALS:
-    // Fired when a card's prices are available to (re-)read via cached(id) — after a
-    // successful fetch, or immediately when a non-forced fetch found a fresh cache.
+    // Fired when a card's prices are available to (re-)read via cachedPrices(id) — after a
+    // successful fetch.
     void pricesReady(const QString& externalCardId);
     void pricesFailed(const QString& externalCardId);
+    // Fired when ensureTcgdexSets() finishes: ok=true when the set table is loaded (a
+    // subsequent resolveTcgdexId can succeed), false when the fetch failed (offer a retry).
+    void tcgdexSetsResolved(bool ok);
 
 private:
     void startFetch(const QString& externalCardId, int retriesLeft);
-    // Terminal outcomes of an in-flight fetch. On success the coalesced-Refresh flag is
+    void startSetsFetch(int retriesLeft);
+    // Terminal outcomes of an in-flight price fetch. On success the coalesced-Refresh flag is
     // cleared (the fresh result covers every waiting panel); on failure, if a Refresh
     // coalesced onto this now-failed attempt, it is re-issued as a genuine fresh fetch
     // rather than inheriting the failure.
     void finishSucceeded(const QString& externalCardId);
     void finishFailed(const QString& externalCardId);
 
-    const CardCatalogApi& api_;
     CardPriceService& prices_;
     QNetworkAccessManager* nam_;
     QSet<QString> inFlight_;  // ids with a fetch on the wire, to coalesce duplicates
@@ -87,6 +112,12 @@ private:
     // fetch fails the user's forced click still deserves a real attempt — so it is
     // re-issued once, on failure, for any id recorded here.
     QSet<QString> refetchQueued_;
+
+    // The tcgdex set table (id + name), fetched once per session and held in memory to map a
+    // copy's printed set → a tcgdex set id. Small, near-static reference data.
+    std::vector<CardSetInfo> tcgdexSets_;
+    bool tcgdexSetsLoaded_ = false;
+    bool tcgdexSetsFetching_ = false;  // a /v2/en/sets fetch is on the wire (coalesce callers)
 };
 
 }  // namespace pokedex

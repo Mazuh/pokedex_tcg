@@ -19,7 +19,6 @@
 #include <exception>
 #include <optional>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include "core/app/binder_service.h"
@@ -187,8 +186,7 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     // Add button records a species-free card (needs no selection) and the wishlist button
     // is hidden (a species-free card has no wishlist). It hosts the prices block, the
     // image (with artwork fallback), and the Add + Edit actions.
-    panel_ = new PokemonDetailPanel(media_, wishlist_, &images_, &priceLookup_, &cardSearch_,
-                                    &copies_, this);
+    panel_ = new PokemonDetailPanel(media_, wishlist_, &images_, &priceLookup_, &copies_, this);
     panel_->setAddMode(PokemonDetailPanel::AddMode::FreeCard);
     panel_->setWishlistVisible(false);
     connect(panel_, &PokemonDetailPanel::addCardRequested, this, &OwnedCardsView::addNewCard);
@@ -275,25 +273,10 @@ void OwnedCardsView::reload() {
 }
 
 void OwnedCardsView::loadCachedPrices() {
-    // Gather the distinct linked ids of the non-Removed copies (a Removed copy is frozen
-    // history — the Prices column stays blank for it, matching the inspector), then read
-    // them all in ONE batched cache query (cachedMany) rather than one SELECT per copy.
-    // Cache-only (no network); best-effort so a storage failure leaves blank Prices cells
-    // rather than crashing the section.
-    pricesByExternalId_.clear();
-    std::vector<std::string> ids;
-    std::unordered_set<std::string> seen;
-    for (const CardCopy& copy : loaded_) {
-        if (!isRemoved(copy) && !copy.externalCardId.empty() &&
-            seen.insert(copy.externalCardId).second) {
-            ids.push_back(copy.externalCardId);
-        }
-    }
-    try {
-        pricesByExternalId_ = priceLookup_.cachedMany(ids);
-    } catch (const std::exception&) {
-        pricesByExternalId_.clear();
-    }
+    // A Removed copy is frozen history — its Prices cell stays blank (matching the inspector),
+    // so only non-Removed copies feed the batched cache read. See loadCachedPricesFor.
+    pricesByExternalId_ =
+        loadCachedPricesFor(priceLookup_, loaded_, [](const CardCopy& c) { return !isRemoved(c); });
 }
 
 void OwnedCardsView::repopulate(const std::string& keepSelectedId) {

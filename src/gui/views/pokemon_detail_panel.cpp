@@ -18,7 +18,6 @@
 #include "core/app/wishlist_service.h"
 #include "gui/services/card_image_store.h"
 #include "gui/services/card_price_lookup_service.h"
-#include "gui/services/card_search_service.h"
 #include "gui/services/media_service.h"
 #include "gui/views/card_copy_labels.h"
 #include "gui/views/card_prices_panel.h"
@@ -59,8 +58,7 @@ QString joinParts(const QStringList& parts) {
 
 PokemonDetailPanel::PokemonDetailPanel(MediaService& media, WishlistService& wishlist,
                                        CardImageStore* images, CardPriceLookupService* prices,
-                                       CardSearchService* search, CardCopyService* copies,
-                                       QWidget* parent)
+                                       CardCopyService* copies, QWidget* parent)
     : QWidget(parent), media_(media), wishlist_(wishlist), images_(images) {
     name_ = new QLabel(this);
     name_->setAlignment(Qt::AlignHCenter | Qt::AlignVCenter);
@@ -142,8 +140,8 @@ PokemonDetailPanel::PokemonDetailPanel(MediaService& media, WishlistService& wis
     // Cards use, so a copy seen here can be priced — and invisibly linked on first Fetch —
     // without opening the Edit page. Built only when all three services were supplied
     // (they always come together from the hosts); hidden outside copy mode.
-    if (prices && search && copies) {
-        pricesPanel_ = new CardPricesPanel(*prices, *search, *copies, this);
+    if (prices && copies) {
+        pricesPanel_ = new CardPricesPanel(*prices, *copies, this);
         // Forward a Fetch-driven auto-link up to the host so it can refresh its cached
         // copy (see the copyLinked docstring).
         connect(pricesPanel_, &CardPricesPanel::cardLinked, this,

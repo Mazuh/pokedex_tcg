@@ -92,8 +92,8 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService&
     // Copy mode is on here too (a CardImageStore is passed): a selected species that
     // owns copies shows one, so the double-click shortcut can offer to edit it. The
     // copies are aggregated across every binder (loadOwnedCopies).
-    detail_ = new PokemonDetailPanel(media, wishlist, &cardImages_, &priceLookup_, &cardSearch_,
-                                     &cardCopies_, this);
+    detail_ = new PokemonDetailPanel(media, wishlist, &cardImages_, &priceLookup_, &cardCopies_,
+                                     this);
 
     connect(search_, &QLineEdit::textChanged, this, &PokemonListView::applyFilter);
     // Show the current row's Pokémon in the detail panel. currentCellChanged

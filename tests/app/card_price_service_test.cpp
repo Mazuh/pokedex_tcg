@@ -36,18 +36,26 @@ struct Fixture {
     Fixture() { db.migrate(); }
 };
 
-// A minimal single-card payload with one tcgplayer and one cardmarket price.
+// A minimal tcgdex /v2/en/cards/{id} payload (card at the ROOT) with one tcgplayer and one
+// cardmarket price, using tcgdex's metric names (normalized by the parser to market/trendPrice).
 constexpr const char* kPayload = R"json({
-  "data": {
-    "id": "base1-4",
-    "tcgplayer":  {"updatedAt": "2026/07/20", "prices": {"holofoil": {"market": 800.43}}},
-    "cardmarket": {"updatedAt": "2026/07/18", "prices": {"trendPrice": 4184.6}}
-  }
+  "id": "base1-4",
+  "variants_detailed": [
+    {"size": "standard", "pricing": {
+      "cardmarket": {"unit": "EUR", "updated": "2026-07-18T08:00:00Z", "trend": 4184.6},
+      "tcgplayer":  {"unit": "USD", "updated": "2026-07-20T08:00:00Z", "holofoil": {"marketPrice": 800.43}}
+    }}
+  ]
 })json";
 
-TEST(CardPriceServiceTest, RecordApiPricesParsesPersistsAndStampsFetch) {
+// A card that came back but carries no price blocks (a set tcgdex hasn't priced): present,
+// price-less. Distinct from a degraded/error body, which has no "id" at all.
+constexpr const char* kCardNoPrices = R"json({"id": "base1-4"})json";
+constexpr const char* kDegraded = R"json({"status": 404})json";
+
+TEST(CardPriceServiceTest, RecordTcgdexPricesParsesPersistsAndStampsFetch) {
     Fixture f;
-    const auto recorded = f.service.recordApiPrices("base1-4", kPayload);
+    const auto recorded = f.service.recordTcgdexPrices("base1-4", kPayload);
     EXPECT_FALSE(recorded.degraded);
     const std::vector<CardPrice>& stored = recorded.stored;
 
@@ -62,23 +70,25 @@ TEST(CardPriceServiceTest, RecordApiPricesParsesPersistsAndStampsFetch) {
     EXPECT_EQ(*f.service.fetchedAt("base1-4"), f.now);
 }
 
-TEST(CardPriceServiceTest, RecordApiPricesReKeysToTheRequestedId) {
+TEST(CardPriceServiceTest, RecordTcgdexPricesReKeysToTheRequestedId) {
     Fixture f;
     // The payload's own id disagrees with the id we fetched; the requested key wins.
     constexpr const char* mismatched = R"json({
-      "data": {"id": "WRONG", "tcgplayer": {"prices": {"normal": {"market": 1.0}}}}
+      "id": "WRONG-999",
+      "variants_detailed": [{"size": "standard", "pricing": {
+        "tcgplayer": {"unit": "USD", "normal": {"marketPrice": 1.0}}}}]
     })json";
-    f.service.recordApiPrices("sv3-125", mismatched);
+    f.service.recordTcgdexPrices("sv03-125", mismatched);
 
-    EXPECT_TRUE(f.service.pricesFor("WRONG").empty());
-    ASSERT_EQ(f.service.pricesFor("sv3-125").size(), 1u);
-    EXPECT_EQ(f.service.pricesFor("sv3-125")[0].externalCardId, "sv3-125");
+    EXPECT_TRUE(f.service.pricesFor("WRONG-999").empty());
+    ASSERT_EQ(f.service.pricesFor("sv03-125").size(), 1u);
+    EXPECT_EQ(f.service.pricesFor("sv03-125")[0].externalCardId, "sv03-125");
 }
 
-TEST(CardPriceServiceTest, RecordApiPricesPreservesManualAcrossRefetch) {
+TEST(CardPriceServiceTest, RecordTcgdexPricesPreservesManualAcrossRefetch) {
     Fixture f;
     f.service.addManualPrice("base1-4", 5000, "USD", "paid at a con");
-    f.service.recordApiPrices("base1-4", kPayload);
+    f.service.recordTcgdexPrices("base1-4", kPayload);
 
     const std::vector<CardPrice> loaded = f.service.pricesFor("base1-4");
     ASSERT_EQ(loaded.size(), 3u);  // 1 manual + 2 API
@@ -97,12 +107,11 @@ TEST(CardPriceServiceTest, RecordApiPricesPreservesManualAcrossRefetch) {
 // reflect a card that lost its prices — the user's explicit insist.
 TEST(CardPriceServiceTest, CardPresentWithNoPricesClearsStalePrices) {
     Fixture f;
-    f.service.recordApiPrices("base1-4", kPayload);
+    f.service.recordTcgdexPrices("base1-4", kPayload);
     ASSERT_EQ(f.service.pricesFor("base1-4").size(), 2u);
 
     f.now = at("2026-07-26T00:00:00Z");
-    const auto result = f.service.recordApiPrices(
-        "base1-4", R"({"data": {"id": "base1-4", "name": "Charizard"}})");
+    const auto result = f.service.recordTcgdexPrices("base1-4", kCardNoPrices);
     EXPECT_TRUE(result.stored.empty());
     EXPECT_FALSE(result.degraded);  // card present, just price-less → a real answer
     EXPECT_TRUE(f.service.pricesFor("base1-4").empty());  // cleared — the card has no prices now
@@ -113,12 +122,11 @@ TEST(CardPriceServiceTest, CardPresentWithNoPricesClearsStalePrices) {
 // A manual price survives a card-present-empty fetch: only the API rows are cleared.
 TEST(CardPriceServiceTest, CardPresentWithNoPricesKeepsManualRows) {
     Fixture f;
-    f.service.recordApiPrices("base1-4", kPayload);
+    f.service.recordTcgdexPrices("base1-4", kPayload);
     f.service.addManualPrice("base1-4", 5000, "USD", "paid at a con");
     ASSERT_EQ(f.service.pricesFor("base1-4").size(), 3u);  // 2 API + 1 manual
 
-    const auto result = f.service.recordApiPrices(
-        "base1-4", R"({"data": {"id": "base1-4", "name": "Charizard"}})");
+    const auto result = f.service.recordTcgdexPrices("base1-4", kCardNoPrices);
     EXPECT_TRUE(result.stored.empty());
     EXPECT_FALSE(result.degraded);
     const auto loaded = f.service.pricesFor("base1-4");
@@ -131,13 +139,13 @@ TEST(CardPriceServiceTest, CardPresentWithNoPricesKeepsManualRows) {
 // a flaky API can't blank a good card. Only a genuine card-present answer clears (above).
 TEST(CardPriceServiceTest, DegradedResponseWithoutCardKeepsExistingPrices) {
     Fixture f;
-    f.service.recordApiPrices("base1-4", kPayload);
+    f.service.recordTcgdexPrices("base1-4", kPayload);
     ASSERT_EQ(f.service.pricesFor("base1-4").size(), 2u);
     const auto fetchedBefore = f.service.fetchedAt("base1-4");
 
     f.now = at("2026-07-26T00:00:00Z");
     // Valid JSON, but no card node (a degraded/error body) — cardPresent is false.
-    const auto result = f.service.recordApiPrices("base1-4", R"({"data": null})");
+    const auto result = f.service.recordTcgdexPrices("base1-4", kDegraded);
     EXPECT_TRUE(result.stored.empty());
     EXPECT_TRUE(result.degraded);  // no card object → failed fetch, not a "no prices" answer
     EXPECT_EQ(f.service.pricesFor("base1-4").size(), 2u);      // preserved, not wiped
@@ -149,28 +157,27 @@ TEST(CardPriceServiceTest, DegradedResponseWithoutCardKeepsExistingPrices) {
 // a false "No market prices" verdict from a transient outage.
 TEST(CardPriceServiceTest, DegradedFirstFetchDoesNotStamp) {
     Fixture f;
-    const auto result = f.service.recordApiPrices("sv3-5", R"({"data": null})");
+    const auto result = f.service.recordTcgdexPrices("sv03-5", kDegraded);
     EXPECT_TRUE(result.stored.empty());
     EXPECT_TRUE(result.degraded);  // no card object → failed fetch
-    EXPECT_TRUE(f.service.pricesFor("sv3-5").empty());
-    EXPECT_FALSE(f.service.fetchedAt("sv3-5").has_value());  // never stamped → still fetchable
+    EXPECT_TRUE(f.service.pricesFor("sv03-5").empty());
+    EXPECT_FALSE(f.service.fetchedAt("sv03-5").has_value());  // never stamped → still fetchable
 }
 
 // A FIRST fetch that legitimately returns no prices still stamps, so a genuinely
 // price-less card reads "no prices" rather than re-offering Fetch forever.
 TEST(CardPriceServiceTest, FirstFetchWithNoPricesStillStamps) {
     Fixture f;
-    const auto result =
-        f.service.recordApiPrices("sv3-5", R"({"data": {"id": "sv3-5", "name": "No Prices"}})");
+    const auto result = f.service.recordTcgdexPrices("sv03-5", R"({"id": "sv03-5"})");
     EXPECT_TRUE(result.stored.empty());
     EXPECT_FALSE(result.degraded);  // card present, just price-less → stamp and cache the blank
-    EXPECT_TRUE(f.service.pricesFor("sv3-5").empty());
-    EXPECT_TRUE(f.service.fetchedAt("sv3-5").has_value());  // stamped, so it won't re-offer
+    EXPECT_TRUE(f.service.pricesFor("sv03-5").empty());
+    EXPECT_TRUE(f.service.fetchedAt("sv03-5").has_value());  // stamped, so it won't re-offer
 }
 
-TEST(CardPriceServiceTest, RecordApiPricesThrowsOnBadJson) {
+TEST(CardPriceServiceTest, RecordTcgdexPricesThrowsOnBadJson) {
     Fixture f;
-    EXPECT_THROW(f.service.recordApiPrices("base1-4", "}{"), CardCatalogParseError);
+    EXPECT_THROW(f.service.recordTcgdexPrices("base1-4", "}{"), CardCatalogParseError);
 }
 
 TEST(CardPriceServiceTest, AddManualPriceStampsNowAndMintsId) {

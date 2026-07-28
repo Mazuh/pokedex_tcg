@@ -4,9 +4,9 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
-#include <QTimer>
 #include <QToolButton>
 #include <QToolTip>
+#include <QUrl>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -15,13 +15,11 @@
 #include <string>
 #include <vector>
 
-#include "core/app/card_catalog_dto.h"
 #include "core/app/card_copy_service.h"
 #include "core/app/card_price_dto.h"
 #include "core/domain/card_copy.h"
 #include "core/storage/codecs.h"
 #include "gui/services/card_price_lookup_service.h"
-#include "gui/services/card_search_service.h"
 #include "gui/views/price_labels.h"
 
 namespace pokedex {
@@ -34,57 +32,59 @@ QString dateOf(Timestamp when) {
     return QString::fromStdString(timestampToIso(when)).left(10);
 }
 
-// The bare printing number from a collector number, lowercased for comparison:
-// "125/197" and "125" both reduce to "125". Used to single one printing out when a
-// set holds several of the same species during the auto-link resolve.
-QString collectorKey(const std::string& raw) {
-    QString value = QString::fromStdString(raw).trimmed();
-    const int slash = value.indexOf(QLatin1Char('/'));
-    if (slash >= 0) {
-        value = value.left(slash);
+// A marketplace search URL for a card name — the click-through under each headline figure.
+// tcgdex is addressable by set+number but publishes no stable per-listing URL we carry, so
+// the vendor name links to a NAME SEARCH on that marketplace (always valid) rather than a
+// direct product page.
+QString marketplaceSearchUrl(const QString& vendor, const QString& cardName) {
+    const QString q = QString::fromUtf8(QUrl::toPercentEncoding(cardName));
+    if (vendor == QLatin1String("tcgplayer")) {
+        return QStringLiteral("https://www.tcgplayer.com/search/pokemon/product?q=%1").arg(q);
     }
-    return value.trimmed().toLower();
+    return QStringLiteral("https://www.cardmarket.com/en/Pokemon/Products/Search?searchString=%1")
+        .arg(q);
 }
 
 // The "ⓘ" popover: what each figure means, so a lone "Cardmarket €26" isn't a mystery.
 const QString& priceInfoHtml() {
     static const QString kHtml = QStringLiteral(
         "<p><b>What these prices mean</b><br>Aggregated market estimates from two "
-        "marketplaces, refreshed roughly daily — treat them as rough guidance, not a "
-        "fixed value.</p>"
+        "marketplaces, via the tcgdex pricing provider — a free aggregator, not an official "
+        "valuation. Refreshed roughly daily; treat them as rough guidance.</p>"
         "<p><b>The headline</b> shows one figure per source:<br>"
         "• <b>Cardmarket</b> (EUR) — its <i>trend price</i>: an estimate of the current "
         "going rate from recent sales and listings (not a min, median, or max).<br>"
         "• <b>TCGplayer</b> (USD) — its <i>market</i> price: the current market value; when "
         "a card has several finishes the highest such value is shown.</p>"
-        "<p>Follow the marketplace links above for the full price breakdown and live "
-        "listings.</p>");
+        "<p>Follow the marketplace links above to search the card for its full price "
+        "breakdown and live listings.</p>");
     return kHtml;
 }
 
-// The headline, as rich text: one representative figure per vendor, one vendor PER LINE,
-// with the vendor NAME itself the link to that marketplace's real listing page — so the
-// vendor is named once (not "TCGplayer $1" plus a separate "Listings: TCGplayer") and the
-// two currencies don't crowd one line and wrap unpredictably. pokemontcg.io serves a stable
-// per-vendor redirect keyed by the card id (verified to 302 → the TCGplayer product page /
-// the exact Cardmarket single), so each URL is built from the id with no extra request or
-// stored field. Empty only when the card carries no usable figure for either vendor (the
-// caller then shows a plain "Market prices" label).
-QString linkedHeadlineHtml(const std::string& externalCardId,
-                           const std::vector<CardPrice>& prices) {
+// The headline, as rich text: one representative figure per vendor, one vendor PER LINE, with
+// the vendor NAME itself the link to a marketplace search for the card — so the vendor is
+// named once (not "TCGplayer $1" plus a separate "Listings: TCGplayer") and the two
+// currencies don't crowd one line and wrap unpredictably. Empty only when the card carries no
+// usable figure for either vendor (the caller then shows a plain "Market prices" label). When
+// no card name is known the figures are shown as plain text (nothing to search by).
+QString linkedHeadlineHtml(const QString& cardName, const std::vector<CardPrice>& prices) {
     const VendorBest best = vendorBest(prices);
-    const QString id = QString::fromStdString(externalCardId).toHtmlEscaped();
     QStringList lines;
-    if (best.tcg != nullptr) {
-        lines << QStringLiteral(
-                     "<a href=\"https://prices.pokemontcg.io/tcgplayer/%1\">TCGplayer ↗</a> %2")
-                     .arg(id, formatMoney(best.tcg->amountCents, best.tcg->currency).toHtmlEscaped());
-    }
-    if (best.cm != nullptr) {
-        lines << QStringLiteral(
-                     "<a href=\"https://prices.pokemontcg.io/cardmarket/%1\">Cardmarket ↗</a> %2")
-                     .arg(id, formatMoney(best.cm->amountCents, best.cm->currency).toHtmlEscaped());
-    }
+    const auto lineFor = [&](const CardPrice* p, const char* vendorKey, const QString& label) {
+        if (p == nullptr) {
+            return;
+        }
+        const QString amount = formatMoney(p->amountCents, p->currency).toHtmlEscaped();
+        if (cardName.isEmpty()) {
+            lines << QStringLiteral("%1 %2").arg(label, amount);
+        } else {
+            lines << QStringLiteral("<a href=\"%1\">%2 ↗</a> %3")
+                         .arg(marketplaceSearchUrl(QString::fromLatin1(vendorKey), cardName).toHtmlEscaped(),
+                              label, amount);
+        }
+    };
+    lineFor(best.tcg, "tcgplayer", QStringLiteral("TCGplayer"));
+    lineFor(best.cm, "cardmarket", QStringLiteral("Cardmarket"));
     return lines.join(QStringLiteral("<br>"));
 }
 
@@ -103,14 +103,14 @@ QString priceInfoWithFreshness(const QString& asOf, const QString& fetched) {
 
 }  // namespace
 
-CardPricesPanel::CardPricesPanel(CardPriceLookupService& lookup, CardSearchService& search,
-                                 CardCopyService& copies, QWidget* parent)
-    : QWidget(parent), lookup_(lookup), search_(search), copies_(copies) {
+CardPricesPanel::CardPricesPanel(CardPriceLookupService& lookup, CardCopyService& copies,
+                                 QWidget* parent)
+    : QWidget(parent), lookup_(lookup), copies_(copies) {
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
 
-    // The headline carries the per-vendor figures with the vendor name linking to its
-    // real listing page (rich text), so a vendor is named once rather than repeated in a
+    // The headline carries the per-vendor figures with the vendor name linking to a
+    // marketplace search (rich text), so a vendor is named once rather than repeated in a
     // separate "Listings" line.
     headline_ = new QLabel(this);
     headline_->setWordWrap(true);
@@ -175,49 +175,34 @@ CardPricesPanel::CardPricesPanel(CardPriceLookupService& lookup, CardSearchServi
         }
         fetching_ = false;
         fetchButton_->setEnabled(true);
-        // Neutral wording: the failure may be a busy/flaky API OR a card the
-        // catalog no longer lists (a 404, which the transport fails fast) — don't
-        // assert "try again" when a retry may never help.
+        // Neutral wording: the failure may be a busy/flaky API OR a card the provider does
+        // not list (a 404, which the transport fails fast) — don't assert "try again" when a
+        // retry may never help.
         status_->setText(QStringLiteral("Couldn't fetch prices for this card right now."));
+        status_->show();
     });
 
-    // The Fetch button's invisible auto-link runs on the shared, debounced search
-    // service; route only the reply whose request id we await (the service is app-wide).
-    connect(&search_, &CardSearchService::printingsReady, this,
-            [this](std::uint64_t requestId, int, const std::vector<CardCandidate>& cards) {
-                if (!linking_ || requestId != pendingLinkRequest_) {
-                    return;
-                }
-                linkWatchdog_->stop();
-                onLinkResults(cards);
-            });
-    connect(&search_, &CardSearchService::printingsFailed, this,
-            [this](std::uint64_t requestId, int) {
-                if (!linking_ || requestId != pendingLinkRequest_) {
-                    return;
-                }
-                linkWatchdog_->stop();
-                linking_ = false;
-                fetching_ = false;
-                fetchButton_->setEnabled(true);
-                status_->setText(QStringLiteral("Couldn't reach the card catalog. Please try "
-                                                "again."));
-                status_->show();
-            });
-
-    // Recover the button if the auto-link search reply never lands (a superseded request
-    // on the shared service): 20s comfortably outlasts the search retry/backoff, so this
-    // only trips on a truly lost reply, not a slow-but-arriving failure.
-    linkWatchdog_ = new QTimer(this);
-    linkWatchdog_->setSingleShot(true);
-    connect(linkWatchdog_, &QTimer::timeout, this, [this]() {
-        if (!linking_) {
+    // When the (lazily fetched) tcgdex set table becomes available, a Fetch that was waiting
+    // on it can resolve the card and go on to fetch prices. The signal is app-wide, so act
+    // only if THIS panel is the one waiting.
+    connect(&lookup_, &CardPriceLookupService::tcgdexSetsResolved, this, [this](bool ok) {
+        if (!awaitingSets_) {
             return;
         }
-        linking_ = false;
+        awaitingSets_ = false;
+        if (ok) {
+            resolveAndFetch();
+            return;
+        }
+        // The set table is unavailable. If the copy already carries an id, fetch it as a
+        // best effort; otherwise there is nothing to look up — offer a retry.
+        if (!externalCardId_.isEmpty()) {
+            lookup_.fetch(externalCardId_);
+            return;
+        }
         fetching_ = false;
         fetchButton_->setEnabled(true);
-        status_->setText(QStringLiteral("Looking up this card timed out. Please try again."));
+        status_->setText(QStringLiteral("Couldn't reach the pricing catalog. Please try again."));
         status_->show();
     });
 }
@@ -225,45 +210,33 @@ CardPricesPanel::CardPricesPanel(CardPriceLookupService& lookup, CardSearchServi
 void CardPricesPanel::showCopy(const CardCopy& copy) {
     copyId_ = copy.id;
     cardRef_ = copy.cardRef;
-    dexNumber_ = copy.pokemonDexNum;
     externalCardId_ = QString::fromStdString(copy.externalCardId);
     copyRemoved_ = copy.ownership == CardOwnership::Removed;
     fetching_ = false;
-    linking_ = false;
-    linkWatchdog_->stop();
-    render();
-}
-
-void CardPricesPanel::setAutoLinkEnabled(bool enabled) {
-    if (autoLinkEnabled_ == enabled) {
-        return;
-    }
-    autoLinkEnabled_ = enabled;
+    awaitingSets_ = false;
     render();
 }
 
 void CardPricesPanel::clear() {
     copyId_.clear();
     cardRef_ = CardReference{};
-    dexNumber_.reset();
     externalCardId_.clear();
     copyRemoved_ = false;
     fetching_ = false;
-    linking_ = false;
-    linkWatchdog_->stop();
+    awaitingSets_ = false;
     render();
 }
 
-bool CardPricesPanel::canAutoLink() const {
-    // A soft-Removed copy is frozen history: never spend a search + link + fetch on a
-    // discarded card. When auto-link is disabled (the Edit page), its finder does the
-    // linking instead. Either way, only an unlinked copy with enough data qualifies.
-    if (!autoLinkEnabled_ || copyRemoved_ || !externalCardId_.isEmpty() || copyId_.empty()) {
+bool CardPricesPanel::canResolve() const {
+    // A soft-Removed copy is frozen history: never spend a resolve + fetch on a discarded
+    // card. Otherwise a set (name or printed code) plus a collector number is all tcgdex needs
+    // to address the card by set+number.
+    if (copyRemoved_ || copyId_.empty()) {
         return false;
     }
     const bool hasSet = !cardRef_.setName.empty() || !cardRef_.expansionCode.empty();
-    const bool hasIdentity = dexNumber_.has_value() || !cardRef_.name.empty();
-    return hasSet && hasIdentity;
+    const bool hasNumber = !cardRef_.collectorNumber.empty();
+    return hasSet && hasNumber;
 }
 
 void CardPricesPanel::resetToMessage(const QString& text) {
@@ -278,6 +251,13 @@ void CardPricesPanel::resetToMessage(const QString& text) {
     }
 }
 
+void CardPricesPanel::showFetchAffordance(const QString& message, const QString& buttonText) {
+    resetToMessage(message);  // hides the button…
+    fetchButton_->setText(buttonText);
+    fetchButton_->show();  // …so re-show + enable it here
+    fetchButton_->setEnabled(true);
+}
+
 void CardPricesPanel::render() {
     if (fetching_) {
         return;  // onFetchClicked owns the UI until the reply lands
@@ -287,39 +267,24 @@ void CardPricesPanel::render() {
         resetToMessage(QString());  // nothing selected
         return;
     }
-
-    if (externalCardId_.isEmpty()) {
-        if (canAutoLink()) {
-            // Unlinked but resolvable: present exactly like a linked-unfetched card — a
-            // Fetch button. The first fetch resolves and persists the link invisibly
-            // (onFetchClicked). resetToMessage hides the rest; then reveal the button.
-            resetToMessage(QStringLiteral("Prices not fetched yet."));
-            fetchButton_->setText(QStringLiteral("Fetch prices"));
-            fetchButton_->show();
-            fetchButton_->setEnabled(true);
-            return;
-        }
-        // Not resolvable. A Removed copy is frozen history — no price affordance at all.
-        // On the Edit page (auto-link disabled) the finder does the linking. Otherwise
-        // the copy simply lacks a set/name to resolve; point to Edit to complete it.
-        // (Linking itself is never named as a user action.)
-        if (copyRemoved_) {
-            resetToMessage(QString());
-        } else if (!autoLinkEnabled_) {
-            resetToMessage(QStringLiteral("Pick this card in the finder above to look up "
-                                          "its market prices."));
-        } else {
-            resetToMessage(QStringLiteral("Add this card's set and name (via “Edit card…”) "
-                                          "to look up its market prices."));
-        }
+    if (copyRemoved_) {
+        resetToMessage(QString());  // frozen history — no price affordance at all
         return;
     }
 
-    // A soft-Removed copy is frozen history — no price affordance at all, whether or not it
-    // happens to be linked (mirrors the unlinked-Removed branch above). Never render a
-    // Fetch/Refresh that would spend a network call on a discarded card.
-    if (copyRemoved_) {
-        resetToMessage(QString());
+    const bool resolvable = canResolve();
+    if (externalCardId_.isEmpty() && !resolvable) {
+        // Nothing to look up: too little data to resolve a tcgdex card. Point to Edit to
+        // complete it. (Linking itself is never named as a user action.)
+        resetToMessage(QStringLiteral("Add this card's set and collector number (via “Edit "
+                                      "card…”) to look up its market prices."));
+        return;
+    }
+    if (externalCardId_.isEmpty()) {
+        // Resolvable but never linked/fetched: present exactly like a linked-unfetched card.
+        // The first fetch resolves and persists the link invisibly (onFetchClicked).
+        showFetchAffordance(QStringLiteral("Prices not fetched yet."),
+                            QStringLiteral("Fetch prices"));
         return;
     }
 
@@ -340,27 +305,21 @@ void CardPricesPanel::render() {
         return;
     }
 
-    fetchButton_->show();
-    fetchButton_->setEnabled(true);
-
     if (cached.empty()) {
-        // Same widget-hiding as the message states (headline/info cleared) via
-        // resetToMessage, but keep the Fetch/Refresh button so the user can (re)fetch —
-        // resetToMessage hides it, so re-show it here.
-        resetToMessage(fetchedAt ? QStringLiteral("No market prices found for this card.")
-                                 : QStringLiteral("Prices not fetched yet."));
-        fetchButton_->setText(fetchedAt ? QStringLiteral("Refresh")
-                                        : QStringLiteral("Fetch prices"));
-        fetchButton_->show();
-        fetchButton_->setEnabled(true);
+        // A message with a live Fetch/Refresh button so the user can (re)fetch.
+        showFetchAffordance(fetchedAt ? QStringLiteral("No market prices found for this card.")
+                                      : QStringLiteral("Prices not fetched yet."),
+                            fetchedAt ? QStringLiteral("Refresh")
+                                      : QStringLiteral("Fetch prices"));
         return;
     }
 
-    // The headline names each vendor once, the name itself linking to its listing page —
+    // The headline names each vendor once, the name itself linking to a marketplace search —
     // one representative figure per source (vendorBest), so the full per-metric spread is
     // left to the marketplace rather than shown as a raw cache table. (vendorBest never
     // picks the TCGplayer "high" outlier, so it can't surface here.)
-    const QString headline = linkedHeadlineHtml(externalCardId_.toStdString(), cached);
+    const QString headline =
+        linkedHeadlineHtml(QString::fromStdString(cardRef_.name), cached);
     headline_->setText(headline.isEmpty() ? QStringLiteral("Market prices") : headline);
     headline_->show();
 
@@ -374,105 +333,74 @@ void CardPricesPanel::render() {
         dateOf(newest), fetchedAt ? dateOf(*fetchedAt) : QString()));
     infoButton_->show();
     status_->hide();  // freshness lives on the ⓘ tooltip now, not a visible line
+    fetchButton_->show();
+    fetchButton_->setEnabled(true);
     fetchButton_->setText(QStringLiteral("Refresh"));
 }
 
 void CardPricesPanel::onFetchClicked() {
-    if (externalCardId_.isEmpty()) {
-        // Unlinked: the first fetch resolves the catalog card first (invisible link),
-        // then fetches its prices. Guard on canAutoLink — the button isn't shown otherwise.
-        if (!canAutoLink()) {
-            return;
-        }
-        // Prefer the human set name (the reliable disambiguator, and the only one for
-        // code-less sets) to narrow the search, else the printed expansion code.
-        const QString setFilter = QString::fromStdString(
-            !cardRef_.setName.empty() ? cardRef_.setName : cardRef_.expansionCode);
+    if (fetching_) {
+        return;  // a fetch is already in flight
+    }
+    if (canResolve()) {
+        // Resolve the tcgdex card id from the copy's set+number, then fetch. This both links
+        // an unlinked copy and re-resolves one still on a pre-tcgdex id — invisibly.
         fetching_ = true;
-        linking_ = true;
         fetchButton_->setEnabled(false);
         status_->setText(QStringLiteral("Looking up this card…"));
         status_->show();
-        if (dexNumber_) {
-            pendingLinkRequest_ = search_.searchPrintings(*dexNumber_, setFilter);
+        if (lookup_.tcgdexSetsReady()) {
+            resolveAndFetch();
         } else {
-            pendingLinkRequest_ =
-                search_.searchByName(QString::fromStdString(cardRef_.name), setFilter);
+            awaitingSets_ = true;
+            lookup_.ensureTcgdexSets();  // tcgdexSetsResolved → resolveAndFetch()
         }
-        linkWatchdog_->start(20000);
         return;
     }
-    fetching_ = true;
-    fetchButton_->setEnabled(false);
-    status_->setText(QStringLiteral("Fetching prices…"));
-    status_->show();
-    // The button is an explicit user request for the latest, so always hit the wire.
-    lookup_.fetch(externalCardId_);
+    if (!externalCardId_.isEmpty()) {
+        // Not resolvable from what the copy records, but it already carries an id — fetch it
+        // directly. The button is an explicit user request for the latest, so hit the wire.
+        fetching_ = true;
+        fetchButton_->setEnabled(false);
+        status_->setText(QStringLiteral("Fetching prices…"));
+        status_->show();
+        lookup_.fetch(externalCardId_);
+    }
 }
 
-void CardPricesPanel::onLinkResults(const std::vector<CardCandidate>& cards) {
-    // Pick the one printing to link. A set + species/name usually yields exactly one; when a
-    // species has several printings in the set, the copy's collector number singles one out.
-    // A lone result is trusted only when the copy records NO collector number or it matches —
-    // otherwise a wrong sole hit (a renamed/merged set, or a loose set-name match that
-    // surfaced a different card) would be linked and shown as this copy's card. Anything
-    // ambiguous or mismatched is reported, not guessed.
-    const QString wantNumber = collectorKey(cardRef_.collectorNumber);
-    const CardCandidate* match = nullptr;
-    if (cards.size() == 1) {
-        const QString candidateNumber = collectorKey(cards.front().cardRef.collectorNumber);
-        if (wantNumber.isEmpty() || candidateNumber == wantNumber) {
-            match = &cards.front();
-        }
-    } else if (cards.size() > 1 && !wantNumber.isEmpty()) {
-        for (const CardCandidate& candidate : cards) {
-            if (collectorKey(candidate.cardRef.collectorNumber) != wantNumber) {
-                continue;
-            }
-            if (match) {
-                match = nullptr;  // two printings share the number — still ambiguous
-                break;
-            }
-            match = &candidate;
-        }
-    }
-
-    if (!match) {
-        linking_ = false;
+void CardPricesPanel::resolveAndFetch() {
+    const std::optional<QString> id = lookup_.resolveTcgdexId(cardRef_);
+    if (!id) {
+        // The set table is loaded but this copy's set/number couldn't be exactly identified.
+        // Do NOT fall back to fetching externalCardId_: a legitimately linked copy's tcgdex id
+        // would have re-resolved here, so a non-empty id at this point is a stale/foreign key
+        // (e.g. a pre-tcgdex pokemontcg id) whose GET would 404 with a misleading error. Report
+        // the accurate guidance instead.
         fetching_ = false;
         fetchButton_->setEnabled(true);
-        // "Not empty" now also covers a lone hit whose collector number didn't match, so the
-        // wording fits both that and the several-ambiguous case (never claims "several").
-        status_->setText(cards.empty()
-                             ? QStringLiteral("Couldn't find this card in the catalog.")
-                             : QStringLiteral("Couldn't confidently match this card — open "
-                                              "“Edit card…” to pick the right one."));
+        status_->setText(QStringLiteral("Couldn't identify this card for pricing — check its "
+                                        "set and collector number in “Edit card…”."));
         status_->show();
         return;
     }
 
-    try {
-        copies_.linkCatalogCard(copyId_, match->id);
-    } catch (const std::exception& e) {
-        // A persist failure here (e.g. a storage write error) is unexpected and leaves
-        // the copy unlinked — surface it loudly with the detail, not just a transient
-        // status line the next render would wipe.
-        linking_ = false;
-        fetching_ = false;
-        fetchButton_->setEnabled(true);
-        status_->setText(QStringLiteral("Couldn't look up this card right now."));
-        status_->show();
-        QMessageBox::warning(this, tr("Pokedex TCG"),
-                             tr("Could not link this card:\n%1").arg(QString::fromUtf8(e.what())));
-        return;
+    if (*id != externalCardId_) {
+        // Persist the resolved link (new, or migrated off a pre-tcgdex id) before fetching, so
+        // a re-selection sees the copy as linked and the cache keys to the tcgdex id.
+        try {
+            copies_.linkCatalogCard(copyId_, id->toStdString());
+        } catch (const std::exception& e) {
+            fetching_ = false;
+            fetchButton_->setEnabled(true);
+            status_->setText(QStringLiteral("Couldn't look up this card right now."));
+            status_->show();
+            QMessageBox::warning(this, tr("Pokedex TCG"),
+                                 tr("Could not link this card:\n%1").arg(QString::fromUtf8(e.what())));
+            return;
+        }
+        externalCardId_ = *id;
+        Q_EMIT cardLinked(QString::fromStdString(copyId_), externalCardId_);
     }
-
-    // Linked: keep the busy state (fetching_) and go straight on to fetch the prices, so
-    // one Fetch click both resolves and fetches. Tell hosts so their cached copy learns
-    // the id (a re-selection then sees it as already linked).
-    externalCardId_ = QString::fromStdString(match->id);
-    linking_ = false;
-    Q_EMIT cardLinked(QString::fromStdString(copyId_), externalCardId_);
     lookup_.fetch(externalCardId_);  // pricesReady → fetching_=false, render()
 }
 

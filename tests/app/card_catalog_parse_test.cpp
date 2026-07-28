@@ -15,7 +15,6 @@ using pokedex::CardCandidate;
 using pokedex::CardCatalogParseError;
 using pokedex::CardPrice;
 using pokedex::CardSetInfo;
-using pokedex::parseCardPrices;
 using pokedex::parseCardSearchResponse;
 using pokedex::parseSetsResponse;
 using pokedex::resolveSetFilterToIds;
@@ -241,146 +240,209 @@ TEST(ParseCardSearchResponseTest, ThrowsOnInvalidJsonButEmptyDataIsFine) {
     EXPECT_TRUE(parseCardSearchResponse(R"({"data": []})", sampleSets()).empty());
 }
 
-// ---- parseCardPrices --------------------------------------------------------
+// ---- tcgdex parsers ---------------------------------------------------------
 
-// A /v2/cards/{id} payload: `data` is a single object carrying a tcgplayer block
-// (two variants, one with a zero metric to skip) and a cardmarket block (flat,
-// with zero-valued fields the parser must drop as noise).
-constexpr const char* kCardWithPrices = R"json({
-  "data": {
-    "id": "base1-4",
-    "name": "Charizard",
-    "tcgplayer": {
-      "url": "https://prices.pokemontcg.io/tcgplayer/base1-4",
-      "updatedAt": "2026/07/25",
-      "prices": {
-        "holofoil":  {"low": 510.0, "mid": 918.8, "high": 2550.35, "market": 800.43, "directLow": 0.0},
-        "reverseHolofoil": {"market": 12.5}
+using pokedex::CardReference;
+using pokedex::parseTcgdexCardPrices;
+using pokedex::parseTcgdexSets;
+using pokedex::resolveTcgdexCardId;
+
+// A tcgdex /v2/en/cards/{id} payload (the card object at the root, no "data" wrapper),
+// modelled on the real MEP-013 / sv03-125 responses: a standard holo printing with a
+// cardmarket block (flat, EUR, plus the non-price idProduct/unit/updated fields and holo-
+// split metrics that must NOT be read) and a tcgplayer block (USD, nested by finish, with a
+// non-price productId inside the finish), then an oversized "jumbo" printing whose price must
+// be ignored while a standard one exists.
+constexpr const char* kTcgdexCard = R"json({
+  "id": "sv03-125",
+  "name": "Charizard ex",
+  "localId": "125",
+  "variants_detailed": [
+    {
+      "type": "holo", "size": "standard",
+      "pricing": {
+        "cardmarket": {
+          "updated": "2026-07-27T08:02:24.393Z", "unit": "EUR", "idProduct": 725205,
+          "avg": 3.86, "low": 1.99, "trend": 5.02, "avg1": 4.36, "avg7": 4.82, "avg30": 4.12,
+          "avg-holo": 9.99, "trend-holo": 0
+        },
+        "tcgplayer": {
+          "unit": "USD", "updated": "2026-07-25T08:03:39.374Z",
+          "holofoil": {
+            "productId": 509879, "lowPrice": 3.46, "midPrice": 6.2, "highPrice": 99,
+            "marketPrice": 5.71, "directLowPrice": 4.77
+          }
+        }
       }
     },
-    "cardmarket": {
-      "url": "https://prices.pokemontcg.io/cardmarket/base1-4",
-      "updatedAt": "2026/07/01",
-      "prices": {"averageSellPrice": 1531.0, "trendPrice": 4184.6, "germanProLow": 0.0, "suggestedPrice": 0.0}
+    {
+      "type": "holo", "size": "jumbo",
+      "pricing": { "cardmarket": { "unit": "EUR", "trend": 40.0 } }
     }
-  }
+  ]
 })json";
 
-TEST(ParseCardPricesTest, ExtractsTcgplayerVariantsAsUsdCentsFromVendorDate) {
-    const std::vector<CardPrice> prices = parseCardPrices(kCardWithPrices, at("2000-01-01T00:00:00Z"));
-
-    const CardPrice& mid = findPrice(prices, "tcgplayer", "holofoil", "mid");
-    EXPECT_EQ(mid.externalCardId, "base1-4");
-    EXPECT_EQ(mid.amountCents, 91880);  // 918.80 → cents
-    EXPECT_EQ(mid.currency, "USD");
-    EXPECT_EQ(mid.observedAt, at("2026-07-25T00:00:00Z"));  // vendor updatedAt, midnight UTC
-    EXPECT_TRUE(mid.id.empty());  // id is minted on persist, not by the parser
-
-    EXPECT_EQ(findPrice(prices, "tcgplayer", "holofoil", "high").amountCents, 255035);
-    EXPECT_EQ(findPrice(prices, "tcgplayer", "reverseHolofoil", "market").amountCents, 1250);
+TEST(ParseTcgdexPricesTest, NormalizesCardmarketMetricNamesToCanonicalVocabulary) {
+    const auto prices = parseTcgdexCardPrices(kTcgdexCard, at("2000-01-01T00:00:00Z"));
+    // tcgdex "trend"/"avg"/"low" → the canonical trendPrice/averageSellPrice/lowPrice the
+    // display's vendorBest looks up, keyed to the payload's own id, EUR, at the vendor date.
+    const CardPrice& trend = findPrice(prices, "cardmarket", "", "trendPrice");
+    EXPECT_EQ(trend.amountCents, 502);
+    EXPECT_EQ(trend.currency, "EUR");
+    EXPECT_EQ(trend.externalCardId, "sv03-125");
+    EXPECT_EQ(trend.observedAt, at("2026-07-27T00:00:00Z"));  // ISO date, midnight UTC
+    EXPECT_EQ(findPrice(prices, "cardmarket", "", "averageSellPrice").amountCents, 386);
+    EXPECT_EQ(findPrice(prices, "cardmarket", "", "lowPrice").amountCents, 199);
+    EXPECT_EQ(findPrice(prices, "cardmarket", "", "avg7").amountCents, 482);
 }
 
-TEST(ParseCardPricesTest, SkipsNonPositiveMetrics) {
-    const std::vector<CardPrice> prices = parseCardPrices(kCardWithPrices, at("2000-01-01T00:00:00Z"));
-    // directLow (0.0), germanProLow (0.0) and suggestedPrice (0.0) are noise, dropped.
+TEST(ParseTcgdexPricesTest, NormalizesTcgplayerMetricsAndKeepsThePerFinishVariant) {
+    const auto prices = parseTcgdexCardPrices(kTcgdexCard, at("2000-01-01T00:00:00Z"));
+    const CardPrice& market = findPrice(prices, "tcgplayer", "holofoil", "market");
+    EXPECT_EQ(market.amountCents, 571);
+    EXPECT_EQ(market.currency, "USD");
+    EXPECT_EQ(market.observedAt, at("2026-07-25T00:00:00Z"));
+    EXPECT_EQ(findPrice(prices, "tcgplayer", "holofoil", "mid").amountCents, 620);
+    EXPECT_EQ(findPrice(prices, "tcgplayer", "holofoil", "low").amountCents, 346);
+}
+
+TEST(ParseTcgdexPricesTest, DoesNotReadNonPriceNumbersAsMoney) {
+    const auto prices = parseTcgdexCardPrices(kTcgdexCard, at("2000-01-01T00:00:00Z"));
+    // idProduct (725205) / productId (509879) are ids, not prices; the holo-split metric and
+    // the whole tcgdex vocabulary outside our whitelist must be dropped, never turned into a
+    // huge bogus row. So no cardmarket/tcgplayer row may exceed the real max (highPrice $99).
     for (const CardPrice& p : prices) {
-        EXPECT_GT(p.amountCents, 0);
-        EXPECT_NE(p.metric, "directLow");
-        EXPECT_NE(p.metric, "germanProLow");
-        EXPECT_NE(p.metric, "suggestedPrice");
+        EXPECT_LE(p.amountCents, 9900) << p.provenance << "/" << p.metric;
+    }
+    // The "-holo" cardmarket split and the "high" tcgplayer metric are the only ones that
+    // could sneak in; confirm the parser produced exactly the whitelisted metric set size.
+    // cardmarket: trendPrice, averageSellPrice, lowPrice, avg1, avg7, avg30 = 6.
+    // tcgplayer holofoil: low, mid, high, market, directLow = 5.
+    EXPECT_EQ(prices.size(), 11u);
+}
+
+TEST(ParseTcgdexPricesTest, PrefersStandardSizeOverOversizedPrintings) {
+    const auto prices = parseTcgdexCardPrices(kTcgdexCard, at("2000-01-01T00:00:00Z"));
+    // The jumbo printing's €40 trend must not appear while a standard printing is priced.
+    for (const CardPrice& p : prices) {
+        EXPECT_NE(p.amountCents, 4000);
     }
 }
 
-TEST(ParseCardPricesTest, ExtractsCardmarketAsFlatEurRows) {
-    const std::vector<CardPrice> prices = parseCardPrices(kCardWithPrices, at("2000-01-01T00:00:00Z"));
-
-    const CardPrice& trend = findPrice(prices, "cardmarket", "", "trendPrice");
-    EXPECT_EQ(trend.amountCents, 418460);
-    EXPECT_EQ(trend.currency, "EUR");
-    EXPECT_EQ(trend.observedAt, at("2026-07-01T00:00:00Z"));
-    EXPECT_EQ(findPrice(prices, "cardmarket", "", "averageSellPrice").amountCents, 153100);
-}
-
-TEST(ParseCardPricesTest, ReadsTheDatePrefixEvenWithATrailingTimeComponent) {
-    // Defensive against a future format change: only the leading YYYY/MM/DD is read,
-    // so a trailing time still yields the real date rather than the fetch-time fallback.
-    constexpr const char* json = R"json({
-      "data": {"id": "sv3-125",
-               "tcgplayer": {"updatedAt": "2026/07/20 08:30:15",
-                             "prices": {"normal": {"market": 1.0}}}}
+TEST(ParseTcgdexPricesTest, FallsBackToOversizedWhenNoStandardPrintingIsPriced) {
+    constexpr const char* kJumboOnly = R"json({
+      "id": "prom-1",
+      "variants_detailed": [
+        { "type": "holo", "size": "jumbo",
+          "pricing": { "cardmarket": { "unit": "EUR", "trend": 12.5 } } }
+      ]
     })json";
-    const std::vector<CardPrice> prices = parseCardPrices(json, at("2000-01-01T00:00:00Z"));
+    const auto prices = parseTcgdexCardPrices(kJumboOnly, at("2000-01-01T00:00:00Z"));
     ASSERT_EQ(prices.size(), 1u);
-    EXPECT_EQ(prices[0].observedAt, at("2026-07-20T00:00:00Z"));
+    EXPECT_EQ(prices.front().amountCents, 1250);
 }
 
-TEST(ParseCardPricesTest, FallsBackToGivenTimestampWhenVendorDateMissing) {
-    constexpr const char* json = R"json({
-      "data": {"id": "sv3-125",
-               "tcgplayer": {"prices": {"normal": {"market": 1.0}}}}
+TEST(ParseTcgdexPricesTest, FallsBackToFetchTimeWhenVendorDateMissingOrMalformed) {
+    constexpr const char* kNoDate = R"json({
+      "id": "x-1",
+      "variants_detailed": [
+        { "size": "standard",
+          "pricing": { "cardmarket": { "unit": "EUR", "trend": 1.0, "updated": "nope" } } }
+      ]
     })json";
-    const Timestamp fallback = at("2026-07-25T09:30:00Z");
-    const std::vector<CardPrice> prices = parseCardPrices(json, fallback);
+    const Timestamp fallback = at("2020-05-05T00:00:00Z");
+    const auto prices = parseTcgdexCardPrices(kNoDate, fallback);
     ASSERT_EQ(prices.size(), 1u);
-    EXPECT_EQ(prices[0].observedAt, fallback);
+    EXPECT_EQ(prices.front().observedAt, fallback);
 }
 
-TEST(ParseCardPricesTest, AlsoAcceptsFirstElementOfADataArray) {
-    // A search response (data is an array): the parser reads the first card.
-    constexpr const char* json = R"json({
-      "data": [{"id": "sv3-125", "cardmarket": {"prices": {"trendPrice": 2.0}}}]
+TEST(ParseTcgdexPricesTest, DropsSubCentAmountsAndYieldsNoRowsForAPricelessCard) {
+    constexpr const char* kNoisy = R"json({
+      "id": "x-1",
+      "variants_detailed": [
+        { "size": "standard", "pricing": { "cardmarket": { "unit": "EUR", "trend": 0.004 } } }
+      ]
     })json";
-    const std::vector<CardPrice> prices = parseCardPrices(json, at("2000-01-01T00:00:00Z"));
-    ASSERT_EQ(prices.size(), 1u);
-    EXPECT_EQ(prices[0].externalCardId, "sv3-125");
-    EXPECT_EQ(prices[0].amountCents, 200);
+    EXPECT_TRUE(parseTcgdexCardPrices(kNoisy, at("2000-01-01T00:00:00Z")).empty());
+    // A card with no variants_detailed at all is priceless, not an error.
+    EXPECT_TRUE(
+        parseTcgdexCardPrices(R"({"id": "x-1"})", at("2000-01-01T00:00:00Z")).empty());
 }
 
-TEST(ParseCardPricesTest, DropsPositiveAmountsThatRoundToZeroCents) {
-    // A sub-half-cent value is positive but rounds to 0 cents; it must be dropped as
-    // noise, never stored as a bogus $0.00 price.
-    constexpr const char* json = R"json({
-      "data": {"id": "sv3-125",
-               "cardmarket": {"prices": {"trendPrice": 0.004, "lowPrice": 0.006}}}
-    })json";
-    const std::vector<CardPrice> prices = parseCardPrices(json, at("2000-01-01T00:00:00Z"));
-    ASSERT_EQ(prices.size(), 1u);  // 0.004 → 0 cents (dropped); 0.006 → 1 cent (kept)
-    EXPECT_EQ(prices[0].metric, "lowPrice");
-    EXPECT_EQ(prices[0].amountCents, 1);
-}
-
-TEST(ParseCardPricesTest, NoPriceBlocksYieldsNoRows) {
-    constexpr const char* json = R"json({"data": {"id": "sv3-125", "name": "Gardevoir ex"}})json";
-    EXPECT_TRUE(parseCardPrices(json, at("2000-01-01T00:00:00Z")).empty());
-}
-
-TEST(ParseCardPricesTest, ThrowsOnInvalidJsonButMissingDataIsFine) {
-    EXPECT_THROW(parseCardPrices("}{", at("2000-01-01T00:00:00Z")), CardCatalogParseError);
-    EXPECT_TRUE(parseCardPrices(R"({"foo": 1})", at("2000-01-01T00:00:00Z")).empty());
-}
-
-// parseCardPricesResult reports whether a card object was present, so a caller can tell a
-// price-less card (card present, empty prices) from a degraded response (no card at all).
-TEST(ParseCardPricesTest, ResultReportsCardPresenceApartFromPrices) {
-    // A card object with no price blocks: present, but no rows.
-    const auto priceless = pokedex::parseCardPricesResult(
-        R"({"data": {"id": "sv3-125", "name": "Gardevoir ex"}})", at("2000-01-01T00:00:00Z"));
-    EXPECT_TRUE(priceless.cardPresent);
-    EXPECT_TRUE(priceless.prices.empty());
-
-    // A card object with prices: present, with rows.
-    const auto priced = pokedex::parseCardPricesResult(
-        R"({"data": {"id": "sv3-125", "cardmarket": {"prices": {"trendPrice": 2.0}}}})",
-        at("2000-01-01T00:00:00Z"));
-    EXPECT_TRUE(priced.cardPresent);
-    EXPECT_EQ(priced.prices.size(), 1u);
-
-    // No card node at all (degraded/error body): absent.
-    EXPECT_FALSE(pokedex::parseCardPricesResult(R"({"data": null})", at("2000-01-01T00:00:00Z"))
+TEST(ParseTcgdexPricesTest, ResultReportsCardPresenceAndThrowsOnlyOnInvalidJson) {
+    // A real card is present; a 404 error body (no "id") is a degraded response, not a card.
+    EXPECT_TRUE(pokedex::parseTcgdexCardPricesResult(R"({"id": "x-1"})", at("2000-01-01T00:00:00Z"))
+                    .cardPresent);
+    EXPECT_FALSE(pokedex::parseTcgdexCardPricesResult(
+                     R"({"status": 404, "title": "not found"})", at("2000-01-01T00:00:00Z"))
                      .cardPresent);
-    EXPECT_FALSE(
-        pokedex::parseCardPricesResult(R"({"errors": ["x"]})", at("2000-01-01T00:00:00Z"))
-            .cardPresent);
+    EXPECT_THROW(parseTcgdexCardPrices("}{", at("2000-01-01T00:00:00Z")), CardCatalogParseError);
+}
+
+// ---- parseTcgdexSets --------------------------------------------------------
+
+// tcgdex /v2/en/sets is a FLAT array (no "data" wrapper), each set carrying a nested
+// cardCount and no printed code.
+constexpr const char* kTcgdexSets = R"json([
+  {"id": "sv03", "name": "Obsidian Flames",       "cardCount": {"total": 230, "official": 197}},
+  {"id": "mep",  "name": "MEP Black Star Promos",  "cardCount": {"total": 60,  "official": 0}},
+  {"id": "swsh12", "name": "Silver Tempest",       "cardCount": {"total": 215}},
+  {"name": "No Id Set"}
+])json";
+
+TEST(ParseTcgdexSetsTest, ParsesFlatArrayCarriesTotalAndSkipsIdlessEntries) {
+    const auto sets = parseTcgdexSets(kTcgdexSets);
+    ASSERT_EQ(sets.size(), 3u);  // the id-less entry is skipped
+    EXPECT_EQ(sets[0].id, "sv03");
+    EXPECT_EQ(sets[0].name, "Obsidian Flames");
+    EXPECT_EQ(sets[0].printedTotal, 230);
+    EXPECT_TRUE(sets[0].ptcgoCode.empty());  // tcgdex publishes none
+}
+
+TEST(ParseTcgdexSetsTest, NonArrayPayloadYieldsNoSets) {
+    EXPECT_TRUE(parseTcgdexSets(R"({"data": []})").empty());
+    EXPECT_THROW(parseTcgdexSets("}{"), CardCatalogParseError);
+}
+
+// ---- resolveTcgdexCardId ----------------------------------------------------
+
+CardReference ref(std::string code, std::string number, std::string setName = "") {
+    CardReference r;
+    r.expansionCode = std::move(code);
+    r.collectorNumber = std::move(number);
+    r.setName = std::move(setName);
+    return r;
+}
+
+TEST(ResolveTcgdexCardIdTest, MatchesPrintedCodeAsSetIdForPromos) {
+    const auto sets = parseTcgdexSets(kTcgdexSets);
+    // The manual MEP case: the user typed code "MEP" (== the tcgdex set id "mep"), number 013.
+    EXPECT_EQ(resolveTcgdexCardId(ref("MEP", "013"), sets), "mep-013");
+}
+
+TEST(ResolveTcgdexCardIdTest, MatchesMainSetByNameNotItsUnrelatedPrintedCode) {
+    const auto sets = parseTcgdexSets(kTcgdexSets);
+    // A finder-added card: printed code "OBF" is nothing like the tcgdex id "sv03", but the
+    // set NAME matches, and the collector number strips its "/197" total to the localId.
+    EXPECT_EQ(resolveTcgdexCardId(ref("OBF", "125/197", "Obsidian Flames"), sets), "sv03-125");
+}
+
+TEST(ResolveTcgdexCardIdTest, PrefersAnExactNameMatchOverACollidingCode) {
+    // A code that coincidentally equals an unrelated set's tcgdex id ("mep") must NOT win when
+    // the set NAME exactly identifies a different set — name is matched first.
+    std::vector<CardSetInfo> sets = parseTcgdexSets(kTcgdexSets);
+    EXPECT_EQ(resolveTcgdexCardId(ref("MEP", "5", "Silver Tempest"), sets), "swsh12-5");
+}
+
+TEST(ResolveTcgdexCardIdTest, RefusesFuzzyMatchesAmbiguityAndUnknowns) {
+    const auto sets = parseTcgdexSets(kTcgdexSets);
+    // A loose substring is NOT trusted (only exact name / code-as-id) — refuse rather than
+    // risk pricing the wrong card.
+    EXPECT_FALSE(resolveTcgdexCardId(ref("", "5", "silver"), sets).has_value());
+    // No collector number → nothing to address.
+    EXPECT_FALSE(resolveTcgdexCardId(ref("MEP", "  "), sets).has_value());
+    // An unidentifiable set → refuse rather than guess a wrong card.
+    EXPECT_FALSE(resolveTcgdexCardId(ref("ZZZ", "1", "Totally Unknown Set"), sets).has_value());
 }
 
 }  // namespace

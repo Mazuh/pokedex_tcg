@@ -18,7 +18,6 @@
 #include <exception>
 #include <map>
 #include <optional>
-#include <unordered_set>
 #include <string>
 #include <unordered_map>
 
@@ -114,8 +113,8 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     // Cell padding so content clears the edges and the overlay scrollbar.
     table_->setStyleSheet("QTableView::item { padding-left: 8px; padding-right: 16px; }");
 
-    detail_ = new PokemonDetailPanel(media, wishlist, &cardImages_, &priceLookup_, &cardSearch_,
-                                     &cardCopies_, this);
+    detail_ = new PokemonDetailPanel(media, wishlist, &cardImages_, &priceLookup_, &cardCopies_,
+                                     this);
 
     connect(search_, &QLineEdit::textChanged, this, &BinderView::applyFilter);
     // Show the current row's Pokémon in the detail panel. currentCellChanged
@@ -238,26 +237,12 @@ void BinderView::refresh() {
 }
 
 void BinderView::loadCachedPrices() {
-    // Gather the distinct linked ids of the Owned copies filed here, then read every one's
-    // prices in a SINGLE batched cache query (cachedMany) rather than one SELECT per card —
-    // opening or re-statting a large binder must not be N synchronous round-trips. This is
-    // the only price read; both updateStats and repopulate() consult the resulting map, so a
-    // header-sort reorder never re-queries. Best-effort: a storage failure leaves the map
-    // empty (counts without a value, blank Prices cells) rather than crashing the open.
-    pricesByExternalId_.clear();
-    std::vector<std::string> ids;
-    std::unordered_set<std::string> seen;
-    for (const CardCopy& copy : filedCopies_) {
-        if (copy.ownership == CardOwnership::Owned && !copy.externalCardId.empty() &&
-            seen.insert(copy.externalCardId).second) {
-            ids.push_back(copy.externalCardId);
-        }
-    }
-    try {
-        pricesByExternalId_ = priceLookup_.cachedMany(ids);
-    } catch (const std::exception&) {
-        pricesByExternalId_.clear();
-    }
+    // Only Owned copies filed here count toward the value; read them all in ONE batched cache
+    // query (loadCachedPricesFor). This is the only price read — both updateStats and
+    // repopulate() consult the resulting map, so a header-sort reorder never re-queries.
+    pricesByExternalId_ = loadCachedPricesFor(
+        priceLookup_, filedCopies_,
+        [](const CardCopy& c) { return c.ownership == CardOwnership::Owned; });
 }
 
 void BinderView::updateStats(const std::vector<CardCopy>& filedCopies) {

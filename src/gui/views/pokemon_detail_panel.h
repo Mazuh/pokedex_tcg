@@ -18,7 +18,6 @@ namespace pokedex {
 class CardImageStore;
 class CardPriceLookupService;
 class CardPricesPanel;
-class CardSearchService;
 class CardCopyService;
 class MediaService;
 class WishlistService;
@@ -61,15 +60,14 @@ public:
     // and is always enabled, even with nothing selected (emits addCardRequested).
     enum class AddMode { SpeciesCopy, FreeCard };
 
-    // `prices`/`search`/`copies`, when all three are supplied (alongside `images`),
-    // add the market-prices block to copy mode — the same reusable CardPricesPanel the
-    // Edit page uses, so a copy seen here can be priced (and invisibly linked on first
-    // Fetch) without opening the Edit page. Passing any of them null (or no image
+    // `prices` and `copies`, when both are supplied (alongside `images`), add the
+    // market-prices block to copy mode — the same reusable CardPricesPanel the Edit page
+    // uses, so a copy seen here can be priced (and invisibly linked on first Fetch, straight
+    // from its set+number) without opening the Edit page. Passing either null (or no image
     // store) omits the block, leaving the artwork-only behavior.
     PokemonDetailPanel(MediaService& media, WishlistService& wishlist,
                        CardImageStore* images = nullptr, CardPriceLookupService* prices = nullptr,
-                       CardSearchService* search = nullptr, CardCopyService* copies = nullptr,
-                       QWidget* parent = nullptr);
+                       CardCopyService* copies = nullptr, QWidget* parent = nullptr);
 
     // Show `name` now and request its artwork. Not named show() so it doesn't
     // hide QWidget::show().

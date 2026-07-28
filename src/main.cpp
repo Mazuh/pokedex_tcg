@@ -110,11 +110,13 @@ int main(int argc, char *argv[]) {
         pokedex::CardSearchService cardSearch(cardApi, &setCache);
 
         // On-demand card prices: the Qt-free cache/service persist in the workspace DB,
-        // the GUI transport fetches per card via the same pokemontcg.io adapter. Prices
-        // are fetched only when the user asks (a Fetch/Refresh button), never on view.
+        // the GUI transport fetches per card from tcgdex (the free pricing provider, which —
+        // unlike the pokemontcg.io metadata catalog — covers new sets and is addressable by
+        // set+number). Prices are fetched only when the user asks (a Fetch/Refresh button),
+        // never on view.
         pokedex::CardPriceCache priceCache(db);
         pokedex::CardPriceService cardPrices(priceCache);
-        pokedex::CardPriceLookupService priceLookup(cardApi, cardPrices);
+        pokedex::CardPriceLookupService priceLookup(cardPrices);
 
         pokedex::MainWindow window(
             service, guide, browse, wishlist, media, cardSearch, priceLookup, cardCopies,

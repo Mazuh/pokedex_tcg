@@ -13,7 +13,6 @@ namespace pokedex {
 class PokemonTcgIoApi : public CardCatalogApi {
 public:
     HttpRequest resolveSearch(const CardSearchQuery& query) const override;
-    HttpRequest resolveCardById(const std::string& cardId) const override;
     HttpRequest resolveSets() const override;
 };
 

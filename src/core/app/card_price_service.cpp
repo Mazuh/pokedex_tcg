@@ -34,23 +34,26 @@ std::optional<Timestamp> CardPriceService::fetchedAt(const std::string& external
     return cache_.fetchedAt(externalCardId);
 }
 
-CardPriceService::RecordedApiPrices CardPriceService::recordApiPrices(
+CardPriceService::RecordedApiPrices CardPriceService::recordTcgdexPrices(
     const std::string& externalCardId, const std::string& jsonPayload) {
     const Timestamp now = clock_();
-    // A vendor block without a printed date falls back to the fetch time.
-    const CardPricesParse parsed = parseCardPricesResult(jsonPayload, now);
-    std::vector<CardPrice> prices = parsed.prices;
+    const CardPricesParse parsed = parseTcgdexCardPricesResult(jsonPayload, now);
+    return persistParsedPrices(externalCardId, parsed.prices, parsed.cardPresent, now);
+}
 
+CardPriceService::RecordedApiPrices CardPriceService::persistParsedPrices(
+    const std::string& externalCardId, std::vector<CardPrice> prices, bool cardPresent,
+    Timestamp now) {
     // A *degraded* response — no card object came back at all (an error body / data:null /
     // a failure the transport surfaced as a 200) — is NOT a real "no prices" answer: never
     // store or stamp it, whether or not we already hold prices. Any cached prices stay
     // intact, and a first-ever fetch stays unfetched (no stamp), so the next Fetch/Refresh
     // retries rather than the card showing a false "No market prices" verdict. A card that
-    // DID come back (present) with no price blocks — a delisted card, or a set the API hasn't
-    // priced yet — is a genuine "no prices" answer and falls through below to clear + stamp,
-    // caching the blank so it isn't re-fetched until the user insists via Refresh. Manual
-    // rows are untouched either way (storeApiPrices keeps them).
-    if (prices.empty() && !parsed.cardPresent) {
+    // DID come back (present) with no price blocks — a delisted card, or a set the provider
+    // hasn't priced yet — is a genuine "no prices" answer and falls through below to clear +
+    // stamp, caching the blank so it isn't re-fetched until the user insists via Refresh.
+    // Manual rows are untouched either way (storeApiPrices keeps them).
+    if (prices.empty() && !cardPresent) {
         // Degraded: leave the cache and the (absent-or-old) stamp untouched, and tell the
         // caller so it surfaces a retryable failure rather than a false "no prices".
         return {.stored = {}, .degraded = true};

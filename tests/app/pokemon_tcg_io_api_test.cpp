@@ -64,14 +64,6 @@ TEST(PokemonTcgIoApiTest, ResolvesSearchNarrowedToSeveralSetsWithOr) {
         "&pageSize=250");
 }
 
-// The single-card endpoint (the on-demand price fetch): the card id is a path
-// segment. A real id is unreserved ASCII and passes through unchanged.
-TEST(PokemonTcgIoApiTest, ResolvesSingleCardById) {
-    PokemonTcgIoApi api;
-    EXPECT_EQ(api.resolveCardById("sv3-125").url,
-              "https://api.pokemontcg.io/v2/cards/sv3-125");
-}
-
 // The set-list endpoint used to build the in-memory code/id table.
 TEST(PokemonTcgIoApiTest, ResolvesSetListEndpoint) {
     PokemonTcgIoApi api;

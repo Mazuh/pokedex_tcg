@@ -45,11 +45,6 @@ public:
     // Where to GET the printings of a species (optionally narrowed to setIds).
     virtual HttpRequest resolveSearch(const CardSearchQuery& query) const = 0;
 
-    // Where to GET a single card by its stable catalog id (e.g. "sv3-125") — the
-    // per-card endpoint whose response carries the card's market prices
-    // (card_catalog_parse::parseCardPrices). This is the on-demand price fetch.
-    virtual HttpRequest resolveCardById(const std::string& cardId) const = 0;
-
     // Where to GET the full set list — the code/id/printedTotal table that
     // card_catalog_parse turns into the in-memory set lookup. Resolved once and
     // cached by the caller for the app's lifetime.

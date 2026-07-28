@@ -74,34 +74,14 @@ std::string toLowerAscii(const std::string& s) {
     return out;
 }
 
-// The single-card node: `data` is an object on the /v2/cards/{id} endpoint, but be
-// lenient and also accept the first element of a `data` array (a search response),
-// so the same parser serves either shape. Returns nullptr when neither is present.
-const json* cardNode(const json& root) {
-    if (!root.is_object()) {
-        return nullptr;
-    }
-    const auto it = root.find("data");
-    if (it == root.end()) {
-        return nullptr;
-    }
-    if (it->is_object()) {
-        return &*it;
-    }
-    if (it->is_array() && !it->empty() && it->front().is_object()) {
-        return &it->front();
-    }
-    return nullptr;
-}
-
-// A vendor block's printed update date ("YYYY/MM/DD") as a midnight-UTC Timestamp,
-// or nullopt when the field is absent or malformed. Only the leading 10 chars are
-// read, so a value that ever carries a trailing time component ("YYYY/MM/DD hh:mm")
-// still yields the correct date rather than silently falling back. Kept clock-free
-// (chrono calendar math only) so the parser stays pure and testable.
-std::optional<Timestamp> vendorUpdatedAt(const json& block) {
-    const std::string d = strField(block, "updatedAt");
-    if (d.size() < 10 || d[4] != '/' || d[7] != '/') {
+// A "YYYY<sep>MM<sep>DD…" date string's leading date as a midnight-UTC Timestamp, or
+// nullopt when it is too short, mis-separated, or non-numeric. Only the leading 10 chars
+// are read, so a trailing time component ("YYYY-MM-DDThh:mm:ssZ", "YYYY/MM/DD hh:mm") still
+// yields the correct date rather than falling back. `sep` is the field separator the source
+// uses ('/' for pokemontcg.io, '-' for tcgdex's ISO-8601). Clock-free (chrono calendar math
+// only) so the parser stays pure and testable.
+std::optional<Timestamp> dateAtMidnight(const std::string& d, char sep) {
+    if (d.size() < 10 || d[4] != sep || d[7] != sep) {
         return std::nullopt;
     }
     for (const int i : {0, 1, 2, 3, 5, 6, 8, 9}) {
@@ -119,6 +99,11 @@ std::optional<Timestamp> vendorUpdatedAt(const json& block) {
     return std::chrono::sys_days{ymd};
 }
 
+// A pokemontcg.io vendor block's printed update date ("YYYY/MM/DD"), or nullopt.
+std::optional<Timestamp> vendorUpdatedAt(const json& block) {
+    return dateAtMidnight(strField(block, "updatedAt"), '/');
+}
+
 // Money (a JSON number of currency units) as integer minor units. A non-number, a
 // non-positive value, or a positive amount that rounds down to zero cents (a
 // sub-half-cent metric) yields nullopt — a zero/absent price is noise, not a price.
@@ -133,12 +118,12 @@ std::optional<long long> priceCents(const json& value) {
     return cents;
 }
 
-// Extract every price observation from one card object — its `tcgplayer` (USD,
-// nested by variant) and `cardmarket` (EUR, flat) blocks — keyed by the card's own
-// id. Shared by parseCardPrices (the per-card endpoint) and parseCardSearchResponse
-// (the search endpoint embeds the same blocks, so a browse gets prices for free).
-// Non-positive/zero-rounding metrics are skipped as noise; a vendor block without a
-// printed date uses `fallbackObservedAt`. Rows carry an empty `id` (minted on persist).
+// Extract every price observation from one pokemontcg.io card object — its `tcgplayer`
+// (USD, nested by variant) and `cardmarket` (EUR, flat) blocks — keyed by the card's own
+// id. Used by parseCardSearchResponse: the search endpoint embeds these blocks, so the
+// finder shows a display-only price hint for free (the owned-copy price feed is tcgdex, a
+// separate provider). Non-positive/zero-rounding metrics are skipped as noise; a vendor
+// block without a printed date uses `fallbackObservedAt`. Rows carry an empty `id`.
 std::vector<CardPrice> extractCardPrices(const json& card, Timestamp fallbackObservedAt) {
     std::vector<CardPrice> prices;
     const std::string externalCardId = strField(card, "id");
@@ -189,6 +174,123 @@ std::vector<CardPrice> extractCardPrices(const json& card, Timestamp fallbackObs
 
     return prices;
 }
+
+// A tcgdex vendor block's printed update date ("updated": ISO-8601 "YYYY-MM-DDThh:mm:ssZ").
+std::optional<Timestamp> tcgdexUpdatedAt(const json& block) {
+    return dateAtMidnight(strField(block, "updated"), '-');
+}
+
+// tcgdex names its price metrics differently from pokemontcg.io; these map the ones we care
+// about to the SAME canonical vocabulary extractCardPrices emits, so downstream (the cache,
+// vendorBest, the headline) never learns there is a second source. A key not in the map
+// returns nullopt — which also WHITELISTS: the vendor blocks carry non-price fields
+// (`idProduct`, `productId`, `unit`, `updated`) and holo-split variants (`avg-holo`…) that a
+// blind numeric scan would otherwise turn into bogus money rows.
+std::optional<std::string> canonicalTcgplayerMetric(const std::string& key) {
+    // tcgdex nests each finish's metrics as lowPrice/midPrice/highPrice/marketPrice/
+    // directLowPrice → pokemontcg.io's low/mid/high/market/directLow.
+    if (key == "lowPrice") return "low";
+    if (key == "midPrice") return "mid";
+    if (key == "highPrice") return "high";
+    if (key == "marketPrice") return "market";
+    if (key == "directLowPrice") return "directLow";
+    return std::nullopt;
+}
+std::optional<std::string> canonicalCardmarketMetric(const std::string& key) {
+    // tcgdex's flat cardmarket metrics → pokemontcg.io's names. avg1/avg7/avg30 already match.
+    if (key == "avg") return "averageSellPrice";
+    if (key == "low") return "lowPrice";
+    if (key == "trend") return "trendPrice";
+    if (key == "avg1" || key == "avg7" || key == "avg30") return key;
+    return std::nullopt;
+}
+
+// Read whitelisted metrics out of one vendor pricing block into `out`. `canon` maps (and
+// whitelists) the source metric name; `variant` locates the number within the vendor
+// (a tcgplayer finish key, or "" for flat cardmarket).
+void collectTcgdexMetrics(const json& block, const char* provenance, const std::string& variant,
+                          const std::string& currency, Timestamp observed,
+                          std::optional<std::string> (*canon)(const std::string&),
+                          const std::string& externalCardId, std::vector<CardPrice>& out) {
+    for (const auto& [key, value] : block.items()) {
+        const auto metric = canon(key);
+        if (!metric) {
+            continue;  // a non-price field (idProduct/unit/updated) or a metric we don't map
+        }
+        if (const auto cents = priceCents(value)) {
+            out.push_back(CardPrice{.externalCardId = externalCardId,
+                                    .provenance = provenance,
+                                    .variant = variant,
+                                    .metric = *metric,
+                                    .amountCents = *cents,
+                                    .currency = currency,
+                                    .observedAt = observed});
+        }
+    }
+}
+
+// Extract every price observation from one tcgdex card object. Prices live per printing under
+// `variants_detailed[].pricing`; standard-size printings are preferred (a jumbo/lenticular is
+// a different product), falling back to all printings when a card has only oversized ones.
+std::vector<CardPrice> extractTcgdexPrices(const json& card, Timestamp fallbackObservedAt) {
+    std::vector<CardPrice> prices;
+    const std::string externalCardId = strField(card, "id");
+
+    const auto variants = card.find("variants_detailed");
+    if (variants == card.end() || !variants->is_array()) {
+        return prices;
+    }
+
+    // Prefer standard-size printings; only if none carry pricing do oversized ones stand in.
+    for (const bool standardOnly : {true, false}) {
+        for (const json& variant : *variants) {
+            if (!variant.is_object()) {
+                continue;
+            }
+            const std::string size = strField(variant, "size");
+            const bool isStandard = size.empty() || size == "standard";
+            if (standardOnly != isStandard) {
+                continue;
+            }
+            const auto pricing = variant.find("pricing");
+            if (pricing == variant.end() || !pricing->is_object()) {
+                continue;
+            }
+
+            // cardmarket (EUR, flat): one set of metrics per printing, no per-finish split.
+            if (const auto cm = pricing->find(kCardmarketProvenance);
+                cm != pricing->end() && cm->is_object()) {
+                const std::string currency = strField(*cm, "unit");
+                collectTcgdexMetrics(*cm, kCardmarketProvenance, /*variant=*/"",
+                                     currency.empty() ? "EUR" : currency,
+                                     tcgdexUpdatedAt(*cm).value_or(fallbackObservedAt),
+                                     canonicalCardmarketMetric, externalCardId, prices);
+            }
+
+            // tcgplayer (USD): metrics are nested one level by finish ("holofoil"/"normal"/
+            // "reverse-holofoil"), each an object of named metrics.
+            if (const auto tcg = pricing->find(kTcgplayerProvenance);
+                tcg != pricing->end() && tcg->is_object()) {
+                const std::string currency = strField(*tcg, "unit");
+                const Timestamp observed = tcgdexUpdatedAt(*tcg).value_or(fallbackObservedAt);
+                for (const auto& [finish, metrics] : tcg->items()) {
+                    if (!metrics.is_object()) {
+                        continue;  // skips the sibling "unit"/"updated" scalars
+                    }
+                    collectTcgdexMetrics(metrics, kTcgplayerProvenance, finish,
+                                         currency.empty() ? "USD" : currency, observed,
+                                         canonicalTcgplayerMetric, externalCardId, prices);
+                }
+            }
+        }
+        if (!prices.empty()) {
+            break;  // standard printings priced this card — don't also add oversized rows
+        }
+    }
+    return prices;
+}
+
+std::string trimLowerAscii(const std::string& s) { return toLowerAscii(trim(s)); }
 
 }  // namespace
 
@@ -290,18 +392,86 @@ std::vector<CardCandidate> parseCardSearchResponse(const std::string& jsonText,
     return candidates;
 }
 
-CardPricesParse parseCardPricesResult(const std::string& jsonText, Timestamp fallbackObservedAt) {
+CardPricesParse parseTcgdexCardPricesResult(const std::string& jsonText,
+                                            Timestamp fallbackObservedAt) {
     const json root = parseJson(jsonText);
-    const json* card = cardNode(root);
-    if (card == nullptr) {
-        return {};  // cardPresent = false, no prices — a degraded/error body
+    // tcgdex returns the card object at the ROOT (no "data" wrapper). A miss is a JSON error
+    // object ({"status":404,…}) with no "id": treat that as no card present (degraded) so the
+    // caller preserves cached prices instead of caching a false "no prices" (see CardPricesParse).
+    if (!root.is_object() || strField(root, "id").empty()) {
+        return {};  // cardPresent = false
     }
-    return {.cardPresent = true, .prices = extractCardPrices(*card, fallbackObservedAt)};
+    return {.cardPresent = true, .prices = extractTcgdexPrices(root, fallbackObservedAt)};
 }
 
-std::vector<CardPrice> parseCardPrices(const std::string& jsonText,
-                                       Timestamp fallbackObservedAt) {
-    return parseCardPricesResult(jsonText, fallbackObservedAt).prices;
+std::vector<CardPrice> parseTcgdexCardPrices(const std::string& jsonText,
+                                             Timestamp fallbackObservedAt) {
+    return parseTcgdexCardPricesResult(jsonText, fallbackObservedAt).prices;
+}
+
+std::vector<CardSetInfo> parseTcgdexSets(const std::string& jsonText) {
+    const json root = parseJson(jsonText);
+    std::vector<CardSetInfo> sets;
+    if (!root.is_array()) {
+        return sets;  // tcgdex /v2/en/sets is a flat array, not "data"-wrapped
+    }
+    for (const json& s : root) {
+        CardSetInfo info;
+        info.id = strField(s, "id");
+        if (info.id.empty()) {
+            continue;  // a set with no id is unusable as a lookup key
+        }
+        info.name = strField(s, "name");
+        // tcgdex publishes no printed code; carry the total from the nested cardCount.
+        const auto count = s.find("cardCount");
+        if (count != s.end() && count->is_object()) {
+            info.printedTotal = intField(*count, "total");
+        }
+        sets.push_back(std::move(info));
+    }
+    return sets;
+}
+
+std::optional<std::string> resolveTcgdexCardId(const CardReference& ref,
+                                               const std::vector<CardSetInfo>& tcgdexSets) {
+    // The localId is the leading printing part of the collector number ("125/197" → "125").
+    // Without it there is no card to address.
+    std::string localId = trim(ref.collectorNumber);
+    if (const auto slash = localId.find('/'); slash != std::string::npos) {
+        localId = trim(localId.substr(0, slash));
+    }
+    if (localId.empty()) {
+        return std::nullopt;
+    }
+
+    const std::string code = trimLowerAscii(ref.expansionCode);
+    const std::string name = trimLowerAscii(ref.setName);
+
+    // Only EXACT set matches are trusted — a wrong-but-confident link would show a different
+    // card's market prices as this copy's value, so an unidentifiable set returns nullopt
+    // (the caller reports "couldn't identify", never guesses) rather than a fuzzy substring
+    // guess with no way to verify the card actually exists in that set.
+    //
+    // 1) The set name equal to a tcgdex set NAME (the reliable main-set path: the tcgdex id
+    //    "sv03" is nothing like the printed "OBF", but the names match). Tried FIRST so a
+    //    genuine name match always wins over the weaker code-as-id heuristic below.
+    // 2) The printed code (or set name) equal to a tcgdex set NAME.
+    for (const CardSetInfo& s : tcgdexSets) {
+        const std::string setName = toLowerAscii(s.name);
+        if ((!name.empty() && setName == name) || (!code.empty() && setName == code)) {
+            return s.id + "-" + localId;
+        }
+    }
+    // 3) The printed code AS a tcgdex set id (promos whose code IS the id, e.g. "MEP"→"mep")
+    //    — the fallback when there is no name match, so a code that coincidentally equals an
+    //    unrelated set's id can only mislead a copy that had no better (name) signal.
+    for (const CardSetInfo& s : tcgdexSets) {
+        if (!code.empty() && toLowerAscii(s.id) == code) {
+            return s.id + "-" + localId;
+        }
+    }
+
+    return std::nullopt;
 }
 
 std::vector<std::string> resolveSetFilterToIds(const std::string& typed,
