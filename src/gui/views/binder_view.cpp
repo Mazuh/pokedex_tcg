@@ -351,7 +351,9 @@ void BinderView::repopulate() {
         // The representative copy's cached market prices, inline ("$… · €…"); blank when the
         // copy is unlinked or its prices were never fetched. Cache-only (pricesByExternalId_),
         // so this stays a pure in-memory rebuild — no network, no re-query.
-        table_->setItem(i, 8, cell(rep ? priceAmountsInline(pricesFor(*rep)) : QString()));
+        table_->setItem(
+            i, 8,
+            cell(rep ? priceAmountsInline(pricesForCopy(pricesByExternalId_, *rep)) : QString()));
     }
 
     // Move the highlight to the row the selected species landed on after the sort, so
@@ -465,7 +467,7 @@ void BinderView::sortEntries() {
                         // intentional tradeoff as the price table's amount sort — a rough
                         // magnitude ordering, not an exact worth). A copy with no cached price
                         // stays nullopt so it sinks to the bottom in either direction.
-                        const VendorBest best = vendorBest(pricesFor(*rep));
+                        const VendorBest best = vendorBest(pricesForCopy(pricesByExternalId_, *rep));
                         if (best.tcg || best.cm) {
                             key.priceCents = (best.tcg ? best.tcg->amountCents : 0) +
                                              (best.cm ? best.cm->amountCents : 0);
@@ -513,15 +515,6 @@ const CardCopy* BinderView::representativeCopy(int dex) const {
         return nullptr;
     }
     return &it->second.front();
-}
-
-const std::vector<CardPrice>& BinderView::pricesFor(const CardCopy& copy) const {
-    static const std::vector<CardPrice> kEmpty;
-    if (copy.externalCardId.empty()) {
-        return kEmpty;
-    }
-    const auto it = pricesByExternalId_.find(copy.externalCardId);
-    return it == pricesByExternalId_.end() ? kEmpty : it->second;
 }
 
 void BinderView::applyFilter(const QString& filter) {

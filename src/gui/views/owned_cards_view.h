@@ -102,9 +102,6 @@ private:
     // header-sort's repopulate() never re-queries. Best-effort: a storage failure leaves
     // the map empty (blank Prices cells) rather than crashing.
     void loadCachedPrices();
-    // The cached market prices for a copy (its externalCardId's rows), or an empty list
-    // when it is unlinked or nothing is cached. Cache-only — backs the Prices column.
-    const std::vector<CardPrice>& pricesFor(const CardCopy& copy) const;
     // Open the binder picker for the selected copy and file it accordingly.
     void assignSelected();
     // Soft-remove the selected copy, prompting for an optional note to append.

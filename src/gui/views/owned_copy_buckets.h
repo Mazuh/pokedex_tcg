@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "core/app/card_price_dto.h"
 #include "core/domain/card_copy.h"
 #include "core/domain/card_ownership.h"
 #include "core/domain/types.h"
@@ -103,6 +104,22 @@ inline void showSpeciesCopiesInPanel(
     } else {
         panel->showPokemon(dex, name);
     }
+}
+
+// GUI — the cached market prices for a copy: the rows keyed by its externalCardId in a
+// by-external-id price map, or an empty list when the copy is unlinked (no external id) or
+// nothing is cached for it. Both card tables (My Cards, the binder guide) keep such a
+// batched cache — filled once per reload so a header-sort never re-queries — and read it
+// through here, so the lookup can't drift between the two views.
+inline const std::vector<CardPrice>& pricesForCopy(
+    const std::unordered_map<std::string, std::vector<CardPrice>>& byExternalId,
+    const CardCopy& copy) {
+    static const std::vector<CardPrice> kEmpty;
+    if (copy.externalCardId.empty()) {
+        return kEmpty;
+    }
+    const auto it = byExternalId.find(copy.externalCardId);
+    return it == byExternalId.end() ? kEmpty : it->second;
 }
 
 }  // namespace pokedex

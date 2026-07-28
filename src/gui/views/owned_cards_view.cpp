@@ -296,15 +296,6 @@ void OwnedCardsView::loadCachedPrices() {
     }
 }
 
-const std::vector<CardPrice>& OwnedCardsView::pricesFor(const CardCopy& copy) const {
-    static const std::vector<CardPrice> kEmpty;
-    if (copy.externalCardId.empty()) {
-        return kEmpty;
-    }
-    const auto it = pricesByExternalId_.find(copy.externalCardId);
-    return it == pricesByExternalId_.end() ? kEmpty : it->second;
-}
-
 void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
     // Resolve a binder id to its display name (shown in the Binder column) and its
     // region (search-only) from the cached binder list — rebuilt each repopulate but
@@ -383,7 +374,7 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
                         // no price, and an unpriced/unlinked one stays nullopt, so both sink
                         // to the bottom in either direction.
                         if (!isRemoved(c)) {
-                            const VendorBest best = vendorBest(pricesFor(c));
+                            const VendorBest best = vendorBest(pricesForCopy(pricesByExternalId_, c));
                             if (best.tcg || best.cm) {
                                 key.priceCents = (best.tcg ? best.tcg->amountCents : 0) +
                                                  (best.cm ? best.cm->amountCents : 0);
@@ -467,7 +458,8 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
         // fetched, or Removed (frozen history — matches the inspector). Cache-only
         // (pricesByExternalId_), so this stays a pure in-memory rebuild.
         table_->setItem(row, 9,
-                        cell(isRemoved(c) ? QString() : priceAmountsInline(pricesFor(c))));
+                        cell(isRemoved(c) ? QString()
+                                          : priceAmountsInline(pricesForCopy(pricesByExternalId_, c))));
 
         // Gray out a Removed copy's whole row so the (bottom-sorted) history band
         // reads as inactive.

@@ -113,10 +113,6 @@ private:
     // surfaces the whole set. The returned pointer is valid only until ownedHere_ is next
     // rebuilt.
     const CardCopy* representativeCopy(int dex) const;
-    // The cached market prices for a copy (its externalCardId's rows in
-    // pricesByExternalId_), or an empty list when it is unlinked or nothing is cached.
-    // Cache-only — never a network read. Backs the Prices column and its sort key.
-    const std::vector<CardPrice>& pricesFor(const CardCopy& copy) const;
 
     BinderGuideService& guide_;
     CardBinder binder_;
