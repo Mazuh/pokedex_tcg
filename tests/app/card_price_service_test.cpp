@@ -213,4 +213,21 @@ TEST(CardPriceServiceTest, RemoveManualPrice) {
     EXPECT_TRUE(f.service.pricesFor("base1-4").empty());
 }
 
+TEST(CardPriceServiceTest, ClearPricesForgetsFetchedAndManualForOneCardOnly) {
+    Fixture f;
+    f.service.recordTcgdexPrices("base1-4", kPayload);  // 2 API rows + a fetch stamp
+    f.service.addManualPrice("base1-4", 5000, "USD");   // + 1 manual row
+    f.service.addManualPrice("sv03-125", 200, "EUR");   // a DIFFERENT card — must survive
+    ASSERT_EQ(f.service.pricesFor("base1-4").size(), 3u);
+    ASSERT_TRUE(f.service.fetchedAt("base1-4").has_value());
+
+    f.service.clearPrices("base1-4");
+
+    // Every row (API AND manual) and the stamp are gone → back to the never-fetched state.
+    EXPECT_TRUE(f.service.pricesFor("base1-4").empty());
+    EXPECT_FALSE(f.service.fetchedAt("base1-4").has_value());
+    // Only this card's cache was touched.
+    EXPECT_EQ(f.service.pricesFor("sv03-125").size(), 1u);
+}
+
 }  // namespace

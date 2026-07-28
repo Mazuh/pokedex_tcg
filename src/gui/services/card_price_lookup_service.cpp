@@ -171,6 +171,16 @@ void CardPriceLookupService::fetch(const QString& externalCardId) {
     startFetch(externalCardId, kApiMaxRetries);
 }
 
+void CardPriceLookupService::clearPrices(const QString& externalCardId) {
+    if (externalCardId.isEmpty()) {
+        return;
+    }
+    prices_.clearPrices(externalCardId.toStdString());
+    // The cache changed (emptied) for this id — tell every view to re-read it, exactly as a
+    // fetch does. They will render the not-fetched state now that nothing is cached.
+    Q_EMIT pricesReady(externalCardId);
+}
+
 void CardPriceLookupService::finishSucceeded(const QString& externalCardId) {
     inFlight_.remove(externalCardId);
     // The fresh result is delivered to every waiting panel, so a coalesced Refresh is

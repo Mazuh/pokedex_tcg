@@ -127,6 +127,21 @@ void CardPriceCache::storeApiPrices(const std::string& externalCardId,
     });
 }
 
+void CardPriceCache::clear(const std::string& externalCardId) {
+    // Forget everything cached for this card — every price row (API-sourced AND manual) and the
+    // fetch stamp — so it returns to the never-fetched state. One transaction so a mid-delete
+    // failure can't leave rows without their stamp (or vice versa).
+    db_.transaction([&] {
+        Statement rows(db_, "DELETE FROM card_price WHERE external_card_id = ?;");
+        rows.bindText(1, externalCardId);
+        rows.step();
+
+        Statement stamp(db_, "DELETE FROM card_price_fetch WHERE external_card_id = ?;");
+        stamp.bindText(1, externalCardId);
+        stamp.step();
+    });
+}
+
 void CardPriceCache::add(const CardPrice& price) { insertPrice(db_, price); }
 
 void CardPriceCache::removeManual(const std::string& id) {

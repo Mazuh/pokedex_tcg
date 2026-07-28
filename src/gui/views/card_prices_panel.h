@@ -62,6 +62,7 @@ Q_SIGNALS:
 private:
     void render();          // rebuild the UI from the local cache for the current copy
     void onFetchClicked();  // the only path that spends a network request
+    void onClearClicked();  // forget this card's cached prices (back to not-fetched)
     // Once the tcgdex set table is available, resolve this copy's card id from its set+number,
     // persist the link if it changed, then fetch its prices. Reports a hint when the set can't
     // be identified.
@@ -97,6 +98,8 @@ private:
     QToolButton* infoButton_;  // "ⓘ" — explains the metrics + price freshness, on click
     QLabel* status_;
     QPushButton* fetchButton_;
+    QPushButton* clearButton_;  // "Clear" — shown once a card has been fetched (has prices or a
+                                // fetched-empty stamp); wipes the cache back to not-fetched
 };
 
 }  // namespace pokedex

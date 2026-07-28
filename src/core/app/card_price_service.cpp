@@ -95,4 +95,8 @@ CardPrice CardPriceService::addManualPrice(const std::string& externalCardId, lo
 
 void CardPriceService::removeManualPrice(const std::string& id) { cache_.removeManual(id); }
 
+void CardPriceService::clearPrices(const std::string& externalCardId) {
+    cache_.clear(externalCardId);
+}
+
 }  // namespace pokedex

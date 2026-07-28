@@ -76,6 +76,11 @@ public:
     // fetch already in flight for the same id. On terminal failure emits pricesFailed(id).
     void fetch(const QString& externalCardId);
 
+    // Forget this card's cached prices (fetched + manual) and its fetch stamp, then emit
+    // pricesReady(id) so every view showing the card re-reads the (now empty) cache and
+    // returns to the not-fetched state. No network. A blank id is ignored.
+    void clearPrices(const QString& externalCardId);
+
     // Whether the tcgdex set table is loaded, so resolveTcgdexId can map a copy's set to a
     // tcgdex set id. False until the first successful ensureTcgdexSets().
     bool tcgdexSetsReady() const { return tcgdexSetsLoaded_; }

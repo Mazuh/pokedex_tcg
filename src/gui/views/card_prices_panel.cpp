@@ -176,7 +176,13 @@ CardPricesPanel::CardPricesPanel(CardPriceLookupService& lookup, CardCopyService
 
     auto* buttonRow = new QHBoxLayout;
     fetchButton_ = new QPushButton(this);
+    // "Clear" — a secondary action beside Fetch/Refresh, shown only once a card has been
+    // fetched (see render). A normal (not flat/greyed) button so it doesn't read as disabled.
+    // Low-stakes: clearing just re-offers Fetch, so no confirm dialog.
+    clearButton_ = new QPushButton(tr("Clear"), this);
+    clearButton_->hide();
     buttonRow->addWidget(fetchButton_);
+    buttonRow->addWidget(clearButton_);
     buttonRow->addStretch(1);
 
     layout->addLayout(headlineRow);
@@ -184,6 +190,7 @@ CardPricesPanel::CardPricesPanel(CardPriceLookupService& lookup, CardCopyService
     layout->addLayout(buttonRow);
 
     connect(fetchButton_, &QPushButton::clicked, this, &CardPricesPanel::onFetchClicked);
+    connect(clearButton_, &QPushButton::clicked, this, &CardPricesPanel::onClearClicked);
     // Re-render when a fetch we (or another view) triggered lands for our card.
     connect(&lookup_, &CardPriceLookupService::pricesReady, this, [this](const QString& id) {
         if (id == externalCardId_) {
@@ -205,6 +212,11 @@ CardPricesPanel::CardPricesPanel(CardPriceLookupService& lookup, CardCopyService
         }
         fetching_ = false;
         fetchButton_->setEnabled(true);
+        // A failed fetch changes no cache, so any prices already shown are still valid and
+        // still clearable — re-show Clear (onFetchClicked hid it for the duration).
+        if (headline_->isVisible()) {
+            clearButton_->show();
+        }
         // Neutral wording: the failure may be a busy/flaky API OR a card the provider does
         // not list (a 404, which the transport fails fast) — don't assert "try again" when a
         // retry may never help.
@@ -232,6 +244,9 @@ CardPricesPanel::CardPricesPanel(CardPriceLookupService& lookup, CardCopyService
         }
         fetching_ = false;
         fetchButton_->setEnabled(true);
+        if (headline_->isVisible()) {
+            clearButton_->show();  // still-shown prices remain clearable
+        }
         status_->setText(QStringLiteral("Couldn't reach the pricing catalog. Please try again."));
         status_->show();
     });
@@ -275,6 +290,7 @@ void CardPricesPanel::resetToMessage(const QString& text) {
     headline_->hide();
     infoButton_->hide();
     fetchButton_->hide();
+    clearButton_->hide();  // re-shown by render() only once the card has been fetched
     if (text.isEmpty()) {
         status_->hide();
     } else {
@@ -343,6 +359,11 @@ void CardPricesPanel::render() {
                                       : QStringLiteral("Prices not fetched yet."),
                             fetchedAt ? QStringLiteral("Refresh")
                                       : QStringLiteral("Fetch prices"));
+        // Fetched-but-empty (has a stamp): offer Clear to drop the stamp and re-offer Fetch.
+        // Never-fetched has nothing to clear.
+        if (fetchedAt) {
+            clearButton_->show();
+        }
         return;
     }
 
@@ -368,6 +389,7 @@ void CardPricesPanel::render() {
     fetchButton_->show();
     fetchButton_->setEnabled(true);
     fetchButton_->setText(QStringLiteral("Refresh"));
+    clearButton_->show();  // has prices → offer to clear them
 }
 
 void CardPricesPanel::onFetchClicked() {
@@ -380,6 +402,7 @@ void CardPricesPanel::onFetchClicked() {
         fetching_ = true;
         triedSetRefresh_ = false;  // this explicit Fetch gets one set-refresh retry
         fetchButton_->setEnabled(false);
+        clearButton_->hide();  // no Clear mid-fetch — it's guarded, so it would be a dead click
         status_->setText(QStringLiteral("Looking up this card…"));
         status_->show();
         if (lookup_.tcgdexSetsReady()) {
@@ -395,10 +418,20 @@ void CardPricesPanel::onFetchClicked() {
         // directly. The button is an explicit user request for the latest, so hit the wire.
         fetching_ = true;
         fetchButton_->setEnabled(false);
+        clearButton_->hide();
         status_->setText(QStringLiteral("Fetching prices…"));
         status_->show();
         lookup_.fetch(externalCardId_);
     }
+}
+
+void CardPricesPanel::onClearClicked() {
+    if (fetching_ || externalCardId_.isEmpty()) {
+        return;  // nothing cached to clear (the button is hidden in those states anyway)
+    }
+    // Wipe the cache for this card; clearPrices emits pricesReady, whose handler re-renders us
+    // (and any other view showing the card) into the not-fetched state.
+    lookup_.clearPrices(externalCardId_);
 }
 
 void CardPricesPanel::resolveAndFetch() {
@@ -418,6 +451,9 @@ void CardPricesPanel::resolveAndFetch() {
         // id) whose GET would 404 with a misleading error. Report the accurate guidance.
         fetching_ = false;
         fetchButton_->setEnabled(true);
+        if (headline_->isVisible()) {
+            clearButton_->show();
+        }
         status_->setText(QStringLiteral("Couldn't identify this card for pricing — check its "
                                         "set and collector number in “Edit card…”."));
         status_->show();
@@ -432,6 +468,9 @@ void CardPricesPanel::resolveAndFetch() {
         } catch (const std::exception& e) {
             fetching_ = false;
             fetchButton_->setEnabled(true);
+            if (headline_->isVisible()) {
+                clearButton_->show();
+            }
             status_->setText(QStringLiteral("Couldn't look up this card right now."));
             status_->show();
             QMessageBox::warning(this, tr("Pokedex TCG"),

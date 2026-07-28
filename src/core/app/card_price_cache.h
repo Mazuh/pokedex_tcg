@@ -50,6 +50,11 @@ public:
     void storeApiPrices(const std::string& externalCardId, const std::vector<CardPrice>& prices,
                         Timestamp fetchedAt);
 
+    // Forget everything cached for this card — every price row (API-sourced AND manual) and
+    // the fetch stamp — returning it to the never-fetched state (a later fetch re-populates
+    // it). One transaction. A no-op when nothing is cached for the id.
+    void clear(const std::string& externalCardId);
+
     // Insert one price row (used for a manual entry). Its `id` must already be set.
     void add(const CardPrice& price);
 

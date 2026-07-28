@@ -84,6 +84,12 @@ public:
     // API-sourced row (those are managed only by recordTcgdexPrices).
     void removeManualPrice(const std::string& id);
 
+    // Forget all cached prices (fetched AND manual) and the fetch stamp for a card, returning
+    // it to the never-fetched state. A later fetch re-populates it. A no-op when nothing is
+    // cached. (Prices are keyed by the card, not the copy, so this affects every copy that
+    // shares the id — the same as a fetch.)
+    void clearPrices(const std::string& externalCardId);
+
     // The defaults, exposed so callers can wrap/compose them if needed.
     static Clock systemClock();
     static IdGenerator uuidGenerator();
