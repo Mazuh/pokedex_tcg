@@ -6,6 +6,7 @@
 #include <QMessageBox>
 #include <QPixmap>
 #include <QPushButton>
+#include <QStackedWidget>
 #include <QVBoxLayout>
 
 #include <exception>
@@ -19,8 +20,9 @@
 #include "gui/views/card_copy_form.h"
 #include "gui/views/card_copy_splitter.h"
 #include "gui/views/card_finder_panel.h"
-#include "gui/views/card_prices_panel.h"
+#include "gui/views/card_prices_summary.h"
 #include "gui/views/photo_upload.h"
+#include "gui/views/prices_edit_page.h"
 #include "gui/views/scaled_pixmap.h"
 #include "gui/views/toast.h"
 
@@ -33,6 +35,7 @@ EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardPriceLookupSer
     : QWidget(parent),
       images_(images),
       copies_(copies),
+      priceLookup_(priceLookup),
       copy_(std::move(copy)),
       binders_(binders) {
     // --- Top bar: Back + heading + current-image thumbnail -----------------
@@ -146,30 +149,56 @@ EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardPriceLookupSer
     // The image action sits under the preview, where the picture it applies to is.
     finder_->setPreviewFooter(useButton_);
 
-    // --- Prices (below): the copy's market prices, on demand ---------------
-    // Keyed by the copy's external catalog id; unlinked copies show a hint instead.
-    // Strictly on-demand — the panel renders cached prices and only fetches when the
-    // user clicks its button, so opening the edit page never hits the price API.
-    prices_ = new CardPricesPanel(priceLookup, copies, this);
-    prices_->showCopy(copy_);
-    // If the Fetch button resolves this copy's tcgdex link (invisibly, from its set+number),
-    // keep our copy_ in sync so a later save/refresh (and the manual-link button's
-    // enablement) sees it linked.
-    connect(prices_, &CardPricesPanel::cardLinked, this,
+    // --- Prices (below): the copy's market prices, read-only -----------------
+    // The compact figures + marketplace links, keyed by the copy's external catalog id.
+    // Every action (Fetch/Refresh, Clear, hide/restore) lives behind its "Manage prices"
+    // button, which pushes the dedicated PricesEditPage onto this page's own inner stack —
+    // so opening the edit page never hits the price API and its cramped layout stays clean.
+    priceSummary_ = new CardPricesSummary(priceLookup, this);
+    priceSummary_->showCopy(copy_);
+    connect(priceSummary_, &CardPricesSummary::managePricesRequested, this,
+            [this](const QString&) { openPrices(); });
+
+    // --- Assemble -----------------------------------------------------------
+    // The edit content is page 0 of an inner stack; the prices page pushes over it (like the
+    // sections' list ⇄ page idiom) so managing prices stays in-window without a second Back
+    // fighting this page's own Back.
+    auto* contentPage = new QWidget(this);
+    auto* layout = new QVBoxLayout(contentPage);
+    layout->setContentsMargins(16, 12, 16, 12);
+    layout->addLayout(topBar);
+    layout->addWidget(makeCardCopySplitter(form_, finder_), /*stretch=*/1);
+    layout->addWidget(priceSummary_);
+
+    stack_ = new QStackedWidget(this);
+    stack_->addWidget(contentPage);
+    auto* outer = new QVBoxLayout(this);
+    outer->setContentsMargins(0, 0, 0, 0);
+    outer->addWidget(stack_);
+
+    refreshCurrentImage();  // show whatever picture the copy currently has
+}
+
+void EditCardCopyPage::openPrices() {
+    // Push the dedicated prices page over the edit content. A Fetch there can invisibly resolve
+    // this copy's tcgdex link; keep copy_ in sync so a later save/refresh sees it linked. On
+    // Back, re-point the summary at the (possibly newly linked / re-priced) copy — its
+    // externalCardId may have changed, which the pricesReady signal alone wouldn't surface.
+    auto* page = new PricesEditPage(priceLookup_, copies_, copy_);
+    connect(page, &PricesEditPage::cardLinked, this,
             [this](const QString& copyId, const QString& externalCardId) {
                 if (copyId.toStdString() == copy_.id) {
                     copy_.externalCardId = externalCardId.toStdString();
                 }
             });
-
-    // --- Assemble -----------------------------------------------------------
-    auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(16, 12, 16, 12);
-    layout->addLayout(topBar);
-    layout->addWidget(makeCardCopySplitter(form_, finder_), /*stretch=*/1);
-    layout->addWidget(prices_);
-
-    refreshCurrentImage();  // show whatever picture the copy currently has
+    connect(page, &PricesEditPage::backRequested, this, [this, page]() {
+        stack_->setCurrentIndex(0);
+        stack_->removeWidget(page);
+        page->deleteLater();
+        priceSummary_->showCopy(copy_);
+    });
+    stack_->addWidget(page);
+    stack_->setCurrentWidget(page);
 }
 
 void EditCardCopyPage::refreshCurrentImage() {

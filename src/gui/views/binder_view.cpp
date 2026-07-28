@@ -33,6 +33,7 @@
 #include "gui/views/condition_labels.h"
 #include "gui/views/copy_row_activation.h"
 #include "gui/views/edit_copy_page_host.h"
+#include "gui/views/prices_page_host.h"
 #include "gui/views/foil_labels.h"
 #include "gui/views/owned_copy_buckets.h"
 #include "gui/views/pokemon_detail_panel.h"
@@ -112,8 +113,7 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     // Cell padding so content clears the edges and the overlay scrollbar.
     table_->setStyleSheet("QTableView::item { padding-left: 8px; padding-right: 16px; }");
 
-    detail_ = new PokemonDetailPanel(media, wishlist, &cardImages_, &priceLookup_, &cardCopies_,
-                                     this);
+    detail_ = new PokemonDetailPanel(media, wishlist, &cardImages_, &priceLookup_, this);
 
     connect(search_, &QLineEdit::textChanged, this, &BinderView::applyFilter);
     // Show the current row's Pokémon in the detail panel. currentCellChanged
@@ -142,16 +142,8 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     connect(detail_, &PokemonDetailPanel::editCopyRequested, this, &BinderView::openEditCopy);
     // The "Wishlist (N)" button relays up to an in-place wishlist-page push.
     connect(detail_, &PokemonDetailPanel::editWishlistRequested, this, &BinderView::openWishlist);
-    // When the detail panel's Fetch auto-links a copy, write the id back into both cached
-    // copy stores so a re-selection shows it linked (not re-resolved) and the header value
-    // can count it once its prices land. No updateStats here: the fetch that immediately
-    // follows the link emits pricesReady, which recomputes below — linking on its own can't
-    // change the total (no prices are cached for the new id yet).
-    connect(detail_, &PokemonDetailPanel::copyLinked, this,
-            [this](const QString& copyId, const QString& externalCardId) {
-                applyLinkedCardToBuckets(ownedHere_, copyId, externalCardId);
-                applyLinkedCardToVector(filedCopies_, copyId, externalCardId);
-            });
+    // The summary's "Manage prices" button relays up to an in-place prices-page push.
+    connect(detail_, &PokemonDetailPanel::managePricesRequested, this, &BinderView::openPrices);
     // A price fetch (from the detail panel, for a card filed here) can raise the binder's
     // market-value total AND fills in that card's row in the Prices column; both read the
     // local price cache, so re-read it and refresh the header + rows when such a card's
@@ -600,6 +592,25 @@ void BinderView::openEditCopy(const QString& copyId) {
                                 refresh();
                                 reselectSpecies(dex, copyId);
                             });
+}
+
+void BinderView::openPrices(const QString& copyId) {
+    // Push the shown copy onto the prices page. On a Fetch there, write the resolved link back
+    // into both cached copy stores so a re-selection shows it linked and the value can count it;
+    // on Back, refresh (a Clear/hide changes the Prices column + value total) and re-show the
+    // same species/copy. A price fetch on the page also emits pricesReady, which the handler
+    // above already folds into the header + rows live.
+    const int dex = shownDex_;
+    openPricesFromBuckets(
+        stack_, priceLookup_, cardCopies_, ownedHere_, dex, copyId,
+        [this](const QString& id, const QString& externalCardId) {
+            applyLinkedCardToBuckets(ownedHere_, id, externalCardId);
+            applyLinkedCardToVector(filedCopies_, id, externalCardId);
+        },
+        [this, dex, copyId]() {
+            refresh();
+            reselectSpecies(dex, copyId);
+        });
 }
 
 void BinderView::openWishlist(int dexNumber, const QString& name) {

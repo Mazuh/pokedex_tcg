@@ -98,6 +98,7 @@ private:
     // it, then recomputes the guide (a wishlist change can flip a species'
     // CollectionStatus, e.g. Missing↔Wished) and re-shows the same species/copy.
     void openWishlist(int dexNumber, const QString& name);
+    void openPrices(const QString& copyId);
     // Move the highlight to species `dex`'s row and re-show its copy `copyId` in the
     // panel — restoring the selection by IDENTITY after a refresh() rebuilt the rows.
     // Clears the panel if the species left the guide. Called by the edit-page return.

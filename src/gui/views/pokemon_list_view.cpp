@@ -23,6 +23,7 @@
 #include "gui/views/edit_copy_page_host.h"
 #include "gui/views/owned_copy_buckets.h"
 #include "gui/views/pokemon_detail_panel.h"
+#include "gui/views/prices_page_host.h"
 #include "gui/views/region_labels.h"
 #include "gui/views/select_all_line_edit.h"
 #include "gui/views/splitter_style.h"
@@ -92,8 +93,7 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService&
     // Copy mode is on here too (a CardImageStore is passed): a selected species that
     // owns copies shows one, so the double-click shortcut can offer to edit it. The
     // copies are aggregated across every binder (loadOwnedCopies).
-    detail_ = new PokemonDetailPanel(media, wishlist, &cardImages_, &priceLookup_, &cardCopies_,
-                                     this);
+    detail_ = new PokemonDetailPanel(media, wishlist, &cardImages_, &priceLookup_, this);
 
     connect(search_, &QLineEdit::textChanged, this, &PokemonListView::applyFilter);
     // Show the current row's Pokémon in the detail panel. currentCellChanged
@@ -114,12 +114,9 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService&
     // The "Wishlist (N)" button relays up to an in-place wishlist-page push.
     connect(detail_, &PokemonDetailPanel::editWishlistRequested, this,
             &PokemonListView::openWishlist);
-    // When the detail panel's Fetch auto-links a copy, write the id back into the cached
-    // owned_ map so a re-selection shows it linked rather than re-running the resolve.
-    connect(detail_, &PokemonDetailPanel::copyLinked, this,
-            [this](const QString& copyId, const QString& externalCardId) {
-                applyLinkedCardToBuckets(owned_, copyId, externalCardId);
-            });
+    // The summary's "Manage prices" button relays up to an in-place prices-page push.
+    connect(detail_, &PokemonDetailPanel::managePricesRequested, this,
+            &PokemonListView::openPrices);
     // Infinite scroll: append the next chunk as the user nears the bottom. The
     // complementary "viewport isn't full yet" case (first show, or the window
     // grew taller than the loaded rows, where no scrollbar exists) is handled by
@@ -379,6 +376,20 @@ void PokemonListView::openWishlist(int dexNumber, const QString& name) {
             });
     stack_->addWidget(page);
     stack_->setCurrentWidget(page);
+}
+
+void PokemonListView::openPrices(const QString& copyId) {
+    // Push the shown species' selected copy onto the prices page. On a Fetch there, write the
+    // resolved link back into the cached owned_ map; on Back, re-show the same species/copy so
+    // the read-only summary reflects any fetch/clear/hide (no refresh — the browse table carries
+    // no price column).
+    const int dex = shownDex_;
+    openPricesFromBuckets(
+        stack_, priceLookup_, cardCopies_, owned_, dex, copyId,
+        [this](const QString& id, const QString& externalCardId) {
+            applyLinkedCardToBuckets(owned_, id, externalCardId);
+        },
+        [this, dex, copyId]() { reselectSpecies(dex, copyId); });
 }
 
 void PokemonListView::refresh() {

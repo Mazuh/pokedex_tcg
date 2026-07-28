@@ -35,6 +35,7 @@
 #include "gui/views/condition_labels.h"
 #include "gui/views/foil_labels.h"
 #include "gui/views/owned_copy_buckets.h"
+#include "gui/views/prices_page_host.h"
 #include "gui/views/ownership_labels.h"
 #include "gui/views/pokemon_detail_panel.h"
 #include "gui/views/price_labels.h"
@@ -186,18 +187,14 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     // Add button records a species-free card (needs no selection) and the wishlist button
     // is hidden (a species-free card has no wishlist). It hosts the prices block, the
     // image (with artwork fallback), and the Add + Edit actions.
-    panel_ = new PokemonDetailPanel(media_, wishlist_, &images_, &priceLookup_, &copies_, this);
+    panel_ = new PokemonDetailPanel(media_, wishlist_, &images_, &priceLookup_, this);
     panel_->setAddMode(PokemonDetailPanel::AddMode::FreeCard);
     panel_->setWishlistVisible(false);
     connect(panel_, &PokemonDetailPanel::addCardRequested, this, &OwnedCardsView::addNewCard);
     connect(panel_, &PokemonDetailPanel::editCopyRequested, this,
             [this](const QString&) { editSelectedCard(); });
-    // When a Fetch auto-resolves a copy's catalog link, learn its new id so a later
-    // re-selection renders it as already linked (no needless re-resolve).
-    connect(panel_, &PokemonDetailPanel::copyLinked, this,
-            [this](const QString& copyId, const QString& externalCardId) {
-                applyLinkedCardToVector(loaded_, copyId, externalCardId);
-            });
+    // The summary's "Manage prices" button relays up to an in-place prices-page push.
+    connect(panel_, &PokemonDetailPanel::managePricesRequested, this, &OwnedCardsView::openPrices);
     // When a price fetch (from the inspector) lands for a card in this inventory, re-read
     // the price cache and rebuild the rows so the Prices column fills in — mirroring the
     // binder guide. The lookup service is app-wide, so a fetch for a card we don't hold
@@ -731,6 +728,42 @@ void OwnedCardsView::editSelectedCard() {
         showSelectedImage();
     });
     stack_->setCurrentWidget(page);
+}
+
+void OwnedCardsView::openPrices(const QString& copyId) {
+    // Push the copy onto the prices page. On a Fetch there, learn its resolved link; on Back,
+    // reload (a Clear/hide changes the Prices column) and re-show the same copy. A price fetch
+    // on the page also emits pricesReady, which the handler above folds into the rows live.
+    const std::string id = copyId.toStdString();
+    const CardCopy* copy = nullptr;
+    for (const CardCopy& c : loaded_) {
+        if (c.id == id) {
+            copy = &c;
+            break;
+        }
+    }
+    if (!copy) {
+        return;  // the copy was removed under us
+    }
+    pushPricesPage(
+        stack_, priceLookup_, copies_, *copy,
+        [this](const QString& linkedId, const QString& externalCardId) {
+            applyLinkedCardToVector(loaded_, linkedId, externalCardId);
+        },
+        [this, id]() {
+            reload();  // pick up a Clear/hide in the Prices column
+            for (int i = 0; i < static_cast<int>(loaded_.size()); ++i) {
+                if (loaded_[i].id == id) {
+                    table_->selectRow(i);
+                    break;
+                }
+            }
+            // Force a panel re-render: the copy id is unchanged, so showSelectedImage()'s
+            // shownCopyId_ dedup guard would otherwise skip re-showing the (possibly newly
+            // linked / re-priced) summary.
+            shownCopyId_.clear();
+            showSelectedImage();
+        });
 }
 
 void OwnedCardsView::addNewCard() {

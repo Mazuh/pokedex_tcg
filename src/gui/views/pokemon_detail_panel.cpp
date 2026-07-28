@@ -14,13 +14,12 @@
 #include <exception>
 #include <optional>
 
-#include "core/app/card_copy_service.h"
 #include "core/app/wishlist_service.h"
 #include "gui/services/card_image_store.h"
 #include "gui/services/card_price_lookup_service.h"
 #include "gui/services/media_service.h"
 #include "gui/views/card_copy_labels.h"
-#include "gui/views/card_prices_panel.h"
+#include "gui/views/card_prices_summary.h"
 #include "gui/views/condition_labels.h"
 #include "gui/views/foil_labels.h"
 #include "gui/views/rarity_labels.h"
@@ -58,7 +57,7 @@ QString joinParts(const QStringList& parts) {
 
 PokemonDetailPanel::PokemonDetailPanel(MediaService& media, WishlistService& wishlist,
                                        CardImageStore* images, CardPriceLookupService* prices,
-                                       CardCopyService* copies, QWidget* parent)
+                                       QWidget* parent)
     : QWidget(parent), media_(media), wishlist_(wishlist), images_(images) {
     name_ = new QLabel(this);
     name_->setAlignment(Qt::AlignHCenter | Qt::AlignVCenter);
@@ -136,16 +135,14 @@ PokemonDetailPanel::PokemonDetailPanel(MediaService& media, WishlistService& wis
     buttonRow->addWidget(addButton_);
     buttonRow->addWidget(editButton_);
 
-    // Market-prices block (copy mode only): the same reusable panel the Edit page and My
-    // Cards use, so a copy seen here can be priced — and invisibly linked on first Fetch —
-    // without opening the Edit page. Built only when all three services were supplied
-    // (they always come together from the hosts); hidden outside copy mode.
-    if (prices && copies) {
-        pricesPanel_ = new CardPricesPanel(*prices, *copies, this);
-        // Forward a Fetch-driven auto-link up to the host so it can refresh its cached
-        // copy (see the copyLinked docstring).
-        connect(pricesPanel_, &CardPricesPanel::cardLinked, this,
-                &PokemonDetailPanel::copyLinked);
+    // Read-only market-prices block (copy mode only): the per-vendor headline + marketplace
+    // links + ⓘ, plus a "Manage prices" button that opens the dedicated page. Built only when a
+    // price service was supplied (it comes with the image store from the hosts); hidden outside
+    // copy mode. Its manage request relays up so the host pushes the PricesEditPage.
+    if (prices) {
+        priceSummary_ = new CardPricesSummary(*prices, this);
+        connect(priceSummary_, &CardPricesSummary::managePricesRequested, this,
+                &PokemonDetailPanel::managePricesRequested);
     }
 
     // The wishlist button sits below the art. It carries the sources count in its label
@@ -165,8 +162,8 @@ PokemonDetailPanel::PokemonDetailPanel(MediaService& media, WishlistService& wis
     layout->addWidget(collector_);
     layout->addWidget(image_, /*stretch=*/1);
     layout->addWidget(copyDetail_);
-    if (pricesPanel_) {
-        layout->addWidget(pricesPanel_);
+    if (priceSummary_) {
+        layout->addWidget(priceSummary_);
     }
     layout->addLayout(buttonRow);
     layout->addWidget(wishlistButton_);
@@ -292,9 +289,9 @@ void PokemonDetailPanel::renderCopy(const CardCopy& copy, int copyTotal) {
     copyDetail_->show();
     // Prices for this copy (cached-only on show; the Fetch button spends the network and
     // invisibly resolves the catalog link when the copy isn't linked yet).
-    if (pricesPanel_) {
-        pricesPanel_->showCopy(copy);
-        pricesPanel_->show();
+    if (priceSummary_) {
+        priceSummary_->showCopy(copy);
+        priceSummary_->show();
     }
     updateButtons();
 
@@ -339,9 +336,9 @@ void PokemonDetailPanel::hideCopy() {
     shownCopyRemoved_ = false;
     collector_->hide();
     copyDetail_->hide();
-    if (pricesPanel_) {
-        pricesPanel_->clear();
-        pricesPanel_->hide();
+    if (priceSummary_) {
+        priceSummary_->clear();
+        priceSummary_->hide();
     }
     updateButtons();
 }

@@ -165,18 +165,37 @@ fetch entirely. It builds tcgdex URLs directly (no `CardCatalogApi` — pokemont
 `resolveCardById` was removed with the pokemontcg price path). It is strictly **on-demand**
 — `cached`/`fetchedAt` never touch the network; only `fetch()` and the one-time set-table
 load (both behind an explicit Fetch/Refresh) do — so merely viewing a card never hits the
-API. The reusable `gui/views/CardPricesPanel` is driven by `showCopy(copy)` / `clear()`
-(it carries the copy's link context — id, `CardReference` — not just an `external_card_id`)
-and renders the states [nothing-selected / unresolvable (no set/number) / ready-to-fetch
-(resolvable OR already linked) / has-prices (a headline of one figure per vendor, each
-vendor **name itself the link** to a marketplace search, one vendor **per line**; the "as
-of"/fetched dates live on the ⓘ tooltip) / fetched-empty]. There is **no "show all prices"
-table** — the full per-metric spread is deliberately left to the marketplace links, so the
-panel stays a compact headline + Fetch/Refresh + ⓘ. It appears on **every** owned-copy
-surface: the Edit page, the My Cards detail (`OwnedCardsView`), and the binder-guide /
-Pokémon-browser copy detail (`PokemonDetailPanel` copy mode, fed by `BinderView` and
-`PokemonListView`, which pass it `CardPriceLookupService` + `CardCopyService` — the panel no
-longer needs `CardSearchService`, since pricing resolves from set+number, not a search).
+API. **Pricing is split into a read-only summary and a management page — the same move the
+wishlist made off the crowded inspector.** Every owned-copy surface (the Edit page, the My
+Cards detail `OwnedCardsView`, and the binder-guide / Pokémon-browser copy detail
+`PokemonDetailPanel` copy mode) shows the read-only `gui/views/CardPricesSummary`
+(`showCopy(copy)` / `clear()`): the per-vendor headline figures (suppressed vendors filtered
+out), each vendor **name itself the link** to a marketplace search, the ⓘ metrics/freshness
+popover, and one **"Manage prices"** button. It never mutates and never hits the network — it
+renders whatever is cached and re-renders on the app-wide `pricesReady`; it needs only
+`CardPriceLookupService`. Its button emits `managePricesRequested(copyId)`, which the host
+turns into a push of `gui/views/PricesEditPage` (Back bar + card heading) — the single home
+for every pricing verb, which **hosts the interactive `gui/views/CardPricesPanel`**. That
+panel (unchanged) is driven by `showCopy(copy)` / `clear()` (it carries the copy's link
+context — id, `CardReference` — not just an `external_card_id`) and renders the states
+[nothing-selected / unresolvable (no set/number) / ready-to-fetch (resolvable OR already
+linked) / has-prices (a headline of one figure per vendor, one vendor **per line**, each with
+a ✕ hide affordance; the "as of"/fetched dates live on the ⓘ tooltip) / fetched-empty], plus
+Fetch/Refresh, Clear, and per-vendor hide/restore. There is **no "show all prices" table** —
+the full per-metric spread is deliberately left to the marketplace links, so the panel stays
+a compact headline + Fetch/Refresh + hide + ⓘ. The push is wired through two host helpers:
+`pushPricesPage` (page push + teardown + Back→`onReturn`, forwarding the panel's `cardLinked`
+to `onLinked`) and `openPricesFromBuckets` (its bucketed-by-dex guard, mirroring
+`edit_copy_page_host.h`); the two species hosts (`BinderView`, `PokemonListView`) use the
+buckets variant over `ownedHere_`/`owned_`, My Cards (a flat `loaded_` vector) calls
+`pushPricesPage` directly, and the **Edit page pushes it onto its own inner `QStackedWidget`**
+(page 0 = the edit content) so managing prices stays in-window without a second Back fighting
+the page's own. On Back the host re-shows the copy (and `BinderView`/`OwnedCardsView` reload,
+since a Clear/hide changes their Prices column / value total). The shared headline renderer
+lives in `gui/views/price_headline.h` (`headlineHtml(…, withHideLinks)` — the summary passes
+false so the ✕/restore are page-only; `marketSearchTerm`, `marketplaceSearchUrl`,
+`priceInfo…`), so the two surfaces can never format a figure or a link differently. Pricing
+resolves from set+number, not a search, so neither surface needs `CardSearchService`.
 **Linking is invisible — never a UI verb.** A copy that isn't yet linked but records a set +
 collector number still shows a "Fetch prices" button; the first Fetch resolves the tcgdex
 card id directly from that printed set+number (`onFetchClicked` → `ensureTcgdexSets` →
@@ -277,8 +296,9 @@ identity line (the set abbreviation — or the full set name when there's no abb
 plus the collector number, via `collectorLine`), the image (the copy's card scan, falling
 back to the Pokémon artwork when there's a species), a condition + foil line, a rarity +
 "N copies" line (N is the count of that species' live copies on this surface — a total,
-soft-Removed copies excluded), the copy's comments, the `CardPricesPanel`, an **Add + Edit** button row (side
-by side), and an optional "Wishlist (N)" button. Copy mode is opt-in (needs a
+soft-Removed copies excluded), the copy's comments, the read-only `CardPricesSummary` (figures
++ links + ⓘ + a "Manage prices" button; see the pricing note above), an **Add + Edit** button
+row (side by side), and an optional "Wishlist (N)" button. Copy mode is opt-in (needs a
 `CardImageStore*`): the two species hosts enter it via `showPokemon(dex, name, copies,
 prefer)` (one copy shown — `preferCopyId`, else a random pick), My Cards via
 `showSingleCopy(copy, sameSpeciesTotal)` (the exact selected copy; dex is optional, for

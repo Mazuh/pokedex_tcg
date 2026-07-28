@@ -183,6 +183,8 @@ qt_add_executable(pokedex_tcg
     src/gui/views/edit_card_copy_page.cpp
     src/gui/views/owned_cards_view.cpp
     src/gui/views/card_prices_panel.cpp
+    src/gui/views/card_prices_summary.cpp
+    src/gui/views/prices_edit_page.cpp
     src/gui/views/wishlist_sources_editor.cpp
     src/gui/views/wishlist_edit_page.cpp
     src/gui/views/wishlist_view.cpp

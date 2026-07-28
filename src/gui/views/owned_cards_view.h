@@ -111,6 +111,7 @@ private:
     void deletePermanently();
     // Push the in-window "Edit card" page for the selected copy (to change its image).
     void editSelectedCard();
+    void openPrices(const QString& copyId);
     // Push the in-window "Add a card" page for a species-free card (a Trainer/Energy
     // card that depicts no Pokémon) — the only place such a card can be recorded, since
     // the Pokémon browser's "Add copy" is always scoped to a species.

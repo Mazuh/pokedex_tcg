@@ -10,6 +10,7 @@
 
 class QLabel;
 class QPushButton;
+class QStackedWidget;
 
 namespace pokedex {
 
@@ -19,7 +20,7 @@ class CardImageStore;
 class CardCopyService;
 class CardFinderPanel;
 class CardCopyForm;
-class CardPricesPanel;
+class CardPricesSummary;
 
 // GUI — the "Edit card" screen for one owned copy, opened from My Cards. Built from
 // the same two shared blocks as the "Add copy" page — CardCopyForm on the left and
@@ -72,15 +73,18 @@ private:
     void saveFromFinder();  // persist the picked card's (loaded) preview as the image
     void uploadPhoto();     // pick a local image file and persist it as the image
     void refreshCurrentImage();  // re-read the copy's stored image into the top-bar thumbnail
+    void openPrices();      // push the dedicated prices page onto this page's inner stack
 
     CardImageStore& images_;
     CardCopyService& copies_;
+    CardPriceLookupService& priceLookup_;  // supplies the prices page pushed from here
     CardCopy copy_;   // the edited copy; its fields are updated as saves land
     std::vector<CardBinder> binders_;  // kept to repopulate the picker (e.g. revert on failure)
 
+    QStackedWidget* stack_;    // page 0 = the edit content; the prices page pushes over it
     CardCopyForm* form_;
     CardFinderPanel* finder_;
-    CardPricesPanel* prices_;  // the copy's market-prices block (keyed by externalCardId)
+    CardPricesSummary* priceSummary_;  // the copy's read-only market-prices block + Manage button
     QLabel* currentImage_;     // small thumbnail of the copy's current stored image
     QPushButton* useButton_;   // "Use this card's image" — enabled once the preview loads
     QPushButton* saveButton_;  // "Save changes" — enabled only while an edit diverges from the record

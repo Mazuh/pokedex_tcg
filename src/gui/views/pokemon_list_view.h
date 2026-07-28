@@ -107,6 +107,7 @@ private:
     // it and re-shows the species so the detail panel's "Wishlist (N)" button reflects
     // any change. No table refresh — the browse columns don't depend on the wishlist.
     void openWishlist(int dexNumber, const QString& name);
+    void openPrices(const QString& copyId);
     // Move the highlight to the row for species `dex` (loading rows until it exists,
     // since it can sit past the first chunk) and re-show its copy `copyId` in the
     // panel — restoring the selection by IDENTITY after a refresh() re-rendered the
