@@ -27,6 +27,7 @@
 #include "core/domain/card_copy.h"
 #include "core/domain/pokemon.h"
 #include "gui/services/card_image_store.h"
+#include "gui/services/bulk_price_fetcher.h"
 #include "gui/services/card_price_lookup_service.h"
 #include "gui/views/add_card_copy_page.h"
 #include "gui/views/binder_picker_dialog.h"
@@ -163,13 +164,35 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     countLabel_ = new QLabel(this);
     countLabel_->setEnabled(false);  // muted: a status detail, not an action
 
+    // "Refresh prices" bulk re-fetches every linked card in the inventory — a manual keep-updated
+    // action, paced so it never bursts the API. A muted progress label sits beside it.
+    bulkStatus_ = new QLabel(this);
+    bulkStatus_->setEnabled(false);  // muted
+    bulkStatus_->hide();
+    refreshPricesButton_ = new QPushButton(tr("Refresh prices"), this);
+    refreshPricesButton_->setToolTip(
+        tr("Re-fetch market prices for every linked card in My Cards."));
+    bulkFetcher_ = new BulkPriceFetcher(priceLookup_, this);
+    connect(refreshPricesButton_, &QPushButton::clicked, this, &OwnedCardsView::startBulkRefresh);
+    connect(bulkFetcher_, &BulkPriceFetcher::progress, this, [this](int done, int total) {
+        bulkStatus_->setText(tr("Refreshing… %1/%2").arg(done).arg(total));
+        bulkStatus_->show();
+    });
+    connect(bulkFetcher_, &BulkPriceFetcher::finished, this, [this]() {
+        bulkStatus_->hide();
+        refreshPricesButton_->setEnabled(true);
+        // Each card's pricesReady already rebuilt its Prices cell as it arrived.
+    });
+
     // The toolbar keeps only the inventory-wide operations; Add + Edit moved to the
-    // inspector on the right (side by side).
+    // inspector on the right (side by side). The bulk price refresh sits on the far right.
     auto* buttons = new QHBoxLayout;
     buttons->addWidget(assignButton_);
     buttons->addWidget(removeButton_);
     buttons->addWidget(deleteButton_);
     buttons->addStretch();
+    buttons->addWidget(bulkStatus_);
+    buttons->addWidget(refreshPricesButton_);
 
     // The list pane (left) holds everything the section had before; the shared inspector
     // (right) shows the selected copy — the PokemonListView splitter idiom, so "My Cards"
@@ -771,6 +794,19 @@ void OwnedCardsView::openPrices(const QString& copyId) {
             shownCopyId_.clear();
             showSelectedImage();
         });
+}
+
+void OwnedCardsView::startBulkRefresh() {
+    // The distinct linked ids of every non-Removed copy — the same set the Prices column draws
+    // from. Skips unlinked copies (a first fetch links a copy one-at-a-time via its own Fetch;
+    // bulk only refreshes what's already linked). No-op when nothing is linked.
+    const auto notRemoved = [](const CardCopy& c) { return !isRemoved(c); };
+    const std::vector<std::string> ids = distinctExternalIds(loaded_, notRemoved);
+    if (ids.empty() || bulkFetcher_->isRunning()) {
+        return;
+    }
+    refreshPricesButton_->setEnabled(false);
+    bulkFetcher_->start(ids);
 }
 
 void OwnedCardsView::addNewCard() {

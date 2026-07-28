@@ -24,6 +24,7 @@
 #include "core/app/binder_service.h"
 #include "core/app/card_copy_service.h"
 #include "core/domain/card_ownership.h"
+#include "gui/services/bulk_price_fetcher.h"
 #include "gui/services/card_image_store.h"
 #include "gui/services/card_price_lookup_service.h"
 #include "gui/views/add_card_copy_page.h"
@@ -67,11 +68,36 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
 
     connect(backButton, &QPushButton::clicked, this, &BinderView::backRequested);
 
-    // A top bar: Back on the left, the binder's name beside it.
+    // "Refresh prices" (right of the top bar) bulk re-fetches every Owned, linked card filed
+    // here — a manual keep-updated action, paced so it never bursts the API. A muted progress
+    // label sits beside it while it runs.
+    bulkStatus_ = new QLabel(this);
+    bulkStatus_->setStyleSheet(QStringLiteral("color: gray;"));
+    bulkStatus_->hide();
+    refreshPricesButton_ = new QPushButton(tr("Refresh prices"), this);
+    refreshPricesButton_->setToolTip(
+        tr("Re-fetch market prices for every linked card filed in this binder."));
+
+    // A top bar: Back on the left, the binder's name beside it, the bulk refresh on the right.
     auto* topBar = new QHBoxLayout;
     topBar->addWidget(backButton);
     topBar->addWidget(heading);
     topBar->addStretch();
+    topBar->addWidget(bulkStatus_);
+    topBar->addWidget(refreshPricesButton_);
+
+    bulkFetcher_ = new BulkPriceFetcher(priceLookup_, this);
+    connect(refreshPricesButton_, &QPushButton::clicked, this, &BinderView::startBulkRefresh);
+    connect(bulkFetcher_, &BulkPriceFetcher::progress, this, [this](int done, int total) {
+        bulkStatus_->setText(tr("Refreshing… %1/%2").arg(done).arg(total));
+        bulkStatus_->show();
+    });
+    connect(bulkFetcher_, &BulkPriceFetcher::finished, this, [this]() {
+        bulkStatus_->hide();
+        refreshPricesButton_->setEnabled(true);
+        // The per-card pricesReady already folded each result into the table + value total as it
+        // arrived; nothing more to do here.
+    });
 
     // A muted subtitle line under the top bar carrying the binder's stats:
     // how many species are listed, how many captured (+%), and the market $ value
@@ -621,6 +647,19 @@ void BinderView::openPrices(const QString& copyId) {
             refresh();
             reselectSpecies(dex, copyId);
         });
+}
+
+void BinderView::startBulkRefresh() {
+    // The distinct linked ids of the Owned copies filed here — the same set the value total
+    // draws from. Skips unlinked copies (a first fetch links a copy one-at-a-time via its own
+    // Fetch; bulk only refreshes what's already linked). No-op when nothing here is linked.
+    const auto ownedHere = [](const CardCopy& c) { return c.ownership == CardOwnership::Owned; };
+    const std::vector<std::string> ids = distinctExternalIds(filedCopies_, ownedHere);
+    if (ids.empty() || bulkFetcher_->isRunning()) {
+        return;
+    }
+    refreshPricesButton_->setEnabled(false);
+    bulkFetcher_->start(ids);
 }
 
 void BinderView::openWishlist(int dexNumber, const QString& name) {
