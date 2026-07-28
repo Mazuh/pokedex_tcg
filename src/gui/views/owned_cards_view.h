@@ -29,7 +29,6 @@ class MediaService;
 class WishlistService;
 class PokemonDetailPanel;
 class EditCardCopyPage;
-class BulkPriceFetcher;
 class AddCardCopyPage;
 
 // GUI — the "My Cards" section: a flat, read-only inventory of every card copy the
@@ -143,7 +142,6 @@ private:
     QPushButton* deleteButton_;   // "Delete permanently…" — enabled only for Removed copies
     QPushButton* refreshPricesButton_;  // "Refresh prices" — bulk re-fetch all linked copies
     QLabel* bulkStatus_;                // "Refreshing… n/m" progress (hidden when idle)
-    BulkPriceFetcher* bulkFetcher_;
     QLabel* countLabel_;
     // The copies backing the current rows, in display order (row i ⇄ loaded_[i]);
     // filtering only hides rows, so this stays aligned with the table.

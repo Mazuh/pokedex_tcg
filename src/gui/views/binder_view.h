@@ -29,7 +29,6 @@ class CardCopyService;
 class CardImageStore;
 class BinderService;
 class PokemonDetailPanel;
-class BulkPriceFetcher;
 
 // GUI — the "open binder" screen: the binder's guide as a list of its Pokémon,
 // each paired with its CollectionStatus, above a live partial-name search box.
@@ -136,7 +135,6 @@ private:
     PokemonDetailPanel* detail_;
     QPushButton* refreshPricesButton_;  // "Refresh prices" — bulk re-fetch all filed cards
     QLabel* bulkStatus_;                 // "Refreshing… n/m" progress beside it (hidden when idle)
-    BulkPriceFetcher* bulkFetcher_;
     std::vector<CardBinderEntry> entries_;
     // Header-driven sort state, re-applied on every refresh so it survives a
     // recompute. -1 = unsorted (keep the guide's dex order); see sortEntries().

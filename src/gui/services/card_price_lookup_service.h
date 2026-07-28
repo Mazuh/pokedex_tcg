@@ -113,6 +113,16 @@ public:
     // since a set released since the cached copy would otherwise stay unknown until the TTL.
     void ensureTcgdexSets(bool forceRefresh = false);
 
+    // Bulk re-fetch: fetch() every one of these (assumed distinct) already-linked ids, paced so
+    // at most kBulkMaxConcurrent are on the wire at once — a binder's / My Cards' "Refresh all
+    // prices". Because there is ONE service, the cap and the "one bulk at a time" guard are
+    // global across every view (a second refreshMany while one runs is a no-op). Advances only on
+    // real fetch completions (finishSucceeded/finishFailed), never on a suppress/clear that also
+    // emits pricesReady, so the cap and progress stay correct. Emits bulkProgress as each lands
+    // and bulkFinished when all are done. A no-op for an empty list.
+    void refreshMany(const std::vector<std::string>& externalCardIds);
+    bool bulkRunning() const { return bulkTotal_ > 0; }
+
 Q_SIGNALS:
     // Fired when a card's prices are available to (re-)read via cachedPrices(id) — after a
     // successful fetch.
@@ -121,6 +131,9 @@ Q_SIGNALS:
     // Fired when ensureTcgdexSets() finishes: ok=true when the set table is loaded (a
     // subsequent resolveTcgdexId can succeed), false when the fetch failed (offer a retry).
     void tcgdexSetsResolved(bool ok);
+    // A bulk refresh (refreshMany) progressed / completed. `done`/`total` count settled cards.
+    void bulkProgress(int done, int total);
+    void bulkFinished();
 
 private:
     void startFetch(const QString& externalCardId, int retriesLeft);
@@ -135,6 +148,10 @@ private:
     // rather than inheriting the failure.
     void finishSucceeded(const QString& externalCardId);
     void finishFailed(const QString& externalCardId);
+    // Start bulk fetches up to the concurrency cap; advance the bulk when one of its ids settles
+    // (called from finishSucceeded/finishFailed only, so a suppress/clear never miscounts it).
+    void pumpBulk();
+    void advanceBulk(const QString& externalCardId);
 
     CardPriceService& prices_;
     CardSetCache* setCache_;  // tcgdex-scoped disk cache for the set table (may be null)
@@ -151,6 +168,14 @@ private:
     std::vector<CardSetInfo> tcgdexSets_;
     bool tcgdexSetsLoaded_ = false;
     bool tcgdexSetsFetching_ = false;  // a /v2/en/sets fetch is on the wire (coalesce callers)
+
+    // Bulk refresh (refreshMany) state — a single queue shared across every view, so the cap is
+    // global. bulkTotal_ > 0 == a bulk is running (bulkRunning()).
+    std::vector<std::string> bulkPending_;   // ids not yet started
+    QSet<QString> bulkInFlight_;             // ids fetched, awaiting finishSucceeded/finishFailed
+    int bulkTotal_ = 0;
+    int bulkDone_ = 0;
+    static constexpr int kBulkMaxConcurrent = 4;  // anti-burst cap on the free tcgdex API
 };
 
 }  // namespace pokedex

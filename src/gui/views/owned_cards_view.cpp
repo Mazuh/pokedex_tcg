@@ -27,7 +27,6 @@
 #include "core/domain/card_copy.h"
 #include "core/domain/pokemon.h"
 #include "gui/services/card_image_store.h"
-#include "gui/services/bulk_price_fetcher.h"
 #include "gui/services/card_price_lookup_service.h"
 #include "gui/views/add_card_copy_page.h"
 #include "gui/views/binder_picker_dialog.h"
@@ -172,16 +171,21 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     refreshPricesButton_ = new QPushButton(tr("Refresh prices"), this);
     refreshPricesButton_->setToolTip(
         tr("Re-fetch market prices for every linked card in My Cards."));
-    bulkFetcher_ = new BulkPriceFetcher(priceLookup_, this);
+    // The bulk refresh runs on the shared price service (global cap, one bulk at a time); we only
+    // render its progress.
     connect(refreshPricesButton_, &QPushButton::clicked, this, &OwnedCardsView::startBulkRefresh);
-    connect(bulkFetcher_, &BulkPriceFetcher::progress, this, [this](int done, int total) {
-        bulkStatus_->setText(tr("Refreshing… %1/%2").arg(done).arg(total));
-        bulkStatus_->show();
-    });
-    connect(bulkFetcher_, &BulkPriceFetcher::finished, this, [this]() {
+    connect(&priceLookup_, &CardPriceLookupService::bulkProgress, this,
+            [this](int done, int total) {
+                bulkStatus_->setText(tr("Refreshing… %1/%2").arg(done).arg(total));
+                bulkStatus_->show();
+            });
+    connect(&priceLookup_, &CardPriceLookupService::bulkFinished, this, [this]() {
         bulkStatus_->hide();
         refreshPricesButton_->setEnabled(true);
-        // Each card's pricesReady already rebuilt its Prices cell as it arrived.
+        // The per-card handler skipped its rebuild during the bulk; fold all results in with ONE
+        // re-read + rebuild now (keeping the current selection), not once per arriving price.
+        loadCachedPrices();
+        repopulate(selectedCopyId());
     });
 
     // The toolbar keeps only the inventory-wide operations; Add + Edit moved to the
@@ -230,6 +234,11 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     // (most of them) is ignored rather than re-reading + rebuilding on every fetch anywhere.
     connect(&priceLookup_, &CardPriceLookupService::pricesReady, this,
             [this](const QString& externalCardId) {
+                // During a bulk refresh, skip the per-card rebuild — bulkFinished folds every
+                // result in with ONE re-read + rebuild, instead of O(N) rebuilds as prices arrive.
+                if (priceLookup_.bulkRunning()) {
+                    return;
+                }
                 if (anyCopyLinkedTo(loaded_, externalCardId)) {
                     loadCachedPrices();
                     repopulate(selectedCopyId());
@@ -797,16 +806,24 @@ void OwnedCardsView::openPrices(const QString& copyId) {
 }
 
 void OwnedCardsView::startBulkRefresh() {
+    if (priceLookup_.bulkRunning()) {
+        return;  // one bulk at a time (the shared service guards this too)
+    }
     // The distinct linked ids of every non-Removed copy — the same set the Prices column draws
     // from. Skips unlinked copies (a first fetch links a copy one-at-a-time via its own Fetch;
-    // bulk only refreshes what's already linked). No-op when nothing is linked.
+    // bulk only refreshes what's already linked).
     const auto notRemoved = [](const CardCopy& c) { return !isRemoved(c); };
     const std::vector<std::string> ids = distinctExternalIds(loaded_, notRemoved);
-    if (ids.empty() || bulkFetcher_->isRunning()) {
+    if (ids.empty()) {
+        // Give feedback rather than a silent no-op: nothing is linked yet.
+        bulkStatus_->setText(tr("No linked cards to refresh — fetch a card's prices first."));
+        bulkStatus_->show();
         return;
     }
     refreshPricesButton_->setEnabled(false);
-    bulkFetcher_->start(ids);
+    bulkStatus_->setText(tr("Refreshing… 0/%1").arg(ids.size()));
+    bulkStatus_->show();
+    priceLookup_.refreshMany(ids);
 }
 
 void OwnedCardsView::addNewCard() {

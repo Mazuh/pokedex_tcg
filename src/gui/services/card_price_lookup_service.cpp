@@ -215,6 +215,7 @@ void CardPriceLookupService::finishSucceeded(const QString& externalCardId) {
     // already satisfied — drop it rather than re-fetch.
     refetchQueued_.remove(externalCardId);
     Q_EMIT pricesReady(externalCardId);
+    advanceBulk(externalCardId);  // a real fetch settled — advance any bulk waiting on it
 }
 
 void CardPriceLookupService::finishFailed(const QString& externalCardId) {
@@ -223,12 +224,52 @@ void CardPriceLookupService::finishFailed(const QString& externalCardId) {
         // An explicit Fetch/Refresh coalesced onto this now-failed attempt. Honor it with
         // a real fresh fetch (full retry budget) instead of reporting the inherited
         // failure. Only one re-issue per queued click, so a persistently-failing API
-        // cannot loop: this re-fetch fails with an empty queue → pricesFailed.
+        // cannot loop: this re-fetch fails with an empty queue → pricesFailed. The bulk id
+        // (if any) stays in flight — the re-issued fetch will settle it.
         inFlight_.insert(externalCardId);
         startFetch(externalCardId, kApiMaxRetries);
         return;
     }
     Q_EMIT pricesFailed(externalCardId);
+    advanceBulk(externalCardId);  // a real fetch settled (terminally) — advance the bulk
+}
+
+void CardPriceLookupService::refreshMany(const std::vector<std::string>& externalCardIds) {
+    if (bulkRunning() || externalCardIds.empty()) {
+        return;  // one bulk at a time (a single shared queue), and nothing to do for an empty set
+    }
+    bulkPending_.assign(externalCardIds.begin(), externalCardIds.end());
+    bulkInFlight_.clear();
+    bulkTotal_ = static_cast<int>(bulkPending_.size());
+    bulkDone_ = 0;
+    Q_EMIT bulkProgress(bulkDone_, bulkTotal_);
+    pumpBulk();
+}
+
+void CardPriceLookupService::pumpBulk() {
+    // Keep at most kBulkMaxConcurrent bulk fetches on the wire. fetch() runs its normal retry +
+    // coalescing; each id settles once via finishSucceeded/finishFailed → advanceBulk.
+    while (bulkInFlight_.size() < kBulkMaxConcurrent && !bulkPending_.empty()) {
+        const QString id = QString::fromStdString(bulkPending_.back());
+        bulkPending_.pop_back();
+        bulkInFlight_.insert(id);
+        fetch(id);
+    }
+}
+
+void CardPriceLookupService::advanceBulk(const QString& externalCardId) {
+    if (!bulkInFlight_.remove(externalCardId)) {
+        return;  // not part of the running bulk (a plain single Fetch, or no bulk running)
+    }
+    ++bulkDone_;
+    Q_EMIT bulkProgress(bulkDone_, bulkTotal_);
+    if (bulkPending_.empty() && bulkInFlight_.isEmpty()) {
+        bulkTotal_ = 0;  // back to not-running (bulkRunning())
+        bulkDone_ = 0;
+        Q_EMIT bulkFinished();
+        return;
+    }
+    pumpBulk();  // top the in-flight set back up
 }
 
 void CardPriceLookupService::startFetch(const QString& externalCardId, int retriesLeft) {
