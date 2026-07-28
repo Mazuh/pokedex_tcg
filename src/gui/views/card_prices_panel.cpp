@@ -116,6 +116,10 @@ CardPricesPanel::CardPricesPanel(CardPriceLookupService& lookup, CardCopyService
     headline_->setWordWrap(true);
     headline_->setTextFormat(Qt::RichText);
     headline_->setOpenExternalLinks(true);
+    // setOpenExternalLinks alone does NOT make the links clickable — the label also needs
+    // link-interaction flags (the same pairing the About dialog / source_label use), else the
+    // vendor names render as links but a click does nothing.
+    headline_->setTextInteractionFlags(Qt::TextBrowserInteraction);
     headline_->setStyleSheet(QStringLiteral("font-weight: 600;"));
 
     // "ⓘ" popover explaining the metrics — the same idiom the card-attribute pickers use.
