@@ -71,8 +71,11 @@ void CardFinderPanel::init(const QString& initialQuery) {
     // --- Search field + results list (left) --------------------------------
     auto* listPane = new QWidget(this);
     searchField_ = new SelectAllLineEdit(listPane);
+    // The species-mode set filter also accepts a trailing collector number ("OBF 125",
+    // "151 25") to pin down the exact printing (parseSetAndNumberFilter splits it out in
+    // CardSearchService). Name mode's field is the card name itself, so no number there.
     searchField_->setPlaceholderText(nameMode_ ? tr("Find a card by name…")
-                                               : tr("Find by set — code or name…"));
+                                               : tr("Find by set — and number, e.g. “OBF 125”"));
     searchField_->setClearButtonEnabled(true);
     connect(searchField_, &QLineEdit::textEdited, this, &CardFinderPanel::onSearchTextChanged);
 

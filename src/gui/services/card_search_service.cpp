@@ -258,16 +258,32 @@ void CardSearchService::dispatchSearch() {
             return;
         }
     }
-    const std::string filter = req.setCodeFilter.trimmed().toStdString();
-    if (!filter.empty()) {
-        query.setIds = resolveSetFilterToIds(filter, sets_);
+    // The filter may carry a trailing collector number ("OBF 125", "125/197") — but a set is
+    // sometimes NAMED with a trailing number ("POP Series 9", "Base Set 2"). So try the WHOLE
+    // filter as a set name FIRST; only when it names no set do we peel a collector number off
+    // it. This is why the split lives here, not in the pure parser: it needs the set table to
+    // tell a digit-suffixed set name from a set+number.
+    const std::string typed = req.setCodeFilter.trimmed().toStdString();
+    if (!typed.empty()) {
+        query.setIds = resolveSetFilterToIds(typed, sets_);
         if (query.setIds.empty()) {
-            // A non-empty filter that matches no set (or was typed before the set
-            // table loaded) yields NO cards — never fall back to fetching every
-            // printing of the species. Emit an empty result for this request.
-            pendingSearch_.reset();
-            Q_EMIT printingsReady(req.generation, req.dexNumber, {});
-            return;
+            // The whole filter names no set — peel off a trailing collector number and resolve
+            // the remaining set part.
+            const SetNumberFilter parsed = parseSetAndNumberFilter(typed);
+            query.number = parsed.number;
+            if (!parsed.setFilter.empty()) {
+                query.setIds = resolveSetFilterToIds(parsed.setFilter, sets_);
+            }
+            // A named set part that still matches nothing — or a filter with neither a set nor
+            // a number (garbage) — yields NO cards (never fall back to the whole species). A
+            // lone number with no set part ("125/197") IS usable: it narrows the species by
+            // number, so it falls through with empty setIds.
+            if ((!parsed.setFilter.empty() && query.setIds.empty()) ||
+                (parsed.setFilter.empty() && query.number.empty())) {
+                pendingSearch_.reset();
+                Q_EMIT printingsReady(req.generation, req.dexNumber, {});
+                return;
+            }
         }
         if (query.setIds.size() > kMaxNarrowSets) {
             // Too broad to send as one query URL; cap it (still narrowed — never the

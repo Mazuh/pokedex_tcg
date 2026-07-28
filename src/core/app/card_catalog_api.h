@@ -23,11 +23,15 @@ struct HttpRequest {
 // wins; when neither is, the search is unscoped. setIds are the API's stable set
 // identifiers (e.g. "sv3"), NOT printed expansion codes — narrowing by set.id is
 // reliable where the ptcgoCode search index is not (see card_catalog_parse / the
-// CardCatalogApi docstring). An empty setIds means "no set narrowing".
+// CardCatalogApi docstring). An empty setIds means "no set narrowing". `number` is the
+// printed collector number (just the printing, e.g. "125" or "TG05" — no "/total") — an
+// optional extra narrowing that, combined with the species/name and set, pins the query to
+// essentially one printing. Empty means "no number narrowing".
 struct CardSearchQuery {
     std::optional<PokemonDexNum> dexNumber;
     std::string nameQuery;
     std::vector<std::string> setIds;
+    std::string number;
 };
 
 // APP — the swappable seam for the external CARD catalog, deliberately separate

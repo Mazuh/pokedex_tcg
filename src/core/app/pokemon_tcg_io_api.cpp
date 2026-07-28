@@ -75,9 +75,10 @@ HttpRequest PokemonTcgIoApi::resolveSearch(const CardSearchQuery& query) const {
     // The scope clause — by species when a dex number is given, else by card name
     // (per-word substring terms, so "boss orders" finds "Boss's Orders"). Then an
     // optional set-narrowing clause ORing set.id values (set.id, not the printed
-    // ptcgoCode, because the ptcgoCode search index is unreliable). e.g.
-    // "nationalPokedexNumbers:6 (set.id:sv3 OR set.id:sv4)" or
-    // "name:*boss* name:*orders* (set.id:sv3)".
+    // ptcgoCode, because the ptcgoCode search index is unreliable), then an optional exact
+    // collector-number clause. e.g. "nationalPokedexNumbers:6 (set.id:sv3 OR set.id:sv4)",
+    // "name:*boss* name:*orders* (set.id:sv3)", or "nationalPokedexNumbers:6 (set.id:sv3)
+    // number:125" (species + set + number → essentially one printing).
     std::string q;
     if (query.dexNumber) {
         q = "nationalPokedexNumbers:" + std::to_string(*query.dexNumber);
@@ -93,6 +94,18 @@ HttpRequest PokemonTcgIoApi::resolveSearch(const CardSearchQuery& query) const {
             q += "set.id:" + query.setIds[i];
         }
         q += ")";
+    }
+    if (!query.number.empty()) {
+        // Unquoted: the number is an exact TERM query ("number:125"). A quoted phrase
+        // ("number:\"125\"") matches nothing on this field. Collector numbers are
+        // alphanumeric (e.g. "125", "TG05"), so they carry no Lucene metacharacters to escape.
+        // Only separate with a space when a scope clause precedes it — a number-only query (no
+        // species/name, unexercised by the GUI but reachable via this seam) must not lead with
+        // a stray space.
+        if (!q.empty()) {
+            q += " ";
+        }
+        q += "number:" + query.number;
     }
 
     HttpRequest request;

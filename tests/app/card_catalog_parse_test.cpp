@@ -87,6 +87,52 @@ TEST(ParseSetsResponseTest, MissingDataArrayYieldsNoSets) {
     EXPECT_TRUE(parseSetsResponse(R"({"error": {"message": "bad"}})").empty());
 }
 
+using pokedex::parseSetAndNumberFilter;
+
+TEST(ParseSetAndNumberFilterTest, SplitsATrailingNumberFromASetPart) {
+    // "OBF 125" → set "OBF" + number "125"; a full "125/197" drops its total.
+    auto a = parseSetAndNumberFilter("OBF 125");
+    EXPECT_EQ(a.setFilter, "OBF");
+    EXPECT_EQ(a.number, "125");
+    auto b = parseSetAndNumberFilter("obsidian flames 125/197");
+    EXPECT_EQ(b.setFilter, "obsidian flames");
+    EXPECT_EQ(b.number, "125");
+    // A promo-style number with a letter prefix is kept whole.
+    auto c = parseSetAndNumberFilter("swsh12 TG05");
+    EXPECT_EQ(c.setFilter, "swsh12");
+    EXPECT_EQ(c.number, "TG05");
+}
+
+TEST(ParseSetAndNumberFilterTest, ALoneSlashFormedNumberHasNoSet) {
+    auto a = parseSetAndNumberFilter("125/197");
+    EXPECT_EQ(a.setFilter, "");
+    EXPECT_EQ(a.number, "125");
+}
+
+TEST(ParseSetAndNumberFilterTest, KeepsDigitNamedSetsWhole) {
+    // "151" is a SET name, not a number (lone bare token, no slash) — stays the set filter.
+    auto a = parseSetAndNumberFilter("151");
+    EXPECT_EQ(a.setFilter, "151");
+    EXPECT_EQ(a.number, "");
+    // A 4-digit run is a year (a name part), not a collector number.
+    auto b = parseSetAndNumberFilter("mcdonald 2019");
+    EXPECT_EQ(b.setFilter, "mcdonald 2019");
+    EXPECT_EQ(b.number, "");
+    // But the 151 set CAN still be narrowed by a number after it.
+    auto c = parseSetAndNumberFilter("151 25");
+    EXPECT_EQ(c.setFilter, "151");
+    EXPECT_EQ(c.number, "25");
+}
+
+TEST(ParseSetAndNumberFilterTest, NoNumberOrBlankLeavesTheSetFilterWhole) {
+    auto a = parseSetAndNumberFilter("Obsidian Flames");
+    EXPECT_EQ(a.setFilter, "Obsidian Flames");
+    EXPECT_EQ(a.number, "");
+    auto b = parseSetAndNumberFilter("   ");
+    EXPECT_EQ(b.setFilter, "");
+    EXPECT_EQ(b.number, "");
+}
+
 TEST(ResolveSetFilterToIdsTest, MatchesAnExactCodeCaseInsensitivelyAndTrims) {
     const std::vector<CardSetInfo> sets = sampleSets();
     EXPECT_EQ(resolveSetFilterToIds("OBF", sets), std::vector<std::string>{"sv3"});

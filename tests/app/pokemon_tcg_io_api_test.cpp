@@ -53,6 +53,17 @@ TEST(PokemonTcgIoApiTest, ResolvesSearchNarrowedToOneSet) {
               "?q=nationalPokedexNumbers%3A6%20%28set.id%3Asv3%29&pageSize=250");
 }
 
+// A collector number appends an exact, UNQUOTED `number:` term (a quoted phrase matches
+// nothing on pokemontcg's number field). Species + set + number pins the query to ~one card.
+TEST(PokemonTcgIoApiTest, AppendsAnExactCollectorNumberClause) {
+    PokemonTcgIoApi api;
+    const auto request = api.resolveSearch({.dexNumber = 6, .setIds = {"sv3"}, .number = "125"});
+    EXPECT_EQ(request.url,
+              "https://api.pokemontcg.io/v2/cards"
+              "?q=nationalPokedexNumbers%3A6%20%28set.id%3Asv3%29%20number%3A125"
+              "&pageSize=250");
+}
+
 // A duplicated printed code resolves to several set ids, ORed inside the clause.
 TEST(PokemonTcgIoApiTest, ResolvesSearchNarrowedToSeveralSetsWithOr) {
     PokemonTcgIoApi api;

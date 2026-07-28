@@ -90,6 +90,28 @@ std::vector<CardSetInfo> parseTcgdexSets(const std::string& json);
 std::optional<std::string> resolveTcgdexCardId(const CardReference& ref,
                                                const std::vector<CardSetInfo>& tcgdexSets);
 
+// A finder filter split into its set part and an optional trailing collector number.
+struct SetNumberFilter {
+    std::string setFilter;  // the set name/code part (may be empty)
+    std::string number;     // the printing, no "/total" (e.g. "125", "TG05"; may be empty)
+};
+
+// Split a finder filter that may carry a trailing collector number — "OBF 125",
+// "obsidian flames 125/197", or a lone "125/197" — into a set filter + a collector number,
+// so a search can pin down one printing. The LAST whitespace token is taken as the number
+// only when it plainly is one: it contains a '/' (a "number/total", unambiguous even alone),
+// OR it looks like a short collector code (letters then 1-3 digits, e.g. "125"/"TG05") AND a
+// set part precedes it. A lone token that is not slash-formed stays the set filter, so a
+// single-word set NAME that is digits ("151") is never mistaken for a number (a 4-digit run is
+// likewise treated as a name). The returned `number` drops any "/total". Either part may be
+// empty; a blank input yields both empty.
+//
+// This is a heuristic and CANNOT tell a multi-word set name ending in a short digit ("POP
+// Series 9", "Base Set 2") from a set + number — it would split those. Disambiguating them
+// needs the set table, so the caller (CardSearchService) tries the WHOLE filter as a set name
+// first and only falls back to this split when the whole string names no set.
+SetNumberFilter parseSetAndNumberFilter(const std::string& typed);
+
 // Resolve a user-typed set filter to the set ids it matches, for reliable
 // set.id-based search narrowing. Matches an exact printed code (e.g. "OBF") OR a
 // case-insensitive substring of the set name (e.g. "mcdonald" → every McDonald's
