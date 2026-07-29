@@ -113,10 +113,11 @@ private:
     // Push the in-window "Edit card" page for the selected copy (to change its image).
     void editSelectedCard();
     void openPrices(const QString& copyId);
-    // Throttle a price-driven rebuild (loadCachedPrices + repopulate): coalesce a burst of
-    // pricesReady (a bulk refresh, or rapid single fetches) into at most one rebuild per window,
-    // so the table doesn't thrash — while still reflecting every event within the window.
-    void schedulePriceReload();
+    // Rewrite just the Prices cells of the rows showing `externalCardId` from the refreshed
+    // cache — a price-only update that avoids a full repopulate() (which would re-sort and
+    // re-drive the detail panel). Used for every pricesReady, so a bulk refresh's stream of
+    // events and an interactive suppress/clear both reflect live without flicker.
+    void updatePricesFor(const QString& externalCardId);
     // Push the in-window "Add a card" page for a species-free card (a Trainer/Energy
     // card that depicts no Pokémon) — the only place such a card can be recorded, since
     // the Pokémon browser's "Add copy" is always scoped to a species.
@@ -143,7 +144,6 @@ private:
     QPushButton* deleteButton_;   // "Delete permanently…" — enabled only for Removed copies
     QPushButton* refreshPricesButton_;  // "Refresh prices" — bulk re-fetch all linked copies
     QLabel* bulkStatus_;                // "Refreshing… n/m" progress (hidden when idle)
-    bool priceReloadQueued_ = false;    // a throttled price rebuild is already scheduled
     QLabel* countLabel_;
     // The copies backing the current rows, in display order (row i ⇄ loaded_[i]);
     // filtering only hides rows, so this stays aligned with the table.

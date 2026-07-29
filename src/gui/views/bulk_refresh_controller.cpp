@@ -49,9 +49,10 @@ BulkRefreshController::BulkRefreshController(CardPriceLookupService& lookup, QPu
             button_->setEnabled(true);
             initiatedHere_ = false;
         }
-        // Always fold the finished bulk into this view: its per-card pricesReady rebuild was
-        // skipped for bulk-in-flight ids while the bulk ran, so any of this view's cards the bulk
-        // refreshed are only reflected here now (one rebuild, not one per arriving price).
+        // One full rebuild now the bulk is done: the per-card pricesReady already rewrote each
+        // affected Prices cell live (updatePricesFor, no repopulate), so this exists only to
+        // re-sort (a Prices-column sort may have gone stale as figures changed) and settle the
+        // final state — one rebuild, not one per arriving price.
         reload_();
     });
 }

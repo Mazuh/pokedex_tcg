@@ -78,10 +78,11 @@ private:
     // header value stat and the per-row Prices column, so both draw from one snapshot.
     // Best-effort: a storage failure leaves the map empty rather than crashing.
     void loadCachedPrices();
-    // Throttle a price-driven rebuild (loadCachedPrices + updateStats + repopulate): coalesce a
-    // burst of pricesReady (a bulk refresh, or rapid single fetches) into at most one rebuild per
-    // window, so the table doesn't thrash — while still reflecting every event within the window.
-    void schedulePriceReload();
+    // Rewrite just the Prices cell(s) for `externalCardId` and the value total from the refreshed
+    // cache — a price-only update that avoids a full repopulate() (which would re-sort and
+    // re-drive the detail panel). Used for every pricesReady, so a bulk refresh's stream of
+    // events and an interactive suppress/clear both reflect live without flicker.
+    void updatePricesFor(const QString& externalCardId);
     // Show only the rows whose Pokémon name contains `filter` (case-insensitive);
     // an empty filter shows all. Rows are toggled, not rebuilt.
     void applyFilter(const QString& filter);
@@ -136,7 +137,6 @@ private:
     PokemonDetailPanel* detail_;
     QPushButton* refreshPricesButton_;  // "Refresh prices" — bulk re-fetch all filed cards
     QLabel* bulkStatus_;                 // "Refreshing… n/m" progress beside it (hidden when idle)
-    bool priceReloadQueued_ = false;  // a throttled price rebuild is already scheduled
     std::vector<CardBinderEntry> entries_;
     // Header-driven sort state, re-applied on every refresh so it survives a
     // recompute. -1 = unsorted (keep the guide's dex order); see sortEntries().

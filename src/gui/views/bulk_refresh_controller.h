@@ -26,8 +26,9 @@ class CardPriceLookupService;
 //   • bulkProgress → update "Refreshing… n/m" — but ONLY in the view that started the bulk, so the
 //     other view (sharing the one service) shows no phantom progress and its button stays live.
 //   • bulkFinished → re-enable + hide the label in the initiating view, and ALWAYS run the view's
-//     `reload` so it folds in any of its cards the bulk refreshed (the per-card pricesReady rebuild
-//     is skipped for bulk-in-flight ids while the bulk runs — see the views).
+//     `reload` (one full rebuild): the per-card pricesReady already rewrote each Prices cell live
+//     (the views' updatePricesFor, no repopulate), so this only re-sorts a possibly-stale
+//     Prices-column sort and settles the final state — see the views.
 //
 // Transient messages (already-running / nothing-linked) auto-hide after a few seconds, guarded so
 // a real progress label that replaced them is left alone.

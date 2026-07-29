@@ -12,7 +12,6 @@
 #include <QStyle>
 #include <QTableWidget>
 #include <QTableWidgetItem>
-#include <QTimer>
 #include <QVBoxLayout>
 
 #include <exception>
@@ -49,11 +48,6 @@
 #include "gui/views/wishlist_edit_page.h"
 
 namespace pokedex {
-
-namespace {
-// Coalesce a burst of price events (a bulk refresh) into at most one table rebuild per window.
-constexpr int kPriceReloadThrottleMs = 250;
-}  // namespace
 
 BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
                        WishlistService& wishlist, MediaService& media,
@@ -198,13 +192,13 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     // the batched cache read and rebuilding the table on every fetch anywhere.
     connect(&priceLookup_, &CardPriceLookupService::pricesReady, this,
             [this](const QString& externalCardId) {
-                // Throttle the rebuild (loadCachedPrices + updateStats + repopulate re-read the
-                // whole cache): a bulk refresh fires many pricesReady in quick succession, so
-                // coalesce them into at most one rebuild per window instead of O(N). Every event
-                // — a bulk card OR an interactive suppress/clear/single Fetch — is reflected
-                // within the window, so nothing shows stale.
+                // A price change only affects the Prices column + the value total, so rewrite
+                // just those — never a repopulate(), which would re-sort and re-drive the detail
+                // panel (re-decoding its image, resetting its summary) on every one of a bulk
+                // refresh's many events. Synchronous and cheap, so a bulk card and an interactive
+                // suppress/clear/single Fetch both reflect immediately, with no panel flicker.
                 if (anyCopyLinkedTo(filedCopies_, externalCardId)) {
-                    schedulePriceReload();
+                    updatePricesFor(externalCardId);
                 }
             });
 
@@ -272,17 +266,32 @@ void BinderView::refresh() {
     repopulate();
 }
 
-void BinderView::schedulePriceReload() {
-    if (priceReloadQueued_) {
-        return;  // a rebuild is already scheduled — this event will be folded into it
+void BinderView::updatePricesFor(const QString& externalCardId) {
+    // Refresh just this card's cache entry (single-card reads, not the whole batched map),
+    // rewrite the Prices cell of any row whose representative copy carries it, and recompute the
+    // value total. No repopulate → no re-sort, no panel re-show. A header-sort by the Prices
+    // column can go momentarily stale; a bulk's final full rebuild (bulkFinished → reload)
+    // re-sorts.
+    const std::string id = externalCardId.toStdString();
+    try {
+        pricesByExternalId_[id] = priceLookup_.cachedPrices(externalCardId).prices;
+        suppressedByExternalId_[id] = priceLookup_.suppressedVendors(externalCardId);
+    } catch (const std::exception&) {
+        return;  // leave the current cells rather than crash on a storage error
     }
-    priceReloadQueued_ = true;
-    QTimer::singleShot(kPriceReloadThrottleMs, this, [this]() {
-        priceReloadQueued_ = false;
-        loadCachedPrices();
-        updateStats(filedCopies_);
-        repopulate();
-    });
+    std::vector<CardPrice> scratch;
+    for (int i = 0; i < static_cast<int>(entries_.size()); ++i) {
+        const CardCopy* rep = representativeCopy(entries_[i].pokemon.dexNumber);
+        if (rep == nullptr || rep->externalCardId != id) {
+            continue;
+        }
+        table_->setItem(
+            i, 8,
+            cell(priceAmountsInline(
+                visiblePricesForCopy(pricesByExternalId_, suppressedByExternalId_, *rep, scratch),
+                finishForFoil(rep->foil))));
+    }
+    updateStats(filedCopies_);  // the binder's market-value total changed
 }
 
 void BinderView::loadCachedPrices() {

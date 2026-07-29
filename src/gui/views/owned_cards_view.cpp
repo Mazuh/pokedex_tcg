@@ -13,7 +13,6 @@
 #include <QString>
 #include <QStyle>
 #include <QTableWidget>
-#include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -52,9 +51,6 @@
 namespace pokedex {
 
 namespace {
-
-// Coalesce a burst of price events (a bulk refresh) into at most one table rebuild per window.
-constexpr int kPriceReloadThrottleMs = 250;
 
 // The region label for a dex number, from the compile-time catalog. Not shown in
 // any column, but appended to the search haystack so a copy is findable by its
@@ -238,12 +234,13 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     // (most of them) is ignored rather than re-reading + rebuilding on every fetch anywhere.
     connect(&priceLookup_, &CardPriceLookupService::pricesReady, this,
             [this](const QString& externalCardId) {
-                // Throttle the rebuild (loadCachedPrices + repopulate re-read the whole cache): a
-                // bulk refresh fires many pricesReady fast, so coalesce them into at most one
-                // rebuild per window instead of O(N). Every event — a bulk card OR an interactive
-                // suppress/clear/single Fetch — is reflected within the window, so nothing stales.
+                // A price change only affects the Prices column, so rewrite just the affected
+                // cells — never a repopulate(), which would re-sort and re-drive the detail panel
+                // (re-decoding its image, resetting its summary) on every one of a bulk refresh's
+                // many events. This is synchronous and cheap, so a bulk card and an interactive
+                // suppress/clear/single Fetch both reflect immediately, with no panel flicker.
                 if (anyCopyLinkedTo(loaded_, externalCardId)) {
-                    schedulePriceReload();
+                    updatePricesFor(externalCardId);
                 }
             });
 
@@ -807,16 +804,32 @@ void OwnedCardsView::openPrices(const QString& copyId) {
         });
 }
 
-void OwnedCardsView::schedulePriceReload() {
-    if (priceReloadQueued_) {
-        return;  // a rebuild is already scheduled — this event will be folded into it
+void OwnedCardsView::updatePricesFor(const QString& externalCardId) {
+    // Refresh just this card's cache entry (single-card reads, not the whole batched map) and
+    // rewrite the Prices cell of every row showing it. No repopulate → no re-sort, no panel
+    // re-show. A header-sort by the Prices column can go momentarily stale (the row keeps its
+    // position with a new figure); a bulk's final full rebuild (bulkFinished → reload) re-sorts.
+    const std::string id = externalCardId.toStdString();
+    try {
+        pricesByExternalId_[id] = priceLookup_.cachedPrices(externalCardId).prices;
+        suppressedByExternalId_[id] = priceLookup_.suppressedVendors(externalCardId);
+    } catch (const std::exception&) {
+        return;  // leave the current cells rather than crash on a storage error
     }
-    priceReloadQueued_ = true;
-    QTimer::singleShot(kPriceReloadThrottleMs, this, [this]() {
-        priceReloadQueued_ = false;
-        loadCachedPrices();
-        repopulate(selectedCopyId());
-    });
+    std::vector<CardPrice> scratch;
+    for (int row = 0; row < static_cast<int>(loaded_.size()); ++row) {
+        const CardCopy& c = loaded_[row];
+        if (c.externalCardId != id) {
+            continue;
+        }
+        table_->setItem(
+            row, 9,
+            cell(isRemoved(c) ? QString()
+                              : priceAmountsInline(
+                                    visiblePricesForCopy(pricesByExternalId_,
+                                                         suppressedByExternalId_, c, scratch),
+                                    finishForFoil(c.foil))));
+    }
 }
 
 void OwnedCardsView::addNewCard() {
