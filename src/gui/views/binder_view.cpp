@@ -192,13 +192,22 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     // the batched cache read and rebuilding the table on every fetch anywhere.
     connect(&priceLookup_, &CardPriceLookupService::pricesReady, this,
             [this](const QString& externalCardId) {
-                // A price change only affects the Prices column + the value total, so rewrite
-                // just those — never a repopulate(), which would re-sort and re-drive the detail
-                // panel (re-decoding its image, resetting its summary) on every one of a bulk
-                // refresh's many events. Synchronous and cheap, so a bulk card and an interactive
-                // suppress/clear/single Fetch both reflect immediately, with no panel flicker.
-                if (anyCopyLinkedTo(filedCopies_, externalCardId)) {
+                if (!anyCopyLinkedTo(filedCopies_, externalCardId)) {
+                    return;
+                }
+                if (priceLookup_.bulkRunning()) {
+                    // During a bulk, rewrite ONLY the affected Prices cells — a repopulate() per
+                    // arriving price would re-sort and re-drive the detail panel (flicker). The
+                    // sort and the value total are reconciled by the one full rebuild at
+                    // bulkFinished.
                     updatePricesFor(externalCardId);
+                } else {
+                    // A single interactive event (Fetch/suppress/clear): a full rebuild keeps the
+                    // sort correct and refreshes the value total. It's a one-off, so the single
+                    // panel re-show is fine.
+                    loadCachedPrices();
+                    updateStats(filedCopies_);
+                    repopulate();
                 }
             });
 
@@ -267,18 +276,24 @@ void BinderView::refresh() {
 }
 
 void BinderView::updatePricesFor(const QString& externalCardId) {
-    // Refresh just this card's cache entry (single-card reads, not the whole batched map),
-    // rewrite the Prices cell of any row whose representative copy carries it, and recompute the
-    // value total. No repopulate → no re-sort, no panel re-show. A header-sort by the Prices
-    // column can go momentarily stale; a bulk's final full rebuild (bulkFinished → reload)
-    // re-sorts.
+    // The in-place update used DURING a bulk only (single events take the full-rebuild path):
+    // refresh this card's cache entry and rewrite the Prices cell of any row whose representative
+    // copy carries it. No repopulate → no re-sort, no panel re-show; and NOT updateStats — the
+    // value total (an O(copies) pass) is recomputed once by the full rebuild at bulkFinished
+    // rather than on every arriving price. The sort is reconciled there too.
     const std::string id = externalCardId.toStdString();
+    // Read both into locals first, then assign together — so a storage error on the second read
+    // never leaves the price map refreshed against a stale suppression map.
+    std::vector<CardPrice> prices;
+    std::vector<std::string> suppressed;
     try {
-        pricesByExternalId_[id] = priceLookup_.cachedPrices(externalCardId).prices;
-        suppressedByExternalId_[id] = priceLookup_.suppressedVendors(externalCardId);
+        prices = priceLookup_.cachedPrices(externalCardId).prices;
+        suppressed = priceLookup_.suppressedVendors(externalCardId);
     } catch (const std::exception&) {
         return;  // leave the current cells rather than crash on a storage error
     }
+    pricesByExternalId_[id] = std::move(prices);
+    suppressedByExternalId_[id] = std::move(suppressed);
     std::vector<CardPrice> scratch;
     for (int i = 0; i < static_cast<int>(entries_.size()); ++i) {
         const CardCopy* rep = representativeCopy(entries_[i].pokemon.dexNumber);
@@ -291,7 +306,6 @@ void BinderView::updatePricesFor(const QString& externalCardId) {
                 visiblePricesForCopy(pricesByExternalId_, suppressedByExternalId_, *rep, scratch),
                 finishForFoil(rep->foil))));
     }
-    updateStats(filedCopies_);  // the binder's market-value total changed
 }
 
 void BinderView::loadCachedPrices() {

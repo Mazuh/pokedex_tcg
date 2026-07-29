@@ -234,13 +234,21 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     // (most of them) is ignored rather than re-reading + rebuilding on every fetch anywhere.
     connect(&priceLookup_, &CardPriceLookupService::pricesReady, this,
             [this](const QString& externalCardId) {
-                // A price change only affects the Prices column, so rewrite just the affected
-                // cells — never a repopulate(), which would re-sort and re-drive the detail panel
-                // (re-decoding its image, resetting its summary) on every one of a bulk refresh's
-                // many events. This is synchronous and cheap, so a bulk card and an interactive
-                // suppress/clear/single Fetch both reflect immediately, with no panel flicker.
-                if (anyCopyLinkedTo(loaded_, externalCardId)) {
+                if (!anyCopyLinkedTo(loaded_, externalCardId)) {
+                    return;
+                }
+                if (priceLookup_.bulkRunning()) {
+                    // During a bulk, rewrite ONLY the affected Prices cells — a repopulate() per
+                    // arriving price would re-sort and re-drive the detail panel (flicker). The
+                    // sort/haystack/Removed-styling those cells skip are reconciled by the one
+                    // full rebuild at bulkFinished.
                     updatePricesFor(externalCardId);
+                } else {
+                    // A single interactive event (Fetch/suppress/clear): a full rebuild keeps the
+                    // sort, search haystack, and Removed-row styling correct. It's a one-off, so
+                    // the single panel re-show is fine.
+                    loadCachedPrices();
+                    repopulate(selectedCopyId());
                 }
             });
 
@@ -805,30 +813,34 @@ void OwnedCardsView::openPrices(const QString& copyId) {
 }
 
 void OwnedCardsView::updatePricesFor(const QString& externalCardId) {
-    // Refresh just this card's cache entry (single-card reads, not the whole batched map) and
-    // rewrite the Prices cell of every row showing it. No repopulate → no re-sort, no panel
-    // re-show. A header-sort by the Prices column can go momentarily stale (the row keeps its
-    // position with a new figure); a bulk's final full rebuild (bulkFinished → reload) re-sorts.
+    // The in-place update used DURING a bulk only (single events take the full-rebuild path):
+    // refresh this card's cache entry and rewrite the Prices cell of every non-Removed row
+    // showing it. No repopulate → no re-sort, no panel re-show; sort/haystack/Removed styling are
+    // reconciled by the full rebuild at bulkFinished.
     const std::string id = externalCardId.toStdString();
+    // Read both into locals first, then assign together — so a storage error on the second read
+    // never leaves the price map refreshed against a stale suppression map.
+    std::vector<CardPrice> prices;
+    std::vector<std::string> suppressed;
     try {
-        pricesByExternalId_[id] = priceLookup_.cachedPrices(externalCardId).prices;
-        suppressedByExternalId_[id] = priceLookup_.suppressedVendors(externalCardId);
+        prices = priceLookup_.cachedPrices(externalCardId).prices;
+        suppressed = priceLookup_.suppressedVendors(externalCardId);
     } catch (const std::exception&) {
         return;  // leave the current cells rather than crash on a storage error
     }
+    pricesByExternalId_[id] = std::move(prices);
+    suppressedByExternalId_[id] = std::move(suppressed);
     std::vector<CardPrice> scratch;
     for (int row = 0; row < static_cast<int>(loaded_.size()); ++row) {
         const CardCopy& c = loaded_[row];
-        if (c.externalCardId != id) {
-            continue;
+        if (c.externalCardId != id || isRemoved(c)) {
+            continue;  // a Removed row keeps its (grayed) blank cell — its price never shows
         }
         table_->setItem(
             row, 9,
-            cell(isRemoved(c) ? QString()
-                              : priceAmountsInline(
-                                    visiblePricesForCopy(pricesByExternalId_,
-                                                         suppressedByExternalId_, c, scratch),
-                                    finishForFoil(c.foil))));
+            cell(priceAmountsInline(
+                visiblePricesForCopy(pricesByExternalId_, suppressedByExternalId_, c, scratch),
+                finishForFoil(c.foil))));
     }
 }
 
