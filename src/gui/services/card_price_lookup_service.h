@@ -136,7 +136,18 @@ Q_SIGNALS:
     void bulkFinished();
 
 private:
+    // Start a price fetch for `externalCardId` (the canonical id — the copy's link and cache
+    // key). startFetch picks the initial request URL (applying any learned set padding, below),
+    // then startFetchUrl does the GET: `urlId` is what goes in the URL and may differ from
+    // externalCardId when a zero-padded collector number is needed to address the card on tcgdex
+    // (modern sets pad, older ones don't — see paddedCardIdCandidate). On a 404 it retries the
+    // other id form once (printed ↔ zero-padded); `triedAlternate` is that one-shot guard, set on
+    // the fallback attempt so it can't ping-pong. The prices are always recorded under
+    // externalCardId regardless of which URL variant served them, so nothing downstream (the
+    // link, the cache key, the signals) sees the padded form.
     void startFetch(const QString& externalCardId, int retriesLeft);
+    void startFetchUrl(const QString& externalCardId, const QString& urlId, int retriesLeft,
+                       bool triedAlternate);
     void startSetsFetch(int retriesLeft);
     // Load the tcgdex set table from the disk cache into memory. `requireFresh` demands the
     // cache be within the TTL (the no-network fast path); false accepts any age (the
@@ -162,6 +173,13 @@ private:
     // fetch fails the user's forced click still deserves a real attempt — so it is
     // re-issued once, on failure, for any id recorded here.
     QSet<QString> refetchQueued_;
+
+    // tcgdex set-id prefixes ("me02") we've learned zero-pad their collector numbers, discovered
+    // when a padded URL succeeded after the as-printed one 404'd. Lets the other cards of that set
+    // (notably the rest of a bulk refresh) go straight to the padded URL instead of each spending
+    // a 404 to rediscover it. Session-only; a wrong guess only ever costs one extra fetch, so it
+    // needn't persist.
+    QSet<QString> paddingSets_;
 
     // The tcgdex set table (id + name), fetched once per session and held in memory to map a
     // copy's printed set → a tcgdex set id. Small, near-static reference data.
