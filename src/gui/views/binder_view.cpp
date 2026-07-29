@@ -12,6 +12,7 @@
 #include <QStyle>
 #include <QTableWidget>
 #include <QTableWidgetItem>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <exception>
@@ -48,6 +49,11 @@
 #include "gui/views/wishlist_edit_page.h"
 
 namespace pokedex {
+
+namespace {
+// Coalesce a burst of price events (a bulk refresh) into at most one table rebuild per window.
+constexpr int kPriceReloadThrottleMs = 250;
+}  // namespace
 
 BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
                        WishlistService& wishlist, MediaService& media,
@@ -89,7 +95,8 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     // The bulk refresh runs on the shared price service (global cap, one bulk at a time). The
     // controller wires the button + label to it: it gathers the Owned, linked ids and, on finish,
     // folds the results into this view with ONE rebuild.
-    bulkRefresh_ = new BulkRefreshController(
+    // Parented to this view (last arg), so it lives and dies with it — no member to hold.
+    new BulkRefreshController(
         priceLookup_, refreshPricesButton_, bulkStatus_,
         [this]() {
             const auto ownedHere = [](const CardCopy& c) {
@@ -191,16 +198,13 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     // the batched cache read and rebuilding the table on every fetch anywhere.
     connect(&priceLookup_, &CardPriceLookupService::pricesReady, this,
             [this](const QString& externalCardId) {
-                // Skip ONLY the bulk's own in-flight cards — bulkFinished folds them in with ONE
-                // rebuild (not O(N)). An interactive suppress/clear/single Fetch mid-bulk isn't
-                // bulk-in-flight, so it still rebuilds live.
-                if (priceLookup_.bulkFetchInFlight(externalCardId)) {
-                    return;
-                }
+                // Throttle the rebuild (loadCachedPrices + updateStats + repopulate re-read the
+                // whole cache): a bulk refresh fires many pricesReady in quick succession, so
+                // coalesce them into at most one rebuild per window instead of O(N). Every event
+                // — a bulk card OR an interactive suppress/clear/single Fetch — is reflected
+                // within the window, so nothing shows stale.
                 if (anyCopyLinkedTo(filedCopies_, externalCardId)) {
-                    loadCachedPrices();          // pick up the just-fetched prices
-                    updateStats(filedCopies_);   // header value total
-                    repopulate();                // the row's Prices cell
+                    schedulePriceReload();
                 }
             });
 
@@ -266,6 +270,19 @@ void BinderView::refresh() {
     loadCachedPrices();  // one batched cache read feeding both the header total and the rows
     updateStats(filedCopies_);
     repopulate();
+}
+
+void BinderView::schedulePriceReload() {
+    if (priceReloadQueued_) {
+        return;  // a rebuild is already scheduled — this event will be folded into it
+    }
+    priceReloadQueued_ = true;
+    QTimer::singleShot(kPriceReloadThrottleMs, this, [this]() {
+        priceReloadQueued_ = false;
+        loadCachedPrices();
+        updateStats(filedCopies_);
+        repopulate();
+    });
 }
 
 void BinderView::loadCachedPrices() {

@@ -9,6 +9,7 @@
 
 class QLabel;
 class QPushButton;
+class QTimer;
 
 namespace pokedex {
 
@@ -51,6 +52,8 @@ private:
     std::function<std::vector<std::string>()> gatherIds_;
     std::function<void()> reload_;
     bool initiatedHere_ = false;  // this view started the running bulk → it owns the progress UI
+    QTimer* transientTimer_;      // single-shot auto-hide for a transient note
+    bool showingTransient_ = false;  // the label currently shows a transient (not progress)
 };
 
 }  // namespace pokedex

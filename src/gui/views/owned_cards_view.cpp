@@ -13,6 +13,7 @@
 #include <QString>
 #include <QStyle>
 #include <QTableWidget>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -51,6 +52,9 @@
 namespace pokedex {
 
 namespace {
+
+// Coalesce a burst of price events (a bulk refresh) into at most one table rebuild per window.
+constexpr int kPriceReloadThrottleMs = 250;
 
 // The region label for a dex number, from the compile-time catalog. Not shown in
 // any column, but appended to the search haystack so a copy is findable by its
@@ -175,7 +179,8 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     // The bulk refresh runs on the shared price service (global cap, one bulk at a time). The
     // controller wires the button + label to it: it gathers every non-Removed linked id and, on
     // finish, folds the results into this view with ONE rebuild (keeping the selection).
-    bulkRefresh_ = new BulkRefreshController(
+    // Parented to this view (last arg), so it lives and dies with it — no member to hold.
+    new BulkRefreshController(
         priceLookup_, refreshPricesButton_, bulkStatus_,
         [this]() {
             const auto notRemoved = [](const CardCopy& c) { return !isRemoved(c); };
@@ -233,15 +238,12 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     // (most of them) is ignored rather than re-reading + rebuilding on every fetch anywhere.
     connect(&priceLookup_, &CardPriceLookupService::pricesReady, this,
             [this](const QString& externalCardId) {
-                // Skip ONLY the bulk's own in-flight cards — bulkFinished folds them in with ONE
-                // rebuild (not O(N)). An interactive suppress/clear/single Fetch mid-bulk isn't
-                // bulk-in-flight, so it still rebuilds live.
-                if (priceLookup_.bulkFetchInFlight(externalCardId)) {
-                    return;
-                }
+                // Throttle the rebuild (loadCachedPrices + repopulate re-read the whole cache): a
+                // bulk refresh fires many pricesReady fast, so coalesce them into at most one
+                // rebuild per window instead of O(N). Every event — a bulk card OR an interactive
+                // suppress/clear/single Fetch — is reflected within the window, so nothing stales.
                 if (anyCopyLinkedTo(loaded_, externalCardId)) {
-                    loadCachedPrices();
-                    repopulate(selectedCopyId());
+                    schedulePriceReload();
                 }
             });
 
@@ -803,6 +805,18 @@ void OwnedCardsView::openPrices(const QString& copyId) {
             shownCopyId_.clear();
             showSelectedImage();
         });
+}
+
+void OwnedCardsView::schedulePriceReload() {
+    if (priceReloadQueued_) {
+        return;  // a rebuild is already scheduled — this event will be folded into it
+    }
+    priceReloadQueued_ = true;
+    QTimer::singleShot(kPriceReloadThrottleMs, this, [this]() {
+        priceReloadQueued_ = false;
+        loadCachedPrices();
+        repopulate(selectedCopyId());
+    });
 }
 
 void OwnedCardsView::addNewCard() {
