@@ -165,17 +165,32 @@ fetch entirely. It builds tcgdex URLs directly (no `CardCatalogApi` — pokemont
 `resolveCardById` was removed with the pokemontcg price path). It is strictly **on-demand**
 — `cached`/`fetchedAt` never touch the network; only `fetch()` and the one-time set-table
 load (both behind an explicit Fetch/Refresh) do — so merely viewing a card never hits the
-API. **Pricing is split into a read-only summary and a management page — the same move the
-wishlist made off the crowded inspector.** Every owned-copy surface (the Edit page, the My
-Cards detail `OwnedCardsView`, and the binder-guide / Pokémon-browser copy detail
-`PokemonDetailPanel` copy mode) shows the read-only `gui/views/CardPricesSummary`
-(`showCopy(copy)` / `clear()`): the per-vendor headline figures (suppressed vendors filtered
-out), each vendor **name itself the link** to a marketplace search, the ⓘ metrics/freshness
-popover, and one **"Manage prices"** button. It never mutates and never hits the network — it
-renders whatever is cached and re-renders on the app-wide `pricesReady`; it needs only
-`CardPriceLookupService`. Its button emits `managePricesRequested(copyId)`, which the host
-turns into a push of `gui/views/PricesEditPage` (Back bar + card heading) — the single home
-for every pricing verb, which **hosts the interactive `gui/views/CardPricesPanel`**. That
+API. It also drives the **bulk refresh**: `refreshMany(ids)` re-fetches many linked cards with
+a bounded-concurrency queue (`pumpBulk`/`advanceBulk`, cap `kBulkMaxConcurrent`), emitting
+`bulkProgress`/`bulkFinished`. Because there is ONE shared service the cap and the "one bulk at
+a time" guard are **global** across views, and the queue advances only from
+`finishSucceeded`/`finishFailed` (real fetch completions) so a `suppressVendor`/`clearPrices`
+that also emits `pricesReady` can't miscount it. It backs the **"Refresh prices"** button on the
+binder guide (`BinderView`, its Owned filed copies) and My Cards (`OwnedCardsView`, all
+non-Removed copies) — a manual "update now" that re-fetches every linked card **regardless of
+TTL** (intentional, see the price-cache-tradeoffs memory); each view skips its per-card
+`pricesReady` rebuild while `bulkRunning()` and does ONE rebuild on `bulkFinished`. **Pricing is
+split into a read-only-ish summary and a management page — the same move the wishlist made off
+the crowded inspector.** Every owned-copy surface (the Edit page, the My Cards detail
+`OwnedCardsView`, and the binder-guide / Pokémon-browser copy detail `PokemonDetailPanel` copy
+mode) shows `gui/views/CardPricesSummary` (`showCopy(copy)` / `clear()`): the per-vendor headline
+figures (suppressed vendors filtered out), each vendor **name itself the link** to a marketplace
+search, the ⓘ metrics/freshness popover, an inline **Fetch/Refresh**, and a **"Manage prices"**
+button. It never networks on mere selection (renders the cache, re-renders on `pricesReady`); its
+one active affordance is the inline Fetch/Refresh, which drives the **shared
+`gui/views/CardPriceFetchController`** — the fetch/resolve/link state machine BOTH this summary
+and the management panel use, so the inline button gets the same invisible resolve-and-link
+(first fetch links an unlinked copy; a legacy pre-tcgdex id is re-resolved) and never dead-ends.
+A fetch that links the copy is relayed up via `copyLinked` (hence the summary needs
+`CardCopyService` for the controller). Its Manage button emits `managePricesRequested(copyId)`,
+which the host turns into a push of `gui/views/PricesEditPage` (Back bar + card heading) — the
+single home for the heavier verbs (Clear, hide/restore), which **hosts the interactive
+`gui/views/CardPricesPanel`**. That
 panel (unchanged) is driven by `showCopy(copy)` / `clear()` (it carries the copy's link
 context — id, `CardReference` — not just an `external_card_id`) and renders the states
 [nothing-selected / unresolvable (no set/number) / ready-to-fetch (resolvable OR already
