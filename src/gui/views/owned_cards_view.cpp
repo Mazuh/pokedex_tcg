@@ -34,6 +34,7 @@
 #include "gui/views/edit_card_copy_page.h"
 #include "gui/views/condition_labels.h"
 #include "gui/views/foil_labels.h"
+#include "gui/views/bulk_refresh_controller.h"
 #include "gui/views/owned_copy_buckets.h"
 #include "gui/views/prices_page_host.h"
 #include "gui/views/ownership_labels.h"
@@ -171,22 +172,20 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     refreshPricesButton_ = new QPushButton(tr("Refresh prices"), this);
     refreshPricesButton_->setToolTip(
         tr("Re-fetch market prices for every linked card in My Cards."));
-    // The bulk refresh runs on the shared price service (global cap, one bulk at a time); we only
-    // render its progress.
-    connect(refreshPricesButton_, &QPushButton::clicked, this, &OwnedCardsView::startBulkRefresh);
-    connect(&priceLookup_, &CardPriceLookupService::bulkProgress, this,
-            [this](int done, int total) {
-                bulkStatus_->setText(tr("Refreshing… %1/%2").arg(done).arg(total));
-                bulkStatus_->show();
-            });
-    connect(&priceLookup_, &CardPriceLookupService::bulkFinished, this, [this]() {
-        bulkStatus_->hide();
-        refreshPricesButton_->setEnabled(true);
-        // The per-card handler skipped its rebuild during the bulk; fold all results in with ONE
-        // re-read + rebuild now (keeping the current selection), not once per arriving price.
-        loadCachedPrices();
-        repopulate(selectedCopyId());
-    });
+    // The bulk refresh runs on the shared price service (global cap, one bulk at a time). The
+    // controller wires the button + label to it: it gathers every non-Removed linked id and, on
+    // finish, folds the results into this view with ONE rebuild (keeping the selection).
+    bulkRefresh_ = new BulkRefreshController(
+        priceLookup_, refreshPricesButton_, bulkStatus_,
+        [this]() {
+            const auto notRemoved = [](const CardCopy& c) { return !isRemoved(c); };
+            return distinctExternalIds(loaded_, notRemoved);
+        },
+        [this]() {
+            loadCachedPrices();
+            repopulate(selectedCopyId());
+        },
+        this);
 
     // The toolbar keeps only the inventory-wide operations; Add + Edit moved to the
     // inspector on the right (side by side). The bulk price refresh sits on the far right.
@@ -234,9 +233,10 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     // (most of them) is ignored rather than re-reading + rebuilding on every fetch anywhere.
     connect(&priceLookup_, &CardPriceLookupService::pricesReady, this,
             [this](const QString& externalCardId) {
-                // During a bulk refresh, skip the per-card rebuild — bulkFinished folds every
-                // result in with ONE re-read + rebuild, instead of O(N) rebuilds as prices arrive.
-                if (priceLookup_.bulkRunning()) {
+                // Skip ONLY the bulk's own in-flight cards — bulkFinished folds them in with ONE
+                // rebuild (not O(N)). An interactive suppress/clear/single Fetch mid-bulk isn't
+                // bulk-in-flight, so it still rebuilds live.
+                if (priceLookup_.bulkFetchInFlight(externalCardId)) {
                     return;
                 }
                 if (anyCopyLinkedTo(loaded_, externalCardId)) {
@@ -803,27 +803,6 @@ void OwnedCardsView::openPrices(const QString& copyId) {
             shownCopyId_.clear();
             showSelectedImage();
         });
-}
-
-void OwnedCardsView::startBulkRefresh() {
-    if (priceLookup_.bulkRunning()) {
-        return;  // one bulk at a time (the shared service guards this too)
-    }
-    // The distinct linked ids of every non-Removed copy — the same set the Prices column draws
-    // from. Skips unlinked copies (a first fetch links a copy one-at-a-time via its own Fetch;
-    // bulk only refreshes what's already linked).
-    const auto notRemoved = [](const CardCopy& c) { return !isRemoved(c); };
-    const std::vector<std::string> ids = distinctExternalIds(loaded_, notRemoved);
-    if (ids.empty()) {
-        // Give feedback rather than a silent no-op: nothing is linked yet.
-        bulkStatus_->setText(tr("No linked cards to refresh — fetch a card's prices first."));
-        bulkStatus_->show();
-        return;
-    }
-    refreshPricesButton_->setEnabled(false);
-    bulkStatus_->setText(tr("Refreshing… 0/%1").arg(ids.size()));
-    bulkStatus_->show();
-    priceLookup_.refreshMany(ids);
 }
 
 void OwnedCardsView::addNewCard() {

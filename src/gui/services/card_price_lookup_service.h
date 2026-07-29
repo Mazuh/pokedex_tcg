@@ -122,6 +122,13 @@ public:
     // and bulkFinished when all are done. A no-op for an empty list.
     void refreshMany(const std::vector<std::string>& externalCardIds);
     bool bulkRunning() const { return bulkTotal_ > 0; }
+    // Whether this id is a bulk fetch currently on the wire — true from when pumpBulk issues it
+    // until its finishSucceeded/finishFailed. A view uses it to skip ONLY the bulk's own per-card
+    // rebuilds (folded in once at bulkFinished), while still rebuilding live for an interactive
+    // suppress/clear/single Fetch that lands mid-bulk (those ids aren't bulk-in-flight).
+    bool bulkFetchInFlight(const QString& externalCardId) const {
+        return bulkInFlight_.contains(externalCardId);
+    }
 
 Q_SIGNALS:
     // Fired when a card's prices are available to (re-)read via cachedPrices(id) — after a

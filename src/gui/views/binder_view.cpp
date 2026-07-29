@@ -29,6 +29,7 @@
 #include "gui/views/add_card_copy_page.h"
 #include "gui/views/back_button.h"
 #include "gui/views/binder_combo.h"
+#include "gui/views/bulk_refresh_controller.h"
 #include "gui/views/card_copy_labels.h"
 #include "gui/views/condition_labels.h"
 #include "gui/views/copy_row_activation.h"
@@ -85,23 +86,23 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     topBar->addWidget(bulkStatus_);
     topBar->addWidget(refreshPricesButton_);
 
-    // The bulk refresh runs on the shared price service (so its concurrency cap is global across
-    // views and only one bulk runs at a time). We only render its progress.
-    connect(refreshPricesButton_, &QPushButton::clicked, this, &BinderView::startBulkRefresh);
-    connect(&priceLookup_, &CardPriceLookupService::bulkProgress, this,
-            [this](int done, int total) {
-                bulkStatus_->setText(tr("Refreshing… %1/%2").arg(done).arg(total));
-                bulkStatus_->show();
-            });
-    connect(&priceLookup_, &CardPriceLookupService::bulkFinished, this, [this]() {
-        bulkStatus_->hide();
-        refreshPricesButton_->setEnabled(true);
-        // The per-card handler skipped its rebuild during the bulk (see the pricesReady slot);
-        // fold all the results in with ONE re-read + rebuild now, not once per arriving price.
-        loadCachedPrices();
-        updateStats(filedCopies_);
-        repopulate();
-    });
+    // The bulk refresh runs on the shared price service (global cap, one bulk at a time). The
+    // controller wires the button + label to it: it gathers the Owned, linked ids and, on finish,
+    // folds the results into this view with ONE rebuild.
+    bulkRefresh_ = new BulkRefreshController(
+        priceLookup_, refreshPricesButton_, bulkStatus_,
+        [this]() {
+            const auto ownedHere = [](const CardCopy& c) {
+                return c.ownership == CardOwnership::Owned;
+            };
+            return distinctExternalIds(filedCopies_, ownedHere);
+        },
+        [this]() {
+            loadCachedPrices();
+            updateStats(filedCopies_);
+            repopulate();
+        },
+        this);
 
     // A muted subtitle line under the top bar carrying the binder's stats:
     // how many species are listed, how many captured (+%), and the market $ value
@@ -190,9 +191,10 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     // the batched cache read and rebuilding the table on every fetch anywhere.
     connect(&priceLookup_, &CardPriceLookupService::pricesReady, this,
             [this](const QString& externalCardId) {
-                // During a bulk refresh, skip the per-card rebuild — bulkFinished folds every
-                // result in with ONE re-read + rebuild, instead of O(N) rebuilds as prices arrive.
-                if (priceLookup_.bulkRunning()) {
+                // Skip ONLY the bulk's own in-flight cards — bulkFinished folds them in with ONE
+                // rebuild (not O(N)). An interactive suppress/clear/single Fetch mid-bulk isn't
+                // bulk-in-flight, so it still rebuilds live.
+                if (priceLookup_.bulkFetchInFlight(externalCardId)) {
                     return;
                 }
                 if (anyCopyLinkedTo(filedCopies_, externalCardId)) {
@@ -656,27 +658,6 @@ void BinderView::openPrices(const QString& copyId) {
             refresh();
             reselectSpecies(dex, copyId);
         });
-}
-
-void BinderView::startBulkRefresh() {
-    if (priceLookup_.bulkRunning()) {
-        return;  // one bulk at a time (the shared service guards this too)
-    }
-    // The distinct linked ids of the Owned copies filed here — the same set the value total
-    // draws from. Skips unlinked copies (a first fetch links a copy one-at-a-time via its own
-    // Fetch; bulk only refreshes what's already linked).
-    const auto ownedHere = [](const CardCopy& c) { return c.ownership == CardOwnership::Owned; };
-    const std::vector<std::string> ids = distinctExternalIds(filedCopies_, ownedHere);
-    if (ids.empty()) {
-        // Give feedback rather than a silent no-op: nothing here is linked yet.
-        bulkStatus_->setText(tr("No linked cards to refresh — fetch a card's prices first."));
-        bulkStatus_->show();
-        return;
-    }
-    refreshPricesButton_->setEnabled(false);
-    bulkStatus_->setText(tr("Refreshing… 0/%1").arg(ids.size()));
-    bulkStatus_->show();
-    priceLookup_.refreshMany(ids);
 }
 
 void BinderView::openWishlist(int dexNumber, const QString& name) {

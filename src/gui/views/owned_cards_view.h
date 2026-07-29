@@ -29,6 +29,7 @@ class MediaService;
 class WishlistService;
 class PokemonDetailPanel;
 class EditCardCopyPage;
+class BulkRefreshController;
 class AddCardCopyPage;
 
 // GUI — the "My Cards" section: a flat, read-only inventory of every card copy the
@@ -112,10 +113,6 @@ private:
     // Push the in-window "Edit card" page for the selected copy (to change its image).
     void editSelectedCard();
     void openPrices(const QString& copyId);
-    // Manual "Refresh all prices": re-fetch every linked (non-Removed) copy in the inventory
-    // through the bounded-concurrency BulkPriceFetcher (chunked so it never bursts the API). A
-    // no-op while one is already running or nothing is linked.
-    void startBulkRefresh();
     // Push the in-window "Add a card" page for a species-free card (a Trainer/Energy
     // card that depicts no Pokémon) — the only place such a card can be recorded, since
     // the Pokémon browser's "Add copy" is always scoped to a species.
@@ -142,6 +139,7 @@ private:
     QPushButton* deleteButton_;   // "Delete permanently…" — enabled only for Removed copies
     QPushButton* refreshPricesButton_;  // "Refresh prices" — bulk re-fetch all linked copies
     QLabel* bulkStatus_;                // "Refreshing… n/m" progress (hidden when idle)
+    BulkRefreshController* bulkRefresh_;  // wires the two to the shared bulk queue
     QLabel* countLabel_;
     // The copies backing the current rows, in display order (row i ⇄ loaded_[i]);
     // filtering only hides rows, so this stays aligned with the table.

@@ -29,6 +29,7 @@ class CardCopyService;
 class CardImageStore;
 class BinderService;
 class PokemonDetailPanel;
+class BulkRefreshController;
 
 // GUI — the "open binder" screen: the binder's guide as a list of its Pokémon,
 // each paired with its CollectionStatus, above a live partial-name search box.
@@ -100,10 +101,6 @@ private:
     // CollectionStatus, e.g. Missing↔Wished) and re-shows the same species/copy.
     void openWishlist(int dexNumber, const QString& name);
     void openPrices(const QString& copyId);
-    // Manual "Refresh all prices": re-fetch every Owned, linked copy filed here through the
-    // bounded-concurrency BulkPriceFetcher (chunked so it never bursts the API). A no-op while
-    // one is already running or nothing here is linked.
-    void startBulkRefresh();
     // Move the highlight to species `dex`'s row and re-show its copy `copyId` in the
     // panel — restoring the selection by IDENTITY after a refresh() rebuilt the rows.
     // Clears the panel if the species left the guide. Called by the edit-page return.
@@ -135,6 +132,7 @@ private:
     PokemonDetailPanel* detail_;
     QPushButton* refreshPricesButton_;  // "Refresh prices" — bulk re-fetch all filed cards
     QLabel* bulkStatus_;                 // "Refreshing… n/m" progress beside it (hidden when idle)
+    BulkRefreshController* bulkRefresh_;  // wires the two to the shared bulk queue
     std::vector<CardBinderEntry> entries_;
     // Header-driven sort state, re-applied on every refresh so it survives a
     // recompute. -1 = unsorted (keep the guide's dex order); see sortEntries().
