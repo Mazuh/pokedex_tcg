@@ -21,7 +21,7 @@ public:
         : copies_(copies), wishlist_(wishlist) {}
 
     // One entry per Pokémon in the binder's guide, ordered by dex number. The row
-    // set is the binder's region species (when it has a region) unioned with any
+    // set is every species across all of the binder's regions unioned with any
     // species that has a copy filed in it (so a filed card is never hidden). A
     // regionless binder therefore shows only its filed species. Each Pokémon's
     // status follows the first-match-wins CollectionStatus precedence.

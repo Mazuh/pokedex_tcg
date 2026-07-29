@@ -1,6 +1,9 @@
 #pragma once
 
 #include <QString>
+#include <QStringList>
+
+#include <vector>
 
 #include "core/domain/region.h"
 
@@ -25,6 +28,18 @@ inline QString regionLabel(Region region) {
         case Region::Paldea: return QStringLiteral("Paldea");
     }
     return QString();
+}
+
+// A binder's region set as one comma-joined label ("Kanto, Johto"), in the order
+// given (repositories keep it canonical). Empty for a region-less binder, which
+// the table cells then render as an em-dash. Shared by the binders table, the
+// binder combo, and My Cards so a multi-region binder reads the same everywhere.
+inline QString regionsLabel(const std::vector<Region>& regions) {
+    QStringList parts;
+    for (const Region region : regions) {
+        parts << regionLabel(region);
+    }
+    return parts.join(QStringLiteral(", "));
 }
 
 }  // namespace pokedex

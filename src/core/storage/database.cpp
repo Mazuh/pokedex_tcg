@@ -186,6 +186,22 @@ CREATE TABLE card_price_suppression (
 );
 )sql";
 
+// v10 → v11: a binder can now be scoped to MORE THAN ONE region, so the single
+// card_binder.region column becomes a card_binder_region join table (one row per
+// binder×region), mirroring wishlist_source. The existing single-region rows are
+// backfilled into it (blank/NULL regions contribute nothing), then the old column
+// is left in place — vestigial, never read again — since additive migrations don't
+// rewrite v1's table. ON DELETE CASCADE drops a removed binder's region rows.
+constexpr char kMigrationV11[] = R"sql(
+CREATE TABLE card_binder_region (
+  binder_id  TEXT NOT NULL REFERENCES card_binder(id) ON DELETE CASCADE,
+  region     TEXT NOT NULL,
+  PRIMARY KEY (binder_id, region)
+);
+INSERT INTO card_binder_region(binder_id, region)
+  SELECT id, region FROM card_binder WHERE region IS NOT NULL AND region <> '';
+)sql";
+
 }  // namespace
 
 Database::Database(const std::filesystem::path& path) {
@@ -297,6 +313,9 @@ void Database::migrate() {
         }
         if (from < 10) {
             exec(kMigrationV10);
+        }
+        if (from < 11) {
+            exec(kMigrationV11);
         }
         setUserVersion(kSchemaVersion);
     });

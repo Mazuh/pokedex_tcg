@@ -1,7 +1,7 @@
 #pragma once
 
-#include <optional>
 #include <string>
+#include <vector>
 
 #include "core/domain/region.h"
 #include "core/domain/types.h"
@@ -13,13 +13,16 @@ namespace pokedex {
 // It owns nothing directly; it is a lens. Copies point back at it via binderId,
 // and its per-Pokémon "guide" is computed lazily, never stored.
 //
-// pokemonRegion, when set, remembers the region the binder was initialized from
-// so the guide can list every species to capture — including ones the user owns
-// no copy of yet.
+// pokemonRegions is the set of regions the binder is scoped to — a binder may
+// span more than one (e.g. a "Kanto + Johto" album), so the guide lists every
+// species to capture across all of them (including ones the user owns no copy of
+// yet). An empty vector means the binder is region-less: its guide shows only the
+// species it already has cards filed for. Held as a vector kept in canonical
+// (enum) order with no duplicates — the app/storage layers enforce that shape.
 struct CardBinder {
     CardBinderId id;
     std::string name;
-    std::optional<Region> pokemonRegion;
+    std::vector<Region> pokemonRegions;
     Timestamp insertedAt;  // UTC, set by app
     Timestamp updatedAt;   // UTC, set by app
 };

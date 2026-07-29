@@ -19,6 +19,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "core/app/binder_guide_service.h"
 #include "core/app/binder_service.h"
@@ -28,7 +29,9 @@
 #include "gui/services/card_price_lookup_service.h"
 #include "gui/views/add_card_copy_page.h"
 #include "gui/views/back_button.h"
+#include "gui/views/backable_page_host.h"
 #include "gui/views/binder_combo.h"
+#include "gui/views/binder_edit_page.h"
 #include "gui/views/bulk_refresh_controller.h"
 #include "gui/views/card_copy_labels.h"
 #include "gui/views/condition_labels.h"
@@ -64,26 +67,33 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
       cardImages_(cardImages),
       binders_(binders) {
     auto* backButton = makeBackButton(this);
-    auto* heading = new QLabel(binderComboLabel(binder), this);
+    heading_ = new QLabel(binderComboLabel(binder), this);
 
     connect(backButton, &QPushButton::clicked, this, &BinderView::backRequested);
 
-    // "Refresh prices" (right of the top bar) bulk re-fetches every Owned, linked card filed
-    // here — a manual keep-updated action, paced so it never bursts the API. A muted progress
+    // "Edit binder" (right of the top bar, beside Refresh prices) opens the binder's
+    // edit screen in place — a dedicated page, not a modal (see the screens-over-modals
+    // convention). "Refresh prices" bulk re-fetches every Owned, linked card filed here —
+    // a manual keep-updated action, paced so it never bursts the API. A muted progress
     // label sits beside it while it runs.
     bulkStatus_ = new QLabel(this);
     bulkStatus_->setStyleSheet(QStringLiteral("color: gray;"));
     bulkStatus_->hide();
+    auto* editBinderButton = new QPushButton(tr("Edit binder"), this);
+    editBinderButton->setToolTip(tr("Change this binder's name or region."));
+    connect(editBinderButton, &QPushButton::clicked, this, &BinderView::openEditBinder);
     refreshPricesButton_ = new QPushButton(tr("Refresh prices"), this);
     refreshPricesButton_->setToolTip(
         tr("Re-fetch market prices for every linked card filed in this binder."));
 
-    // A top bar: Back on the left, the binder's name beside it, the bulk refresh on the right.
+    // A top bar: Back on the left, the binder's name beside it, Edit + bulk refresh on
+    // the right.
     auto* topBar = new QHBoxLayout;
     topBar->addWidget(backButton);
-    topBar->addWidget(heading);
+    topBar->addWidget(heading_);
     topBar->addStretch();
     topBar->addWidget(bulkStatus_);
+    topBar->addWidget(editBinderButton);
     topBar->addWidget(refreshPricesButton_);
 
     // The bulk refresh runs on the shared price service (global cap, one bulk at a time). The
@@ -715,6 +725,22 @@ void BinderView::openWishlist(int dexNumber, const QString& name) {
     });
     stack_->addWidget(page);
     stack_->setCurrentWidget(page);
+}
+
+void BinderView::openEditBinder() {
+    auto* page = new BinderEditPage(binders_, binder_);
+    // The page hands the committed name/regions straight back on save, so update
+    // binder_ (and the heading) in place — no storage re-read. On Back, refresh()
+    // rebuilds the guide from the updated binder_ (a region change alters which
+    // species it lists); on a plain cancel, binder_ is unchanged and refresh() is a
+    // harmless recompute.
+    connect(page, &BinderEditPage::saved, this,
+            [this](const QString& name, const std::vector<Region>& regions) {
+                binder_.name = name.toStdString();
+                binder_.pokemonRegions = regions;
+                heading_->setText(binderComboLabel(binder_));
+            });
+    pushBackablePage(stack_, page, [this]() { refresh(); });
 }
 
 void BinderView::reselectSpecies(int dex, const QString& copyId) {

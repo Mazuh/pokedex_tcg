@@ -106,6 +106,10 @@ private:
     // CollectionStatus, e.g. Missing↔Wished) and re-shows the same species/copy.
     void openWishlist(int dexNumber, const QString& name);
     void openPrices(const QString& copyId);
+    // Push a BinderEditPage for this binder onto the inner stack; Back pops it, then
+    // re-reads the binder (its name/region may have changed) — updating the heading
+    // and recomputing the guide, since a region change alters which species list.
+    void openEditBinder();
     // Move the highlight to species `dex`'s row and re-show its copy `copyId` in the
     // panel — restoring the selection by IDENTITY after a refresh() rebuilt the rows.
     // Clears the panel if the species left the guide. Called by the edit-page return.
@@ -131,6 +135,7 @@ private:
     CardImageStore& cardImages_;
     BinderService& binders_;
     QStackedWidget* stack_;
+    QLabel* heading_;  // the binder's name in the top bar; re-set after an edit
     QTableWidget* table_;
     QLabel* stats_;
     QLineEdit* search_;

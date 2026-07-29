@@ -2,9 +2,9 @@
 
 #include <gtest/gtest.h>
 
-#include <optional>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "core/domain/card_binder.h"
 #include "core/domain/card_condition.h"
@@ -46,11 +46,11 @@ constexpr int kMisdreavus = 200;  // Johto — used to test out-of-region filed 
 
 Timestamp at(const char* iso) { return pokedex::timestampFromIso(iso); }
 
-CardBinder makeBinder(std::string id, std::optional<Region> region) {
+CardBinder makeBinder(std::string id, std::vector<Region> regions) {
     CardBinder binder;
     binder.id = std::move(id);
     binder.name = "Test";
-    binder.pokemonRegion = region;
+    binder.pokemonRegions = std::move(regions);
     binder.insertedAt = at("2026-07-14T09:00:00Z");
     binder.updatedAt = at("2026-07-14T09:00:00Z");
     return binder;
@@ -102,7 +102,7 @@ struct GuideTest : ::testing::Test {
 };
 
 TEST_F(GuideTest, RegionBinderListsWholeRegionAllIncompleteWhenEmpty) {
-    const CardBinder binder = makeBinder("b1", Region::Kanto);
+    const CardBinder binder = makeBinder("b1", {Region::Kanto});
     binders.add(binder);
 
     const auto entries = guide.buildEntries(binder);
@@ -118,7 +118,7 @@ TEST_F(GuideTest, RegionBinderListsWholeRegionAllIncompleteWhenEmpty) {
 }
 
 TEST_F(GuideTest, IncomingCopyInBinderReadsIncoming) {
-    const CardBinder binder = makeBinder("b1", Region::Kanto);
+    const CardBinder binder = makeBinder("b1", {Region::Kanto});
     binders.add(binder);
     copies.add(makeCopy("c1", kPikachu, CardOwnership::Incoming, "b1"));
 
@@ -126,7 +126,7 @@ TEST_F(GuideTest, IncomingCopyInBinderReadsIncoming) {
 }
 
 TEST_F(GuideTest, OwnedCopyInBinderReadsCompleted) {
-    const CardBinder binder = makeBinder("b1", Region::Kanto);
+    const CardBinder binder = makeBinder("b1", {Region::Kanto});
     binders.add(binder);
     copies.add(makeCopy("c1", kPikachu, CardOwnership::Owned, "b1"));
 
@@ -134,7 +134,7 @@ TEST_F(GuideTest, OwnedCopyInBinderReadsCompleted) {
 }
 
 TEST_F(GuideTest, WishlistSourceReadsWished) {
-    const CardBinder binder = makeBinder("b1", Region::Kanto);
+    const CardBinder binder = makeBinder("b1", {Region::Kanto});
     binders.add(binder);
     addWish(kPikachu);
 
@@ -142,16 +142,16 @@ TEST_F(GuideTest, WishlistSourceReadsWished) {
 }
 
 TEST_F(GuideTest, OwnedCopyInAnotherBinderReadsElsewhere) {
-    const CardBinder binder = makeBinder("b1", Region::Kanto);
+    const CardBinder binder = makeBinder("b1", {Region::Kanto});
     binders.add(binder);
-    binders.add(makeBinder("b2", std::nullopt));
+    binders.add(makeBinder("b2", {}));
     copies.add(makeCopy("c1", kPikachu, CardOwnership::Owned, "b2"));
 
     EXPECT_EQ(statusOf(guide.buildEntries(binder), kPikachu), CollectionStatus::Elsewhere);
 }
 
 TEST_F(GuideTest, RemovedCopyInBinderReadsRemoved) {
-    const CardBinder binder = makeBinder("b1", Region::Kanto);
+    const CardBinder binder = makeBinder("b1", {Region::Kanto});
     binders.add(binder);
     copies.add(makeCopy("c1", kPikachu, CardOwnership::Removed, "b1"));
 
@@ -160,7 +160,7 @@ TEST_F(GuideTest, RemovedCopyInBinderReadsRemoved) {
 
 // Precedence: an arriving card outranks one already owned in the same binder.
 TEST_F(GuideTest, IncomingOutranksOwnedInSameBinder) {
-    const CardBinder binder = makeBinder("b1", Region::Kanto);
+    const CardBinder binder = makeBinder("b1", {Region::Kanto});
     binders.add(binder);
     copies.add(makeCopy("c1", kPikachu, CardOwnership::Owned, "b1"));
     copies.add(makeCopy("c2", kPikachu, CardOwnership::Incoming, "b1"));
@@ -170,9 +170,9 @@ TEST_F(GuideTest, IncomingOutranksOwnedInSameBinder) {
 
 // Precedence: Wished outranks Elsewhere.
 TEST_F(GuideTest, WishedOutranksElsewhere) {
-    const CardBinder binder = makeBinder("b1", Region::Kanto);
+    const CardBinder binder = makeBinder("b1", {Region::Kanto});
     binders.add(binder);
-    binders.add(makeBinder("b2", std::nullopt));
+    binders.add(makeBinder("b2", {}));
     copies.add(makeCopy("c1", kPikachu, CardOwnership::Owned, "b2"));  // elsewhere
     addWish(kPikachu);                                                 // wished
 
@@ -182,7 +182,7 @@ TEST_F(GuideTest, WishedOutranksElsewhere) {
 // A copy filed in the binder for an out-of-region species must still appear —
 // filed cards are never hidden by the region filter.
 TEST_F(GuideTest, OutOfRegionFiledCopyAppearsInRowSet) {
-    const CardBinder binder = makeBinder("b1", Region::Kanto);
+    const CardBinder binder = makeBinder("b1", {Region::Kanto});
     binders.add(binder);
     copies.add(makeCopy("c1", kMisdreavus, CardOwnership::Owned, "b1"));
 
@@ -191,9 +191,28 @@ TEST_F(GuideTest, OutOfRegionFiledCopyAppearsInRowSet) {
     EXPECT_EQ(statusOf(entries, kMisdreavus), CollectionStatus::Completed);
 }
 
+// A multi-region binder lists the union of every scoped region's species, in dex
+// order, deduplicated — Kanto (1..151) + Johto (152..251) = 251 rows.
+TEST_F(GuideTest, MultiRegionBinderListsUnionOfAllRegions) {
+    const CardBinder binder = makeBinder("b1", {Region::Kanto, Region::Johto});
+    binders.add(binder);
+
+    const auto entries = guide.buildEntries(binder);
+
+    ASSERT_EQ(entries.size(), 251u);
+    EXPECT_EQ(entries.front().pokemon.dexNumber, kBulbasaur);         // first Kanto
+    EXPECT_EQ(entries.back().pokemon.dexNumber, 251);                 // last Johto (Celebi)
+    EXPECT_TRUE(statusOf(entries, kMew).has_value());                // 151, Kanto
+    EXPECT_TRUE(statusOf(entries, kMisdreavus).has_value());         // 200, Johto
+    // Dex-ordered with no gaps or repeats across the union.
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        EXPECT_EQ(entries[i].pokemon.dexNumber, static_cast<int>(i) + 1);
+    }
+}
+
 // A regionless binder has no region species, so it shows only what is filed in it.
 TEST_F(GuideTest, RegionlessBinderShowsOnlyFiledSpecies) {
-    const CardBinder binder = makeBinder("b1", std::nullopt);
+    const CardBinder binder = makeBinder("b1", {});
     binders.add(binder);
     copies.add(makeCopy("c1", kBulbasaur, CardOwnership::Owned, "b1"));
 

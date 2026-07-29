@@ -2,6 +2,7 @@
 
 #include <QWidget>
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -23,10 +24,11 @@ class CardCopyService;
 class CardImageStore;
 
 // GUI — the Binders section of the main window: a table of the user's binders
-// (name + region) with New / Rename / Remove actions, and Open to view a
-// binder's guide. Opening a binder navigates in-place — this page swaps the
-// binder table for the binder guide inside its own QStackedWidget, and a Back
-// button returns — rather than spawning a separate window. It is a thin shell
+// (name + region) with New / Edit / Remove actions, and Open to view a
+// binder's guide. Opening a binder — and creating or editing one — navigates
+// in-place: this page swaps the binder table for the binder guide (or the
+// BinderEditPage) inside its own QStackedWidget, and a Back button returns —
+// rather than spawning a separate window or modal. It is a thin shell
 // over BinderService and BinderGuideService (the Qt-free verbs), translating
 // clicks into service calls and exceptions into message boxes, the same way
 // FirstRunDialog wraps the install service. The services outlive the page (all
@@ -60,9 +62,12 @@ private:
     // natural order (the initial, unsorted state).
     void sortBinders();
     void createBinder();
-    void renameSelected();
+    void editSelected();
     void removeSelected();
     void openSelected();
+    // Push a BinderEditPage onto the stack: create mode when `existing` is nullopt,
+    // edit mode otherwise. Back pops + disposes it and refreshes the list.
+    void openEditor(std::optional<CardBinder> existing);
     void updateButtonState();
 
     // The binder id of the current selection, or empty when nothing is selected.
@@ -82,7 +87,7 @@ private:
     // reload. -1 = unsorted (keep the service's order); see sortBinders().
     int sortColumn_ = -1;
     Qt::SortOrder sortOrder_ = Qt::AscendingOrder;
-    QPushButton* renameButton_;
+    QPushButton* editButton_;
     QPushButton* removeButton_;
     QPushButton* openButton_;
 

@@ -41,6 +41,14 @@ TEST(DatabaseTest, UpgradesAnExistingV1DatabaseThroughTheChain) {
         "ownership,condition,binder_id,comments,inserted_at,updated_at)"
         " VALUES('c1',6,'OBF','EN','125/197','Owned','NearMint',NULL,'',"
         "'2026-07-16T00:00:00Z','2026-07-16T00:00:00Z');");
+    // A v1 card_binder with a single region — the v11 step migrates it into the new
+    // card_binder_region join table, so stand one up to prove the backfill.
+    db.exec(
+        "CREATE TABLE card_binder(id TEXT PRIMARY KEY, name TEXT NOT NULL, region TEXT,"
+        " inserted_at TEXT NOT NULL, updated_at TEXT NOT NULL);");
+    db.exec(
+        "INSERT INTO card_binder(id,name,region,inserted_at,updated_at)"
+        " VALUES('b1','Kanto Journey','Kanto','2026-07-16T00:00:00Z','2026-07-16T00:00:00Z');");
     db.setUserVersion(1);
 
     db.migrate();
@@ -54,6 +62,12 @@ TEST(DatabaseTest, UpgradesAnExistingV1DatabaseThroughTheChain) {
     EXPECT_EQ(stmt.columnText(0), "");
     EXPECT_EQ(stmt.columnText(1), "");
     EXPECT_EQ(stmt.columnText(2), "");  // unlinked by default
+
+    // v11: the binder's single region was backfilled into card_binder_region.
+    Statement region(db, "SELECT region FROM card_binder_region WHERE binder_id = 'b1';");
+    ASSERT_TRUE(region.step());
+    EXPECT_EQ(region.columnText(0), "Kanto");
+    EXPECT_FALSE(region.step());  // exactly one region row
 }
 
 // The v2 → v3 upgrade adds card_copy.ref_name to an existing v2 file (one that
@@ -72,6 +86,11 @@ TEST(DatabaseTest, UpgradesAnExistingV2DatabaseByAddingCardName) {
         "ownership,condition,binder_id,comments,inserted_at,updated_at,ref_set_name)"
         " VALUES('c1',6,'OBF','EN','125/197','Owned','NearMint',NULL,'',"
         "'2026-07-16T00:00:00Z','2026-07-16T00:00:00Z','Obsidian Flames');");
+    // A card_binder table has existed since v1; the v11 step reads it, so stand up
+    // the (empty) table this fixture otherwise omits.
+    db.exec(
+        "CREATE TABLE card_binder(id TEXT PRIMARY KEY, name TEXT NOT NULL, region TEXT,"
+        " inserted_at TEXT NOT NULL, updated_at TEXT NOT NULL);");
     db.setUserVersion(2);
 
     db.migrate();
@@ -98,6 +117,11 @@ TEST(DatabaseTest, UpgradesAnExistingV8SetCachePreservingPokemontcgRows) {
         "INSERT INTO card_set_cache(id,ptcgo_code,name,printed_total)"
         " VALUES('sv3','OBF','Obsidian Flames',197);");
     db.exec("INSERT INTO cache_meta(key,value) VALUES('sets_fetched_at','2026-07-20T00:00:00Z');");
+    // A card_binder table has existed since v1; the v11 step reads it, so stand up
+    // the (empty) table this fixture otherwise omits.
+    db.exec(
+        "CREATE TABLE card_binder(id TEXT PRIMARY KEY, name TEXT NOT NULL, region TEXT,"
+        " inserted_at TEXT NOT NULL, updated_at TEXT NOT NULL);");
     db.setUserVersion(8);
 
     db.migrate();
@@ -128,9 +152,10 @@ TEST(DatabaseTest, UpgradesAnExistingV8SetCachePreservingPokemontcgRows) {
 TEST(DatabaseTest, UpgradesAnExistingV9DatabaseByAddingPriceSuppression) {
     Database db(":memory:");
     db.migrate();  // a fresh DB is already current (>= v10) — roll the stamp back to v9…
-    // …then drop the v10 table so we exercise the v10 step in isolation, as if this were a
-    // pre-v10 file.
+    // …then drop the tables the v10 and v11 steps add so we exercise them in isolation,
+    // as if this were a pre-v10 file.
     db.exec("DROP TABLE card_price_suppression;");
+    db.exec("DROP TABLE card_binder_region;");
     db.setUserVersion(9);
 
     db.migrate();

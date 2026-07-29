@@ -31,20 +31,21 @@ BinderService::IdGenerator BinderService::uuidGenerator() {
 BinderService::BinderService(CardBinderRepository& repo, Clock clock, IdGenerator idGenerator)
     : repo_(repo), clock_(std::move(clock)), idGenerator_(std::move(idGenerator)) {}
 
-CardBinder BinderService::create(std::string name, std::optional<Region> region) {
+CardBinder BinderService::create(std::string name, std::vector<Region> regions) {
     const Timestamp now = clock_();
     CardBinder binder;
     binder.id = idGenerator_();
     binder.name = requireName(name);
-    binder.pokemonRegion = region;
+    binder.pokemonRegions = std::move(regions);
     binder.insertedAt = now;
     binder.updatedAt = now;
     repo_.add(binder);
     return binder;
 }
 
-void BinderService::rename(const CardBinderId& id, std::string newName) {
-    repo_.updateName(id, requireName(newName), clock_());
+void BinderService::update(const CardBinderId& id, std::string name,
+                           std::vector<Region> regions) {
+    repo_.update(id, requireName(name), regions, clock_());
 }
 
 void BinderService::remove(const CardBinderId& id) { repo_.remove(id); }

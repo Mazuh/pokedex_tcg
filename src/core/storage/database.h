@@ -40,7 +40,7 @@ public:
     //        caches its set table beside pokemontcg's; old rows re-tagged 'pokemontcg'.
     //   v10 — card_price_suppression (external_card_id, provenance): a per-card, per-vendor
     //        "hide this vendor's price" that survives a Refresh and is dropped only by Clear.
-    static constexpr int kSchemaVersion = 10;
+    static constexpr int kSchemaVersion = 11;
 
     // Open (creating if absent) the database at `path`, or an in-memory database
     // when path == ":memory:". Throws StorageError on failure.

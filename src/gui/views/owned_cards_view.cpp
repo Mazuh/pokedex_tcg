@@ -331,8 +331,7 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
     for (const CardBinder& binder : binderList_) {
         binderInfo.emplace(binder.id,
                            BinderInfo{QString::fromStdString(binder.name),
-                                      binder.pokemonRegion ? regionLabel(*binder.pokemonRegion)
-                                                           : QString()});
+                                      regionsLabel(binder.pokemonRegions)});
     }
     const auto binderName = [&](const CardCopy& c) -> QString {
         if (!c.binderId) {

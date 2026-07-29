@@ -81,7 +81,13 @@ fallback] and renames the old fetch stamp; tcgdex populates on first price use; 
 vendor's price" — kept in its OWN table, deliberately apart from `card_price`, so a Refresh
 [which rewrites `card_price`] never disturbs a suppression and only Clear
 [`CardPriceCache::clear`, which now also deletes suppressions] drops it; see the vendor-suppression
-note below),
+note below; v11 added `card_binder_region` [`(binder_id, region)` PK, `ON DELETE CASCADE`], the
+join table making a binder's region **multivalued** — a binder can now be scoped to more than one
+region [e.g. a "Kanto + Johto" album]. The v1 `card_binder.region` column becomes vestigial [left in
+place, never read again — additive migrations don't rewrite v1's table]; the migration backfills each
+existing single-region row into the join table, and `CardBinderRepository` reads/writes only the join
+table thereafter [mirroring `wishlist_source`: `add`/`update` write the parent then the region rows in
+one transaction, `listAll` attaches them in a second pass sorted to canonical enum order]),
 so a fresh DB runs the whole chain and an existing one
 only the tail — bump `kSchemaVersion` and add a step (never edit `kSchemaV1`) when
 the schema changes. `storage/` holds
@@ -94,7 +100,9 @@ repo now carries the full CRUD surface — `add`, `find`, `listAll`, `update`
 the full CRUD surface: `save` (upsert parent + replace its source set), `find`,
 `listAll`, `remove`, and `wishedDexNums` (the "Wished" status read). `app/` holds
 `install_service`, `uuid` (`newUuidV4`, the shared id minter used by every
-service), `BinderService` (binder CRUD verbs), `BinderGuideService`
+service), `BinderService` (binder CRUD verbs — `create`/`update` both take a
+`std::vector<Region>` for the multivalued region set; `update` replaced the old
+name-only `rename`), `BinderGuideService`
 (the `buildBinderEntries` the inferred zone refers to), `PokemonBrowseService`
 (`listAll` → every catalog species paired with its owned-copy count, the unscoped
 Pokédex browser's data), `CardCopyService` (the copy verbs —
@@ -268,8 +276,9 @@ A `CardSearchQuery` is scoped EITHER by species
 `CardSearchService::searchByName` and `CardFinderPanel`'s name-search mode drive it. `gui/views/` holds the
 `MainWindow` shell (a macOS-style sidebar selecting sections in an outer
 `QStackedWidget`: Binders, Pokémon, My Cards, Wishlist), the first-run setup dialog,
-the binders section (`BindersPage`, a table with its own list ⇄ binder-guide stack),
-the new-binder editor, the reusable `BinderPickerDialog`, the binder guide view, the
+the binders section (`BindersPage`, a table with its own list ⇄ binder-guide/edit
+stack), the `BinderEditPage` (the create/edit-binder screen — see "GUI navigation"
+below), the reusable `BinderPickerDialog`, the binder guide view, the
 Pokémon browser (`PokemonListView`, which hosts an inner stack for the add-copy
 page), and two card-copy pages built from the same two shared blocks — the reusable
 `CardCopyForm` (the details pane: printed-identity/condition/ownership fields + binder
@@ -459,8 +468,18 @@ list/detail splits have room without the user having to maximize first. Prefer n
 in a `QStackedWidget` (as `BindersPage` does: binder table ⇄ binder guide, with
 a Back button) — over opening a second top-level window. A separate window or
 modal dialog is a deliberate, rare exception (the first-run setup, the
-new-binder form, and the About box are three), not the default for showing more
-detail. The one menu bar lives on `MainWindow` (attached via `layout->setMenuBar`,
+`BinderPickerDialog`, and the About box), not the default for showing more
+detail. **Prefer a dedicated screen (or, more rarely, an inline form) over a modal
+for CRUD.** Creating/editing a record is done on a full page pushed onto the host's
+`QStackedWidget` with a Back top bar — not a `QDialog` or a `QInputDialog`. Binder
+create/edit is the canonical example: the reusable `BinderEditPage`
+(`gui/views/binder_edit_page`, create + edit modes over `BinderService`; a name field
+plus a **checkbox per region** — the region set is multivalued) is pushed
+by **both** hosts — `BindersPage` (its "New…" / "Edit…" buttons) and `BinderView`
+(an "Edit binder" button beside "Refresh prices" in the guide's top bar) — and on
+Back each host re-reads the binder(s) from storage (`BinderView` also re-sets its
+heading and recomputes the guide, since a region change alters the species list).
+This replaced the old `BinderEditorDialog` modal and the rename `QInputDialog`. The one menu bar lives on `MainWindow` (attached via `layout->setMenuBar`,
 since the shell is a plain `QWidget`, not a `QMainWindow`); its single "About"
 `QAction` carries `QAction::AboutRole` so macOS relocates it into the application
 menu. Because that native menu is easy to miss, the same dialog is also reachable

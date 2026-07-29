@@ -21,11 +21,12 @@ namespace pokedex {
 // "— None —" entry carries an empty-string data value that maps back to nullopt, and
 // a binder is labelled "name — region" so two same-named binders stay distinct.
 
-// Display text for a binder in a combo — name, plus its region when it has one.
+// Display text for a binder in a combo — name, plus its region(s) when it has any.
 inline QString binderComboLabel(const CardBinder& binder) {
     const QString name = QString::fromStdString(binder.name);
-    if (binder.pokemonRegion) {
-        return QStringLiteral("%1 — %2").arg(name, regionLabel(*binder.pokemonRegion));
+    const QString regions = regionsLabel(binder.pokemonRegions);
+    if (!regions.isEmpty()) {
+        return QStringLiteral("%1 — %2").arg(name, regions);
     }
     return name;
 }

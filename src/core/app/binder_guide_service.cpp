@@ -68,13 +68,16 @@ std::vector<CardBinderEntry> BinderGuideService::buildEntries(const CardBinder& 
 
     const std::span<const Pokemon> catalog = pokemonCatalog();
 
-    // The ordered row set: the binder's region species (if any) unioned with any
-    // species that has a copy filed here. std::set keeps it dex-ordered and
-    // deduplicated (a filed in-region species appears once).
+    // The ordered row set: every species in any of the binder's regions, unioned
+    // with any species that has a copy filed here. std::set keeps it dex-ordered
+    // and deduplicated (a filed in-region species, or a species shared across two
+    // scoped regions, appears once).
     std::set<PokemonDexNum> dexNums;
-    if (binder.pokemonRegion) {
+    if (!binder.pokemonRegions.empty()) {
+        const std::set<Region> scoped(binder.pokemonRegions.begin(),
+                                      binder.pokemonRegions.end());
         for (const Pokemon& pokemon : catalog) {
-            if (pokemon.region == *binder.pokemonRegion) {
+            if (scoped.contains(pokemon.region)) {
                 dexNums.insert(pokemon.dexNumber);
             }
         }

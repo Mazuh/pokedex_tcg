@@ -9,19 +9,20 @@ using pokedex::Region;
 
 TEST(CardBinderTest, RegionlessByDefault) {
     CardBinder binder{};
-    EXPECT_FALSE(binder.pokemonRegion.has_value());
+    EXPECT_TRUE(binder.pokemonRegions.empty());
 }
 
-TEST(CardBinderTest, RemembersInitializingRegion) {
+TEST(CardBinderTest, RemembersScopedRegions) {
     CardBinder binder{
         .id = "binder-1",
-        .name = "Kanto Journey",
-        .pokemonRegion = Region::Kanto,
+        .name = "Johto Adventure",
+        .pokemonRegions = {Region::Kanto, Region::Johto},
     };
     EXPECT_EQ(binder.id, "binder-1");
-    EXPECT_EQ(binder.name, "Kanto Journey");
-    ASSERT_TRUE(binder.pokemonRegion.has_value());
-    EXPECT_EQ(*binder.pokemonRegion, Region::Kanto);
+    EXPECT_EQ(binder.name, "Johto Adventure");
+    ASSERT_EQ(binder.pokemonRegions.size(), 2u);
+    EXPECT_EQ(binder.pokemonRegions[0], Region::Kanto);
+    EXPECT_EQ(binder.pokemonRegions[1], Region::Johto);
 }
 
 }  // namespace

@@ -1,7 +1,6 @@
 #pragma once
 
 #include <functional>
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -21,7 +20,7 @@ public:
     using std::runtime_error::runtime_error;
 };
 
-// APP — the verbs of the CardBinder root: the create / rename / remove / list
+// APP — the verbs of the CardBinder root: the create / update / remove / list
 // use cases behind the binders screen. It owns the two things the domain and
 // storage layers deliberately do not: minting ids and reading the clock. Both
 // are injectable so tests are deterministic; the defaults use a random UUID and
@@ -34,14 +33,15 @@ public:
     explicit BinderService(CardBinderRepository& repo, Clock clock = systemClock(),
                            IdGenerator idGenerator = uuidGenerator());
 
-    // Create a binder, optionally initialized from a region. The name is trimmed;
-    // a blank name throws BinderError. Both audit stamps are set to now().
-    // Returns the persisted binder (with its freshly minted id).
-    CardBinder create(std::string name, std::optional<Region> region);
+    // Create a binder, optionally scoped to one or more regions (empty = none).
+    // The name is trimmed; a blank name throws BinderError. Both audit stamps are
+    // set to now(). Returns the persisted binder (with its freshly minted id).
+    CardBinder create(std::string name, std::vector<Region> regions);
 
-    // Rename an existing binder (name only — a binder's region is fixed at
-    // creation). Trims/validates the name and bumps updatedAt to now().
-    void rename(const CardBinderId& id, std::string newName);
+    // Edit an existing binder's name and region set. Trims/validates the name (a
+    // blank name throws BinderError) and bumps updatedAt to now(). Unlike the old
+    // rename, the regions can be changed here — the edit screen exposes both.
+    void update(const CardBinderId& id, std::string name, std::vector<Region> regions);
 
     // Stop tracking a binder. Its filed copies are untouched (their binder link
     // is cleared by the database), per the "remove doesn't delete cards" rule.
