@@ -68,6 +68,13 @@ QString speciesRegionLabel(PokemonDexNum dexNumber) {
 // can never drift apart.
 bool isRemoved(const CardCopy& copy) { return copy.ownership == CardOwnership::Removed; }
 
+// The table's auto-fit columns: every column that sizes to its content
+// (ResizeToContents) — all but the Stretch Set column (1) and the manually-capped
+// Interactive Binder column (8). The single source of truth for both the ctor's initial
+// resize-mode setup and repopulate()'s populate-time Interactive/restore dance, so the
+// two can't silently drift when a column is added, removed, or reordered.
+constexpr int kAutoFitColumns[] = {0, 2, 3, 4, 5, 6, 7, 9};
+
 }  // namespace
 
 OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
@@ -111,7 +118,7 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     // Pokémon keeps its width and, when very narrow, there is still overflow to scroll to.
     // Binder (col 8) is content-sized-then-capped in reload() so a long user-named binder
     // can't crowd the table; the short metadata columns size to content.
-    for (const int col : {0, 2, 3, 4, 5, 6, 7, 9}) {  // all but Set (slack) and Binder (capped)
+    for (const int col : kAutoFitColumns) {  // all but Set (slack) and Binder (capped)
         header->setSectionResizeMode(col, QHeaderView::ResizeToContents);
     }
     header->setSectionResizeMode(1, QHeaderView::Stretch);      // Set — flexible slack absorber
@@ -443,6 +450,40 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
     // bottom band reads as inactive history at a glance.
     const QBrush removedForeground = table_->palette().brush(QPalette::Disabled, QPalette::Text);
 
+    // Building a large My Cards is dominated by a Qt footgun: while a column is in
+    // ResizeToContents mode, EVERY setItem re-measures the column across all rows, so a
+    // full populate is ~O(rows²). Freeze painting and drop the auto-fit columns to
+    // Interactive for the loop, then restore ResizeToContents once at the end so the
+    // auto-fit runs in a single measurement pass instead of once per setItem. (Column 1
+    // is Stretch and column 8 is the manually-capped Interactive Binder column — neither
+    // re-measures per row, so both are left as-is.)
+    auto* header = table_->horizontalHeader();
+    table_->setUpdatesEnabled(false);
+    for (const int col : kAutoFitColumns) {
+        header->setSectionResizeMode(col, QHeaderView::Interactive);
+    }
+    // Restore auto-fit + repaint exactly once, and guarantee it runs even if the populate
+    // loop throws (e.g. std::bad_alloc on a huge collection) — otherwise the table would
+    // stay frozen with painting disabled until the next reload(). On the happy path run()
+    // is called explicitly below (before the filter/selection pass, so the widths measure
+    // over all rows, as they did before this guard existed); the destructor is only the
+    // exception backstop.
+    struct AutoFitRestore {
+        QTableWidget* table;
+        QHeaderView* header;
+        bool armed = true;
+        void run() {
+            for (const int col : kAutoFitColumns) {
+                header->setSectionResizeMode(col, QHeaderView::ResizeToContents);
+            }
+            table->setUpdatesEnabled(true);
+            armed = false;
+        }
+        ~AutoFitRestore() {
+            if (armed) run();
+        }
+    } autoFitRestore{table_, header};
+
     table_->setRowCount(static_cast<int>(loaded_.size()));
     haystacks_.assign(loaded_.size(), QString());
     std::vector<CardPrice> priceScratch;  // reused across rows (visiblePricesForCopy's contract):
@@ -535,6 +576,9 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
     if (table_->columnWidth(8) > freeTextCap) {
         table_->setColumnWidth(8, freeTextCap);
     }
+    // Restore auto-fit now that every cell is in place: one measurement pass over the
+    // finished table, not one per setItem. Then let the view repaint.
+    autoFitRestore.run();
     // Empty state: swap the table + search + row actions (and the card-image panel)
     // for a friendly hint when nothing is stored — otherwise the "select a card"
     // panel sits beside a "no cards yet" hint with nothing to select.
