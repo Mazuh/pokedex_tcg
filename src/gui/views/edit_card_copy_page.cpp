@@ -80,8 +80,11 @@ EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardPriceLookupSer
     form_ = new CardCopyForm(this);
     form_->setMaximumWidth(560);
     form_->loadCopy(copy_);
-    // Binder is editable — reassignment is supported here as it is elsewhere.
+    // Binder is editable — reassignment is supported here as it is elsewhere. An explicit
+    // "Remove from binder" button beside the combo makes unassigning discoverable rather
+    // than hiding it behind the "— None —" entry; it drives the same saveBinder() path.
     form_->setupBinderPicker(binders, copy_.binderId, /*enabled=*/true);
+    form_->setBinderRemovable(true);
     connect(form_, &CardCopyForm::binderChanged, this, &EditCardCopyPage::saveBinder);
     // Only the printed identity is locked; language/condition/ownership stay editable.
     form_->setReferenceEditable(false);

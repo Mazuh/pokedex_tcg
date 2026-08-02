@@ -58,6 +58,14 @@ public:
     void setupBinderPicker(const std::vector<CardBinder>& binders,
                            std::optional<CardBinderId> selected, bool enabled);
 
+    // Reveal an explicit "Remove from binder" button beside the binder combo (default
+    // hidden). Clicking it selects "— None —" and emits binderChanged(), so a host that
+    // persists the combo already handles the unassign — the button is a discoverable
+    // shortcut for the "pick — None —" gesture. Enabled only while a binder is actually
+    // selected (nothing to remove otherwise). The edit page opts in; the add flow leaves
+    // it hidden.
+    void setBinderRemovable(bool removable);
+
     // Toggle whether the printed-identity fields (card name, expansion, set, collector
     // number) can be edited. The physical-copy attributes (language, condition,
     // ownership), comments, and binder pick are always editable. Read-only is the edit
@@ -116,6 +124,10 @@ Q_SIGNALS:
     void binderChanged();
 
 private:
+    // Enable the "Remove from binder" button only while the combo is editable and a
+    // binder is actually selected — there is nothing to remove from "— None —".
+    void updateBinderRemoveEnabled();
+
     QLineEdit* cardName_;
     QLineEdit* expansionCode_;
     QLineEdit* setName_;
@@ -126,6 +138,7 @@ private:
     QComboBox* foil_;
     QComboBox* ownership_;
     QComboBox* binder_;
+    QPushButton* unassignBinder_;  // "Remove from binder", hidden until setBinderRemovable(true)
     QPlainTextEdit* comments_;
     QHBoxLayout* actions_;  // bottom row the host fills via addAction()
 };

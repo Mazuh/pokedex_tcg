@@ -197,8 +197,28 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     // activated() fires only on a USER pick (not the programmatic setCurrentIndex in
     // setupBinderPicker), so a host can persist a reassignment without echoing loads.
     binder_ = new QComboBox(this);
-    connect(binder_, &QComboBox::activated, this,
-            [this](int) { Q_EMIT binderChanged(); });
+    connect(binder_, &QComboBox::activated, this, [this](int) {
+        updateBinderRemoveEnabled();  // a manual pick may move to/from "— None —"
+        Q_EMIT binderChanged();
+    });
+
+    // Explicit "unassign" affordance beside the combo — hidden until a host opts in with
+    // setBinderRemovable(true) (the edit page). Clicking it selects "— None —" and drives
+    // the same binderChanged() path a manual pick would, so the host's persist logic is
+    // reused verbatim.
+    unassignBinder_ = new QPushButton(tr("Remove from binder"), this);
+    unassignBinder_->setVisible(false);
+    unassignBinder_->setEnabled(false);
+    connect(unassignBinder_, &QPushButton::clicked, this, [this]() {
+        // fillBinderCombo always inserts "— None —" first, so index 0 is the unassigned
+        // entry. The button is disabled while already there, so this is a no-op guard.
+        if (binder_->currentIndex() == 0) {
+            return;
+        }
+        binder_->setCurrentIndex(0);
+        updateBinderRemoveEnabled();
+        Q_EMIT binderChanged();
+    });
 
     comments_ = new QPlainTextEdit(this);
     comments_->setPlaceholderText(
@@ -251,7 +271,14 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     attributeRow(tr("Foil treatment"), foil_, foilInfoHtml(), tr("What the foil treatments mean"));
 
     form->addRow(tr("Ownership"), ownership_);
-    form->addRow(tr("Binder"), binder_);
+    // The binder combo pairs with an optional "Remove from binder" button (hidden unless
+    // setBinderRemovable(true)); a hidden button takes no layout space, so the add flow's
+    // row is unchanged.
+    auto* binderRow = new QHBoxLayout;
+    binderRow->setContentsMargins(0, 0, 0, 0);
+    binderRow->addWidget(binder_, 1);
+    binderRow->addWidget(unassignBinder_);
+    form->addRow(tr("Binder"), binderRow);
     form->addRow(tr("Comments"), comments_);
 
     actions_ = new QHBoxLayout;
@@ -279,6 +306,16 @@ void CardCopyForm::setupBinderPicker(const std::vector<CardBinder>& binders,
                                      std::optional<CardBinderId> selected, bool enabled) {
     fillBinderCombo(*binder_, binders, selected);
     binder_->setEnabled(enabled);
+    updateBinderRemoveEnabled();  // reflect the loaded selection on the Remove button
+}
+
+void CardCopyForm::setBinderRemovable(bool removable) {
+    unassignBinder_->setVisible(removable);
+    updateBinderRemoveEnabled();
+}
+
+void CardCopyForm::updateBinderRemoveEnabled() {
+    unassignBinder_->setEnabled(binder_->isEnabled() && binderId().has_value());
 }
 
 void CardCopyForm::setReferenceEditable(bool editable) {
