@@ -24,6 +24,7 @@
 #include "gui/views/card_copy_splitter.h"
 #include "gui/views/card_finder_panel.h"
 #include "gui/views/photo_upload.h"
+#include "gui/views/primary_button.h"
 #include "gui/views/rarity_from_catalog.h"
 #include "gui/views/scaled_pixmap.h"
 #include "gui/views/toast.h"
@@ -73,6 +74,7 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
     });
 
     submit_ = new QPushButton(tr("Add copy"), this);
+    applyPrimaryButtonStyle(submit_);  // the primary/commit action — accent + ✓
     connect(submit_, &QPushButton::clicked, this, &AddCardCopyPage::submitCopy);
     form_->addAction(submit_);
 

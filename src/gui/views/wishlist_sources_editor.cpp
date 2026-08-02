@@ -13,6 +13,7 @@
 #include <string>
 
 #include "core/app/wishlist_service.h"
+#include "gui/views/primary_button.h"
 #include "gui/views/source_label.h"
 #include "gui/views/toast.h"
 #include "gui/views/wishlist_edit.h"
@@ -39,6 +40,10 @@ WishlistSourcesEditor::WishlistSourcesEditor(WishlistService& wishlist, QWidget*
     input_->setClearButtonEnabled(true);
     auto* addButton = new QToolButton(this);
     addButton->setText(tr("Add"));
+    // The commit action of this little add-a-source form — give it the shared accent so
+    // it reads as the primary button. No icon: a default QToolButton is icon-only, which
+    // would replace the "Add" text.
+    applyPrimaryButtonStyle(addButton, /*withIcon=*/false);
 
     connect(input_, &QLineEdit::returnPressed, this, &WishlistSourcesEditor::addFromInput);
     connect(addButton, &QToolButton::clicked, this, &WishlistSourcesEditor::addFromInput);

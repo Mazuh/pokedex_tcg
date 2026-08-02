@@ -499,6 +499,23 @@ only reconfigures when `build.ninja` is absent. Display
 strings stay out of Qt-free core: a GUI-side helper maps enums to labels
 (`region_labels.h`, `status_labels.h`), kept separate from the storage tokens.
 
+**A form's primary/submit button gets the shared accent affordance.** Every
+in-window CRUD form's commit button — "Add copy" (`AddCardCopyPage`), "Save
+changes" (`EditCardCopyPage`), "Create binder"/"Save changes" (`BinderEditPage`),
+"Add" (`WishlistSourcesEditor`) — is routed through
+`applyPrimaryButtonStyle` (`gui/views/primary_button.h`) so the user can spot the
+button that commits the form at a glance instead of scanning a row of look-alike
+grey buttons. The helper paints the OS accent colour (from the palette's
+`Highlight`/`HighlightedText`, so it follows the system accent and the light/dark
+theme) plus a confirm "✓" icon, with all four states (normal/hover/pressed/disabled)
+spelled out — a stylesheet rather than a palette because a native macOS
+`QPushButton` ignores a palette background. Do the same for any **new** form's submit
+button (accepts any `QAbstractButton`; pass `withIcon=false` for a default icon-only
+`QToolButton`, where an icon would replace the text). It marks exactly ONE button per
+form — the commit action — never the secondary actions beside it (Upload a photo,
+"Same set as last…", Back), so the accent stays a reliable "this is the primary
+action" signal.
+
 **Long lists paginate by infinite scroll, not Prev/Next.** The default for a
 long, scannable list is incremental loading (`PokemonListView`): render a chunk,
 append the next as the user scrolls near the bottom (drive it off

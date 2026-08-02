@@ -23,6 +23,7 @@
 #include "gui/views/card_prices_summary.h"
 #include "gui/views/photo_upload.h"
 #include "gui/views/prices_edit_page.h"
+#include "gui/views/primary_button.h"
 #include "gui/views/scaled_pixmap.h"
 #include "gui/views/toast.h"
 
@@ -86,6 +87,7 @@ EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardPriceLookupSer
     form_->setReferenceEditable(false);
 
     saveButton_ = new QPushButton(tr("Save changes"), this);
+    applyPrimaryButtonStyle(saveButton_);  // the primary/commit action — accent + ✓
     saveButton_->setEnabled(false);  // enabled only once an editable field diverges
     connect(saveButton_, &QPushButton::clicked, this, &EditCardCopyPage::saveDetails);
     form_->addAction(saveButton_);

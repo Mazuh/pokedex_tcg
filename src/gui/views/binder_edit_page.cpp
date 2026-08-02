@@ -18,6 +18,7 @@
 #include "core/app/binder_service.h"
 #include "core/domain/region.h"
 #include "gui/views/back_button.h"
+#include "gui/views/primary_button.h"
 #include "gui/views/region_labels.h"
 #include "gui/views/toast.h"
 
@@ -96,6 +97,7 @@ void BinderEditPage::build(const std::optional<CardBinder>& existing) {
     auto* submitButton =
         new QPushButton(editing ? tr("Save changes") : tr("Create binder"), this);
     submitButton->setDefault(true);
+    applyPrimaryButtonStyle(submitButton);  // the primary/commit action — accent + ✓
     connect(submitButton, &QPushButton::clicked, this, &BinderEditPage::submit);
     // Enter in the name field submits, the usual single-field form gesture.
     connect(nameEdit_, &QLineEdit::returnPressed, this, &BinderEditPage::submit);
