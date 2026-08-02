@@ -6,6 +6,7 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QShowEvent>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QString>
@@ -256,7 +257,9 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(stack_);
 
-    refresh();  // compute the guide and populate the table for the first time
+    // No load here: showEvent runs refresh() when the page is first shown (and on every
+    // tab return), so the guide always reflects current state without a redundant load at
+    // construction. Mirrors OwnedCardsView.
 }
 
 void BinderView::refresh() {
@@ -291,6 +294,16 @@ void BinderView::refresh() {
     loadCachedPrices();  // one batched cache read feeding both the header total and the rows
     updateStats(filedCopies_);
     repopulate();
+}
+
+void BinderView::showEvent(QShowEvent* event) {
+    QWidget::showEvent(event);
+    // Reflect any copy or wishlist change made in another section (the Pokémon browser or
+    // My Cards) since this was last shown — e.g. a Gastly copy moved between binders, which
+    // otherwise left the guide stale on tab return. repopulate() restores the selection by
+    // identity, so refreshing unconditionally still keeps the user's place. Mirrors
+    // OwnedCardsView.
+    refresh();
 }
 
 void BinderView::updatePricesFor(const QString& externalCardId) {

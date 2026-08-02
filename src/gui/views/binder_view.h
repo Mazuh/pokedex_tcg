@@ -55,6 +55,16 @@ Q_SIGNALS:
     // navigates back to the binder list and disposes of this view.
     void backRequested();
 
+protected:
+    // Re-read the guide whenever this page is (re-)shown so a copy OR wishlist source
+    // edited/moved/removed in another section (the Pokémon browser or My Cards) isn't
+    // left stale here — both feed a species' CollectionStatus and the row's printed
+    // columns. refresh() → repopulate() restores the selection by identity, so the user's
+    // place survives the rebuild. Mirrors OwnedCardsView::showEvent; the binder guide was
+    // the one section that lacked this and so showed stale data on tab return. This is
+    // also the guide's only load (there is no load in the ctor — the first show does it).
+    void showEvent(QShowEvent* event) override;
+
 private:
     // (Re)compute the guide's entries from the source of truth and rebuild the table
     // (via repopulate()). Run once on construction and again after a copy is added
