@@ -194,6 +194,20 @@ one active affordance is the inline Fetch/Refresh, which drives the **shared
 `gui/views/CardPriceFetchController`** — the fetch/resolve/link state machine BOTH this summary
 and the management panel use, so the inline button gets the same invisible resolve-and-link
 (first fetch links an unlinked copy; a legacy pre-tcgdex id is re-resolved) and never dead-ends.
+The controller has two entry points: `fetch()` (the MANUAL Fetch/Refresh — always hits the wire,
+ignoring the TTL, an explicit "get the latest") and `autoFetch()` (the AUTOMATIC on-add fetch —
+same resolve/link, but skips the network when the card's cached prices are still fresh
+[`CardPriceLookupService::pricesFresh`, a 24h window], so a booster's repeated same-card adds
+don't each re-hit the free API). **A new copy auto-fetches its prices on add**: `AddCardCopyPage`
+(which now takes the `CardPriceLookupService`) spawns a fire-and-forget `CardPriceFetchController`
+parented to the app-wide price service (NOT the page, which the host disposes on Back), calls
+`autoFetch()`, and lets it self-delete on completion — so the user no longer presses Fetch after
+every add. Because the page is gone by the time a COLD tcgdex set table finishes resolving, the
+controller's `cardLinked` is relayed up as the app-wide `CardPriceLookupService::copyAutoLinked`
+signal; every owned-copy host (`OwnedCardsView`, `PokemonListView`, `BinderView`) connects it to
+write the resolved id into its in-memory copy vector/buckets (the same `applyLinkedCardTo…` its
+panel `copyLinked` uses), so the auto-fetch's follow-up `pricesReady` isn't dropped by the host's
+`anyCopyLinkedTo` guard and the Prices column fills in.
 A fetch that links the copy is relayed up via `copyLinked` (hence the summary needs
 `CardCopyService` for the controller). Its Manage button emits `managePricesRequested(copyId)`,
 which the host turns into a push of `gui/views/PricesEditPage` (Back bar + card heading) — the
@@ -287,7 +301,16 @@ action row) and the reusable `CardFinderPanel` (the set-scoped search + infinite
 printings list + preview; reports picks via signals, knows nothing of forms/copies,
 and exposes `setPreviewFooter()` for a host action under the picture). The
 `AddCardCopyPage` assembles them editable (finder pick autofills the form; submit
-creates a copy); the `EditCardCopyPage` assembles them read-only-but-comments (a
+creates a copy). It carries a **"Reuse last info from “<card>”"** button (session-static
+`LastAdded`, labelled with the last add's card/species name) for the same-booster flow:
+it prefills only what the card search can't supply itself — the comment (into an empty box
+only), language, and condition — and writes the last **set** onto the form while, in
+species mode, also **driving the finder search** from it (`CardFinderPanel::searchFor`) so
+the search does its natural job (list the set's printings, autofill the picked card's
+identity/rarity/image). Writing the set to the form as a baseline is deliberate: it's never
+lost if the search flakes/finds nothing (and pricing can still resolve from it), and
+resetting the per-card identity (name/collector) to just the set means a previously picked
+card can't be saved by mistake. The `EditCardCopyPage` assembles them read-only-but-comments (a
 copy's first edit surface — edit comments with an explicit "Save comments" via
 `CardCopyService::editDetails`, and change the image by re-searching the catalog
 ["Use this card's image", centered under the preview] or uploading a photo, staying
