@@ -18,6 +18,7 @@
 
 #include "core/app/binder_service.h"
 #include "core/app/card_copy_service.h"
+#include "gui/services/card_price_lookup_service.h"
 #include "gui/views/add_card_copy_page.h"
 #include "gui/views/copy_row_activation.h"
 #include "gui/views/edit_copy_page_host.h"
@@ -121,6 +122,13 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService&
     // An inline fetch that auto-links a copy: write the id back into the cached owned_ map so a
     // re-selection shows it linked rather than re-running the resolve.
     connect(detail_, &PokemonDetailPanel::copyLinked, this,
+            [this](const QString& copyId, const QString& externalCardId) {
+                applyLinkedCardToBuckets(owned_, copyId, externalCardId);
+            });
+    // A background auto-fetch (from adding a copy) resolved that copy's link after refresh() had
+    // already rebuilt owned_ — write the id in so the auto-fetch's pricesReady isn't dropped by
+    // the anyCopyLinkedTo guard and the Prices column fills in.
+    connect(&priceLookup_, &CardPriceLookupService::copyAutoLinked, this,
             [this](const QString& copyId, const QString& externalCardId) {
                 applyLinkedCardToBuckets(owned_, copyId, externalCardId);
             });
@@ -339,8 +347,8 @@ void PokemonListView::activateRow(int row) {
 
 void PokemonListView::openAddCopy(int dexNumber, const QString& name) {
     // Unscoped browse: the binder picker is a free choice defaulting to "— None —".
-    auto* page =
-        new AddCardCopyPage(cardSearch_, cardCopies_, binders_, cardImages_, dexNumber, name);
+    auto* page = new AddCardCopyPage(cardSearch_, cardCopies_, priceLookup_, binders_,
+                                     cardImages_, dexNumber, name);
     // A newly added copy changes the Owned column; refresh so it's current.
     connect(page, &AddCardCopyPage::copyAdded, this, &PokemonListView::refresh);
     connect(page, &AddCardCopyPage::backRequested, this, [this, page]() {

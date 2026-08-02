@@ -19,6 +19,7 @@ namespace pokedex {
 
 class CardSearchService;
 class CardCopyService;
+class CardPriceLookupService;
 class BinderService;
 class CardImageStore;
 class CardFinderPanel;
@@ -65,7 +66,10 @@ class AddCardCopyPage : public QWidget {
     Q_OBJECT
 
 public:
-    // `search`, `copies`, `binders` and `cardImages` must outlive this page.
+    // `search`, `copies`, `priceLookup`, `binders` and `cardImages` must outlive this
+    // page. `priceLookup` is the app-wide price transport: on a successful add the page
+    // kicks off a best-effort background price fetch for the new copy (resolve → link →
+    // fetch), so the user no longer has to press Fetch by hand after every add.
     // `dexNumber` set → scoped to that species (its printings drive the finder and the
     // created copy names the species); nullopt → species-free (the finder searches by
     // card name and the copy depicts no Pokémon). `speciesName` is shown in the heading
@@ -74,8 +78,9 @@ public:
     // there and the user can't repick) — opening from within a binder. When nullopt the
     // picker is a free choice defaulting to "— None —".
     AddCardCopyPage(CardSearchService& search, CardCopyService& copies,
-                    BinderService& binders, CardImageStore& cardImages,
-                    std::optional<PokemonDexNum> dexNumber, const QString& speciesName,
+                    CardPriceLookupService& priceLookup, BinderService& binders,
+                    CardImageStore& cardImages, std::optional<PokemonDexNum> dexNumber,
+                    const QString& speciesName,
                     std::optional<CardBinderId> lockedBinder = std::nullopt,
                     QWidget* parent = nullptr);
 
@@ -103,6 +108,7 @@ private:
     bool isDirty() const;                      // has the user entered anything worth confirming?
 
     CardCopyService& copies_;
+    CardPriceLookupService& priceLookup_;  // app-wide price transport for the auto-fetch on add
     CardImageStore& cardImages_;
     std::optional<PokemonDexNum> dexNumber_;  // nullopt → species-free card
     QString speciesName_;  // for the success toast, which shows after the page is gone

@@ -235,6 +235,13 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
             [this](const QString& copyId, const QString& externalCardId) {
                 applyLinkedCardToVector(loaded_, copyId, externalCardId);
             });
+    // A background auto-fetch (from adding a copy) resolved that copy's link after this view
+    // had already reloaded — write the id into loaded_ so the auto-fetch's pricesReady (next)
+    // isn't dropped by the anyCopyLinkedTo guard above and the Prices column fills in.
+    connect(&priceLookup_, &CardPriceLookupService::copyAutoLinked, this,
+            [this](const QString& copyId, const QString& externalCardId) {
+                applyLinkedCardToVector(loaded_, copyId, externalCardId);
+            });
     // When a price fetch (from the inspector) lands for a card in this inventory, re-read
     // the price cache and rebuild the rows so the Prices column fills in — mirroring the
     // binder guide. The lookup service is app-wide, so a fetch for a card we don't hold
@@ -891,8 +898,8 @@ void OwnedCardsView::addNewCard() {
     // Species-free (dexNumber = nullopt): the finder searches by card name and the copy
     // depicts no Pokémon. Free binder choice (no locked binder). Reuses the same in-
     // window push/pop idiom as editSelectedCard.
-    auto* page = new AddCardCopyPage(cardSearch_, copies_, binders_, images_, std::nullopt,
-                                     /*speciesName=*/QString());
+    auto* page = new AddCardCopyPage(cardSearch_, copies_, priceLookup_, binders_, images_,
+                                     std::nullopt, /*speciesName=*/QString());
     stack_->addWidget(page);
     const auto pop = [this, page]() {
         stack_->setCurrentIndex(0);

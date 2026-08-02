@@ -44,7 +44,7 @@ CardPriceFetchController::CardPriceFetchController(CardPriceLookupService& looku
         // The set table is unavailable. If the copy already carries an id, fetch it as a best
         // effort; otherwise there is nothing to look up.
         if (!externalCardId_.isEmpty()) {
-            lookup_.fetch(externalCardId_);
+            issueFetch();
             return;
         }
         fetching_ = false;
@@ -58,6 +58,7 @@ void CardPriceFetchController::setCopy(const CardCopy& copy) {
     externalCardId_ = QString::fromStdString(copy.externalCardId);
     copyRemoved_ = copy.ownership == CardOwnership::Removed;
     fetching_ = false;
+    autoMode_ = false;
     awaitingSets_ = false;
     triedSetRefresh_ = false;
 }
@@ -68,6 +69,7 @@ void CardPriceFetchController::clearCopy() {
     externalCardId_.clear();
     copyRemoved_ = false;
     fetching_ = false;
+    autoMode_ = false;
     awaitingSets_ = false;
     triedSetRefresh_ = false;
 }
@@ -85,6 +87,15 @@ bool CardPriceFetchController::canResolve() const {
 
 bool CardPriceFetchController::canFetch() const {
     return canResolve() || !externalCardId_.isEmpty();
+}
+
+void CardPriceFetchController::autoFetch() {
+    // The on-add path: resolve/link as usual, but honour the price TTL (issueFetch) so a booster's
+    // repeated same-card adds don't each re-hit the API. autoMode_ persists for this controller's
+    // life (a fire-and-forget instance per add), so both the resolve-then-fetch and the
+    // already-linked branches see it.
+    autoMode_ = true;
+    fetch();
 }
 
 void CardPriceFetchController::fetch() {
@@ -107,11 +118,23 @@ void CardPriceFetchController::fetch() {
     }
     if (!externalCardId_.isEmpty()) {
         // Not resolvable from what the copy records, but it already carries an id — fetch it
-        // directly. An explicit user request for the latest, so hit the wire.
+        // directly (honouring the TTL in auto mode; hitting the wire for a manual Fetch).
         fetching_ = true;
         Q_EMIT statusMessage(tr("Fetching prices…"));
-        lookup_.fetch(externalCardId_);
+        issueFetch();
     }
+}
+
+void CardPriceFetchController::issueFetch() {
+    if (autoMode_ && lookup_.pricesFresh(externalCardId_)) {
+        // The automatic on-add fetch, but this card's cached prices are still fresh — read the
+        // cache instead of re-hitting the API (a manual Refresh, autoMode_ == false, always
+        // fetches). The copy is already linked, so its Prices fill from the cache.
+        fetching_ = false;
+        Q_EMIT pricesChanged();
+        return;
+    }
+    lookup_.fetch(externalCardId_);  // pricesReady → pricesChanged()
 }
 
 void CardPriceFetchController::resolveAndFetch() {
@@ -147,7 +170,7 @@ void CardPriceFetchController::resolveAndFetch() {
         externalCardId_ = *id;
         Q_EMIT cardLinked(QString::fromStdString(copyId_), externalCardId_);
     }
-    lookup_.fetch(externalCardId_);  // pricesReady → pricesChanged()
+    issueFetch();  // hit the wire, or (auto mode) read a still-fresh cache
 }
 
 }  // namespace pokedex

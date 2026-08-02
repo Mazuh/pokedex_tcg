@@ -194,6 +194,14 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
                 applyLinkedCardToBuckets(ownedHere_, copyId, externalCardId);
                 applyLinkedCardToVector(filedCopies_, copyId, externalCardId);
             });
+    // A background auto-fetch (from adding a copy filed here) resolved that copy's link after
+    // refresh() had already rebuilt the guide — write the id into both stores so the auto-fetch's
+    // pricesReady (below) isn't dropped by the anyCopyLinkedTo guard and its row/value fill in.
+    connect(&priceLookup_, &CardPriceLookupService::copyAutoLinked, this,
+            [this](const QString& copyId, const QString& externalCardId) {
+                applyLinkedCardToBuckets(ownedHere_, copyId, externalCardId);
+                applyLinkedCardToVector(filedCopies_, copyId, externalCardId);
+            });
     // A price fetch (from the detail panel, for a card filed here) can raise the binder's
     // market-value total AND fills in that card's row in the Prices column; both read the
     // local price cache, so re-read it and refresh the header + rows when such a card's
@@ -661,8 +669,8 @@ void BinderView::activateRow(int row) {
 void BinderView::openAddCopy(int dexNumber, const QString& name) {
     // Scoped to this binder: the copy is filed here and the picker is locked to it.
     auto* page =
-        new AddCardCopyPage(cardSearch_, cardCopies_, binders_, cardImages_, dexNumber, name,
-                            binder_.id);
+        new AddCardCopyPage(cardSearch_, cardCopies_, priceLookup_, binders_, cardImages_,
+                            dexNumber, name, binder_.id);
     // Adding a copy recomputes the guide: the copy is filed in this binder (so it
     // becomes "Completed" here) and submit auto-returns, so refresh so the guide
     // isn't stale on the way back.

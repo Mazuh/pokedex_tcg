@@ -19,10 +19,12 @@
 #include "core/app/card_copy_service.h"
 #include "core/domain/card_reference.h"
 #include "gui/services/card_image_store.h"
+#include "gui/services/card_price_lookup_service.h"
 #include "gui/views/back_button.h"
 #include "gui/views/card_copy_form.h"
 #include "gui/views/card_copy_splitter.h"
 #include "gui/views/card_finder_panel.h"
+#include "gui/views/card_price_fetch_controller.h"
 #include "gui/views/photo_upload.h"
 #include "gui/views/primary_button.h"
 #include "gui/views/rarity_from_catalog.h"
@@ -35,11 +37,13 @@ namespace pokedex {
 AddCardCopyPage::LastAdded AddCardCopyPage::lastAdded_;
 
 AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& copies,
-                                 BinderService& binders, CardImageStore& cardImages,
+                                 CardPriceLookupService& priceLookup, BinderService& binders,
+                                 CardImageStore& cardImages,
                                  std::optional<PokemonDexNum> dexNumber, const QString& speciesName,
                                  std::optional<CardBinderId> lockedBinder, QWidget* parent)
     : QWidget(parent),
       copies_(copies),
+      priceLookup_(priceLookup),
       cardImages_(cardImages),
       dexNumber_(dexNumber),
       speciesName_(speciesName),
@@ -336,6 +340,34 @@ void AddCardCopyPage::submitCopy() {
     // refill them in one click — the same-booster flow. Kept in memory only.
     lastAdded_ = LastAdded{/*has=*/true, created.cardRef.expansionCode,
                            created.cardRef.setName, created.comments};
+
+    // Kick off a best-effort background price fetch for the new copy, so the user no
+    // longer has to press Fetch by hand after every add. The controller does the same
+    // invisible resolve → link → fetch a Fetch button drives, but it is parented to the
+    // app-wide price service (NOT this page, which the host disposes on the Back below),
+    // so the work completes even after the page is gone: it persists the tcgdex link (the
+    // host picks it up on its copyAdded reload) and, on completion, emits an app-wide
+    // pricesReady that fills in the Prices column. It self-deletes when settled. Started
+    // BEFORE copyAdded so a warm set table links the copy before the host reloads.
+    auto* autoFetch = new CardPriceFetchController(priceLookup_, copies_, &priceLookup_);
+    autoFetch->setCopy(created);
+    if (autoFetch->canFetch()) {
+        // Relay the resolved link app-wide so the host — which reloaded on copyAdded, possibly
+        // before a cold set table finished resolving — writes the id into its cached copy and the
+        // follow-up pricesReady fills the Prices column instead of being dropped by its guard.
+        connect(autoFetch, &CardPriceFetchController::cardLinked, &priceLookup_,
+                &CardPriceLookupService::copyAutoLinked);
+        // Settle either way (fetch done, or a failure with no user to tell) → self-delete.
+        connect(autoFetch, &CardPriceFetchController::pricesChanged, autoFetch,
+                &QObject::deleteLater);
+        connect(autoFetch, &CardPriceFetchController::fetchFailed, autoFetch,
+                &QObject::deleteLater);
+        autoFetch->autoFetch();  // honours the price TTL (a booster's re-adds don't re-fetch)
+    } else {
+        // Nothing to price (a copy with no set/number, e.g. a bare Trainer entry) — don't
+        // leave the unused controller parented to the app-wide service.
+        autoFetch->deleteLater();
+    }
 
     // Confirm before navigating away: the toast is parented to the window, so it
     // outlives this page once backRequested() disposes of it. A species-free card has

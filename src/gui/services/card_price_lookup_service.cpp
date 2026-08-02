@@ -11,6 +11,7 @@
 #include <chrono>
 #include <optional>
 
+#include "core/app/cache_ttl.h"
 #include "core/app/card_catalog_parse.h"
 #include "core/app/card_price_service.h"
 #include "core/app/card_set_cache.h"
@@ -84,6 +85,20 @@ CardPriceLookupService::CachedPrices CardPriceLookupService::cachedPrices(
 std::unordered_map<std::string, std::vector<CardPrice>> CardPriceLookupService::cachedMany(
     const std::vector<std::string>& externalCardIds) {
     return prices_.pricesForMany(externalCardIds);
+}
+
+bool CardPriceLookupService::pricesFresh(const QString& externalCardId) {
+    if (externalCardId.isEmpty()) {
+        return false;
+    }
+    const std::optional<Timestamp> fetchedAt = prices_.fetchedAt(externalCardId.toStdString());
+    if (!fetchedAt) {
+        return false;  // never fetched — an auto-fetch should populate it
+    }
+    // The same freshness rule (incl. the backward-clock guard) the caches share; a day matches
+    // the set-table TTL and is plenty for "was this card just priced by an earlier add".
+    constexpr auto kAutoFetchTtl = std::chrono::hours(24);
+    return cacheIsFresh(*fetchedAt, std::chrono::system_clock::now(), kAutoFetchTtl);
 }
 
 std::optional<QString> CardPriceLookupService::resolveTcgdexId(const CardReference& ref) const {

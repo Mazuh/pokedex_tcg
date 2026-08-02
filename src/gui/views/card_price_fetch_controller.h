@@ -54,8 +54,17 @@ public:
 public Q_SLOTS:
     // Resolve (when possible) → link if the id changed → fetch. A no-op while a fetch is in flight
     // or when nothing can be fetched. Emits statusMessage as it proceeds and, on completion,
-    // pricesChanged (success) or fetchFailed (terminal failure).
+    // pricesChanged (success) or fetchFailed (terminal failure). This is the MANUAL path (a
+    // Fetch/Refresh button): it always hits the wire, ignoring the price TTL — an explicit
+    // "get the latest".
     void fetch();
+
+    // The AUTOMATIC path (a price fetch kicked off when a copy is added, not by a button): same
+    // resolve → link, but it skips the network when the card's cached prices are still fresh
+    // (lookup.pricesFresh) rather than re-hitting a free API for a card just priced — the common
+    // case of adding several copies of one card from a booster. The link is still resolved and
+    // persisted (so the copy is priced from cache), and pricesChanged is emitted either way.
+    void autoFetch();
 
 Q_SIGNALS:
     // Transient progress for the status line ("Looking up this card…" / "Fetching prices…").
@@ -70,6 +79,9 @@ Q_SIGNALS:
 
 private:
     void resolveAndFetch();
+    // Issue the actual price fetch (the tail of both fetch() and resolveAndFetch()). In auto mode
+    // this skips the wire when the cached prices are still fresh, reporting the cache instead.
+    void issueFetch();
 
     CardPriceLookupService& lookup_;
     CardCopyService& copies_;
@@ -79,6 +91,7 @@ private:
     QString externalCardId_;         // empty == not yet linked
     bool copyRemoved_ = false;       // a soft-Removed copy — never resolve/fetch
     bool fetching_ = false;          // a Fetch (resolve and/or price fetch) is in flight
+    bool autoMode_ = false;          // this Fetch was the automatic on-add path (honours the TTL)
     bool awaitingSets_ = false;      // waiting on the tcgdex set table before resolveAndFetch()
     bool triedSetRefresh_ = false;   // already forced one set-table refresh this Fetch — don't loop
 };

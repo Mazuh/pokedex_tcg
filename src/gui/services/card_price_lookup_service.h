@@ -95,6 +95,13 @@ public:
     std::unordered_map<std::string, std::vector<std::string>> suppressedVendorsMany(
         const std::vector<std::string>& externalCardIds);
 
+    // Whether this card's cached prices are still within the auto-fetch freshness window (24h),
+    // so an AUTOMATIC fetch (kicked off when a copy is added) can skip the network and read the
+    // cache instead of re-hitting a free API for a card just priced. A manual Fetch/Refresh
+    // ignores this and always hits the wire. False when never fetched or the id is blank. No
+    // network. (Reads the fetch stamp, so not const.)
+    bool pricesFresh(const QString& externalCardId);
+
     // Whether the tcgdex set table is loaded, so resolveTcgdexId can map a copy's set to a
     // tcgdex set id. False until the first successful ensureTcgdexSets().
     bool tcgdexSetsReady() const { return tcgdexSetsLoaded_; }
@@ -131,6 +138,12 @@ Q_SIGNALS:
     // Fired when ensureTcgdexSets() finishes: ok=true when the set table is loaded (a
     // subsequent resolveTcgdexId can succeed), false when the fetch failed (offer a retry).
     void tcgdexSetsResolved(bool ok);
+    // A background auto-fetch (kicked off when a copy was added) resolved and persisted that
+    // copy's tcgdex link. A host that reloaded BEFORE the (async, cold-set-table) link landed
+    // connects this to write the id into its in-memory copy vector, so the auto-fetch's
+    // subsequent pricesReady isn't dropped by the host's "do I hold a copy with this id?" guard
+    // and the Prices column fills in. Relayed from the fire-and-forget controller's cardLinked.
+    void copyAutoLinked(const QString& copyId, const QString& externalCardId);
     // A bulk refresh (refreshMany) progressed / completed. `done`/`total` count settled cards.
     void bulkProgress(int done, int total);
     void bulkFinished();
