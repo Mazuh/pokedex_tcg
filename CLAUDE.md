@@ -297,7 +297,11 @@ Pokémon browser (`PokemonListView`, which hosts an inner stack for the add-copy
 page), and two card-copy pages built from the same two shared blocks — the reusable
 `CardCopyForm` (the details pane: printed-identity/condition/ownership fields + binder
 picker + comments, with `setReferenceEditable()` toggling read-only and a host-filled
-action row) and the reusable `CardFinderPanel` (the set-scoped search + infinite-scroll
+action row; the binder picker pairs the combo with an optional **"Remove from binder"**
+button beside it — hidden until `setBinderRemovable(true)` [only the edit page opts in], it
+just selects the combo's "— None —" entry and emits `binderChanged`, reusing the host's
+existing save-binder path rather than adding a second unassign verb, and is enabled only
+while a binder is actually selected) and the reusable `CardFinderPanel` (the set-scoped search + infinite-scroll
 printings list + preview; reports picks via signals, knows nothing of forms/copies,
 and exposes `setPreviewFooter()` for a host action under the picture). The
 `AddCardCopyPage` assembles them editable (finder pick autofills the form; submit
@@ -483,6 +487,17 @@ ctest --test-dir build --output-on-failure
   `POKEDEX_TCG_CONFIG_DIR=<throwaway dir>` so you exercise a scratch workspace,
   not the user's — two instances writing the same DB also contend on SQLite's
   file lock.
+
+**A card section re-reads on `showEvent`.** All three copy-backed sections —
+`OwnedCardsView`, `PokemonListView`, and `BinderView` (the binder guide) — override
+`showEvent` to re-load from storage when the section is (re-)shown, so a copy (or, for
+the guide, a wishlist source) edited/moved/removed in another section isn't left stale
+on tab return. `OwnedCardsView` and `BinderView` refresh unconditionally and rely on
+their `repopulate()`'s by-identity selection restore to keep the user's place;
+`PokemonListView` gates on `CardCopyService::revision()` because its ~1000-row rebuild is
+expensive. Don't gate the binder guide on `revision()`: its Status column also derives
+from the wishlist (which has no revision counter), and a revision stamp on a failed load
+would latch an empty guide. The guide has no ctor load — the first `showEvent` does it.
 
 **GUI navigation.** The app is a macOS-style shell: `MainWindow` has a left
 sidebar (a `QListWidget` source list, Finder/Settings-style) selecting sections
