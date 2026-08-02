@@ -89,14 +89,18 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
     connect(uploadButton_, &QPushButton::clicked, this, &AddCardCopyPage::uploadPhoto);
     form_->addAction(uploadButton_);
 
-    // Refill the set fields (expansion code + set name) and the comments from the last
-    // copy added this session — the common case of entering several cards from one
-    // booster, which share a set and often a note. Disabled until there is a last add
-    // to reuse (the static memory survives this page being disposed on each Back).
-    reuseButton_ = new QPushButton(tr("Same set as last…"), this);
+    // Prefill from the last copy added this session — the common case of entering
+    // several cards from one booster, which share a set and often a note/language.
+    // Naming the last card makes the button self-explanatory. Disabled until there is a
+    // last add to reuse (the static memory survives this page being disposed on Back).
+    const QString reuseLabel =
+        lastAdded_.has && !lastAdded_.displayName.isEmpty()
+            ? tr("Reuse last info from “%1”").arg(lastAdded_.displayName)
+            : tr("Reuse last card’s info");
+    reuseButton_ = new QPushButton(reuseLabel, this);
     reuseButton_->setToolTip(
-        tr("Copy the set name, expansion code, and comments from the last card you "
-           "added — handy when entering a whole booster."));
+        tr("Search this card's set and carry over the comments, language, and condition "
+           "from the last card you added — handy when entering a whole booster."));
     reuseButton_->setEnabled(lastAdded_.has);
     connect(reuseButton_, &QPushButton::clicked, this, &AddCardCopyPage::reuseLastFields);
     form_->addAction(reuseButton_);
@@ -167,21 +171,43 @@ void AddCardCopyPage::reuseLastFields() {
     if (!lastAdded_.has) {
         return;  // button is disabled in this case, but guard anyway
     }
-    // Fill only the shared-across-a-booster fields: the set (expansion code + set name)
-    // and the comments. The per-card identity (card name, collector number) and the
-    // physical attributes stay untouched — each card in the pack differs there.
-    CardReference ref = form_->cardReference();
-    ref.expansionCode = lastAdded_.expansionCode;
-    ref.setName = lastAdded_.setName;
-    form_->setCardReference(ref);
-    // Only carry the comment over into an empty box — never clobber a note the user has
-    // already typed for this card (nor blank it out when the last add had no comment).
+    // Carry over only the booster-shared bits the card search itself cannot supply: the
+    // comment (into an EMPTY box only — never clobber a note already typed, nor blank it
+    // when the last add had none), the language, and the condition.
     if (form_->comments().empty()) {
         form_->setComments(lastAdded_.comments);
     }
-    // setCardReference is silent, so drop a now-stale finder pick by hand (its preview
-    // no longer matches the freshly filled set).
+    form_->setLanguage(lastAdded_.language);
+    form_->setCondition(lastAdded_.condition);
+
+    // Reset the per-card printed identity to just the reused set: this is a NEW card from
+    // the same set, so its name/collector number are entered fresh. Writing the set onto
+    // the FORM (not only the finder search) matters two ways: (a) the set is never lost —
+    // if the finder search flakes or lists nothing and the user completes the card by
+    // hand, the set still saves, and pricing can resolve from it; (b) clearing the old
+    // name/collector means a previously picked card can't be saved by mistake (submit
+    // re-gates on the now-empty collector number). setCardReference is silent.
+    CardReference ref;
+    ref.expansionCode = lastAdded_.expansionCode;
+    ref.setName = lastAdded_.setName;
+    form_->setCardReference(ref);
+
+    // In species mode also drive the finder search from the set, so the card search does
+    // its natural job on top of the baseline above: list that set's printings and, once
+    // the user picks the card, autofill the full identity (name, collector number,
+    // rarity, image). Prefer the set name (how the finder's completer searches), falling
+    // back to the expansion code.
+    const QString setQuery = !lastAdded_.setName.empty()
+                                 ? QString::fromStdString(lastAdded_.setName)
+                                 : QString::fromStdString(lastAdded_.expansionCode);
+    if (dexNumber_ && !setQuery.isEmpty()) {
+        finder_->searchFor(setQuery);
+    }
+    // Drop any finder pick that no longer matches the reset form (covers name mode and
+    // the no-set case, where no fresh search ran to clear it; a driven search clears it
+    // on its own via onPrintingsReady).
     checkUnmatch();
+    updateSubmitEnabled();
 }
 
 void AddCardCopyPage::checkUnmatch() {
@@ -336,10 +362,17 @@ void AddCardCopyPage::submitCopy() {
             cardImages_.fetchAndSave(created.id, url);  // no-ops on a blank url
         }
     }
-    // Remember this copy's set + comments so the next add page (a fresh instance) can
-    // refill them in one click — the same-booster flow. Kept in memory only.
-    lastAdded_ = LastAdded{/*has=*/true, created.cardRef.expansionCode,
-                           created.cardRef.setName, created.comments};
+    // Remember this copy's set, physical attributes, comments, and a display name so the
+    // next add page (a fresh instance) can prefill in one click — the same-booster flow.
+    // The display name prefers the printed card name, falling back to the species name.
+    QString reuseName = QString::fromStdString(created.cardRef.name);
+    if (reuseName.isEmpty()) {
+        reuseName = speciesName_;
+    }
+    lastAdded_ = LastAdded{/*has=*/true,        created.cardRef.expansionCode,
+                           created.cardRef.setName, created.cardRef.language,
+                           created.condition,    created.comments,
+                           reuseName};
 
     // Kick off a best-effort background price fetch for the new copy, so the user no
     // longer has to press Fetch by hand after every add. The controller does the same

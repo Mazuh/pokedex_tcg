@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 
+#include "core/domain/card_condition.h"
 #include "core/domain/types.h"
 
 class QEvent;
@@ -120,19 +121,24 @@ private:
     CardCopyForm* form_;      // the shared details pane (editable, with a submit action)
     QPushButton* submit_;     // "Add copy" — lives in the form's action row
     QPushButton* uploadButton_;  // "Upload a photo…" — also in the form's action row
-    QPushButton* reuseButton_;   // "Same set as last…" — set + comments from the last add
+    QPushButton* reuseButton_;   // "Reuse last info from …" — see reuseLastFields()
     CardFinderPanel* finder_;  // the shared search field + printings list + preview
 
-    // Session-lived memory of the last successfully added copy's set fields and
-    // comments, so opening a fresh add page for the next card from the same booster can
-    // refill them in one click (the "Same set as last…" button). Static because each
-    // add is a brand-new page instance — it must outlive any one page. In-memory only:
-    // never persisted, so it resets when the app is closed.
+    // Session-lived memory of the last successfully added copy, so opening a fresh add
+    // page for the next card from the same booster can prefill in one click (the "Reuse
+    // last info from …" button — see reuseLastFields). We keep the set (to drive the
+    // finder search) plus the physical attributes the card search can't supply
+    // (language, condition) and the note; displayName labels the button. Static because
+    // each add is a brand-new page instance — it must outlive any one page. In-memory
+    // only: never persisted, so it resets when the app is closed.
     struct LastAdded {
         bool has = false;
         std::string expansionCode;
         std::string setName;
+        std::string language;
+        std::optional<CardCondition> condition;
         std::string comments;
+        QString displayName;  // the last card/species name, for the button label
     };
     static LastAdded lastAdded_;
 

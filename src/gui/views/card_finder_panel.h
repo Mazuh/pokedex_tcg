@@ -89,6 +89,14 @@ public Q_SLOTS:
     // longer matches the picked card. Emits selectionCleared().
     void clearSelection();
 
+    // Programmatically run a search for `query`, as if the user had typed it: a
+    // set code/name in species mode, a card name in name mode. Used by a host to
+    // prefill the finder (e.g. reusing the last card's set across a booster) so the
+    // search then does its natural job — list the printings and autofill the picked
+    // card. setText() alone would not search (it does not fire textEdited), so this
+    // kicks it explicitly; a query under 3 chars just seeds the field.
+    void searchFor(const QString& query);
+
 Q_SIGNALS:
     // A printing was picked: its autofill payload (the preview image follows once it
     // loads — read it from selectedPreview()).

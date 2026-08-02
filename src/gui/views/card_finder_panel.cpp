@@ -343,6 +343,13 @@ void CardFinderPanel::clearPreview() {
 
 void CardFinderPanel::clearSelection() { clearPreview(); }
 
+void CardFinderPanel::searchFor(const QString& query) {
+    // Mirror what a user keystroke would do: put the text in the field, then run the
+    // same gate onSearchTextChanged applies (3+ chars → search, else clear + hint).
+    searchField_->setText(query);
+    onSearchTextChanged(query);
+}
+
 void CardFinderPanel::renderPreview() {
     // Called on selection changes and on resize, so it rescales whatever is showing.
     if (!previewPixmap_.isNull()) {

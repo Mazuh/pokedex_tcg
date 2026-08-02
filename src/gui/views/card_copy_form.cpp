@@ -324,30 +324,38 @@ void CardCopyForm::setComments(const std::string& comments) {
     comments_->setPlainText(QString::fromStdString(comments));
 }
 
+void CardCopyForm::setLanguage(const std::string& language) {
+    // Same resolution as loadCopy: blank → the "— None —" entry; a known code selects
+    // it; an unknown code is added as a selectable item so it round-trips.
+    const QString code = QString::fromStdString(language);
+    if (code.isEmpty()) {
+        language_->setCurrentIndex(0);
+        return;
+    }
+    int li = language_->findData(code);
+    if (li < 0) {
+        language_->addItem(code, code);
+        li = language_->count() - 1;
+    }
+    language_->setCurrentIndex(li);
+}
+
+void CardCopyForm::setCondition(std::optional<CardCondition> condition) {
+    const int data = condition ? static_cast<int>(*condition) : -1;
+    const int index = condition_->findData(data);
+    condition_->setCurrentIndex(index >= 0 ? index : 0);  // unmapped → "— None —"
+}
+
 void CardCopyForm::loadCopy(const CardCopy& copy) {
     cardName_->setText(QString::fromStdString(copy.cardRef.name));
     expansionCode_->setText(QString::fromStdString(copy.cardRef.expansionCode));
     setName_->setText(QString::fromStdString(copy.cardRef.setName));
     collectorNumber_->setText(QString::fromStdString(copy.cardRef.collectorNumber));
-    const QString language = QString::fromStdString(copy.cardRef.language);
-    if (language.isEmpty()) {
-        language_->setCurrentIndex(0);  // the noneOptionLabel() entry
-    } else {
-        int li = language_->findData(language);
-        if (li < 0) {
-            // The stored code isn't one this build lists (a row written by a newer
-            // version, or a code since dropped from languageCodes). Add it as a
-            // selectable item so loading + saving round-trips it — otherwise it would
-            // fall to the blank "— None —" item and the first save (even a
-            // comment-only one, since the page then reads dirty) would erase it.
-            language_->addItem(language, language);
-            li = language_->count() - 1;
-        }
-        language_->setCurrentIndex(li);
-    }
-    const int cd = copy.condition ? static_cast<int>(*copy.condition) : -1;
-    const int ci = condition_->findData(cd);
-    condition_->setCurrentIndex(ci >= 0 ? ci : 0);
+    // Delegate the language / condition / rarity resolution to the single setters (as this
+    // already does for rarity), so an unknown-code / unmapped-value rule lives in exactly
+    // one place and the edit and reuse paths can't resolve the same value differently.
+    setLanguage(copy.cardRef.language);
+    setCondition(copy.condition);
     setRarity(copy.rarity);
     const int fd = copy.foil ? static_cast<int>(*copy.foil) : -1;
     const int fi = foil_->findData(fd);

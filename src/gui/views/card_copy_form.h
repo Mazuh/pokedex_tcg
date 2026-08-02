@@ -76,6 +76,14 @@ public:
     // Overwrite the comments box (e.g. reusing the last card's note across a booster).
     void setComments(const std::string& comments);
 
+    // Pre-fill the language / condition pickers (e.g. reusing the last card's physical
+    // attributes across a booster — the card search can't supply these). Silent (uses
+    // setCurrentIndex, so no detailsChanged()); an empty/unset value or an unmapped code
+    // falls back to "— None —" (setLanguage adds an unknown code so it round-trips, as
+    // loadCopy does). The user can still change either.
+    void setLanguage(const std::string& language);
+    void setCondition(std::optional<CardCondition> condition);
+
     // Fill every stored field from an existing copy (the edit case): identity,
     // language, condition, rarity, foil, ownership, and comments. Does not touch the
     // binder combo (use setupBinderPicker for that). Silent — emits no signals.
