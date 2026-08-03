@@ -11,10 +11,12 @@ class QPushButton;
 namespace pokedex {
 
 // GUI — the Settings section of the main window: the app's configuration screen.
-// Today it holds two settings — the collection *workspace* folder and the *default
-// card language* pre-selected when adding a new copy — persisted to (and loaded from)
-// the same `config` file the app already uses (storage/workspace.h, a small key=value
-// store). More settings can join them as new rows on the same form.
+// Today it holds three settings — the collection *workspace* folder, the *default
+// card language* pre-selected when adding a new copy, and the *AI assistant API key*
+// — persisted to (and loaded from) the same `config` file the app already uses
+// (storage/workspace.h, a small key=value store). More settings can join them as new
+// rows on the same form. (The API-key field is deliberately provider-neutral: it
+// stores whatever the active assistant provider needs, read at call time.)
 //
 // The whole page is one form applied MANUALLY: edits are staged in the fields and
 // only committed when the user presses "Save changes" (the primary button). This
@@ -63,12 +65,14 @@ private:
 
     QLineEdit* workspaceEdit_;
     QComboBox* languageEdit_;
+    QLineEdit* assistantKeyEdit_;
     QPushButton* saveButton_;
     QLabel* dirtyHint_;
     // The values last written/loaded — the clean baselines the fields are compared
     // against to decide dirtiness.
     QString savedWorkspace_;
     QString savedLanguage_;
+    QString savedAssistantKey_;
 };
 
 }  // namespace pokedex

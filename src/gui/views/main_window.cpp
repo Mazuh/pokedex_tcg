@@ -14,6 +14,7 @@
 #include <QWidget>
 
 #include "gui/views/about_dialog.h"
+#include "gui/views/assistant_prompt_dialog.h"
 #include "gui/views/binders_page.h"
 #include "gui/views/owned_cards_view.h"
 #include "gui/views/pokemon_list_view.h"
@@ -27,8 +28,8 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
                        PokemonBrowseService& browse, WishlistService& wishlist,
                        MediaService& media, CardSearchService& cardSearch,
                        CardPriceLookupService& priceLookup, CardCopyService& cardCopies,
-                       CardImageStore& cardImages, const QString& collectionPath,
-                       QWidget* parent)
+                       CardImageStore& cardImages, AssistantService& assistant,
+                       const QString& collectionPath, QWidget* parent)
     : QWidget(parent) {
     setWindowTitle(tr("Pokedex TCG"));
     resize(900, 600);
@@ -37,6 +38,12 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
     // item (macOS's application menu) and the in-window sidebar footer button, so
     // the About box is reachable without relying on the native menu bar.
     const auto showAbout = [this]() { AboutDialog(this).exec(); };
+
+    // Opens the AI-assistant demo, parented to the window. Shared by the sidebar
+    // footer button and the Tools menu action.
+    const auto showAssistant = [this, &assistant]() {
+        AssistantPromptDialog(assistant, this).exec();
+    };
 
     // The left sidebar: a macOS-style source list whose rows select the section
     // shown on the right. No frame, so it reads as a pane rather than a boxed list.
@@ -76,12 +83,22 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
         " color: palette(text); }"
         "QPushButton:hover { background: rgba(128, 128, 128, 0.20); }");
 
+    // A sibling footer action opening the AI-assistant demo, styled to match About.
+    auto* assistantButton = new QPushButton(tr("✦  AI Assistant"));
+    assistantButton->setFlat(true);
+    assistantButton->setCursor(Qt::PointingHandCursor);
+    assistantButton->setStyleSheet(
+        "QPushButton { border: none; text-align: left; padding: 14px 20px;"
+        " color: palette(text); }"
+        "QPushButton:hover { background: rgba(128, 128, 128, 0.20); }");
+
     // A hairline above the footer separates it from the source list.
     auto* footerDivider = new QFrame;
     footerDivider->setFrameShape(QFrame::HLine);
     footerDivider->setFrameShadow(QFrame::Plain);
     footerDivider->setStyleSheet("color: rgba(128, 128, 128, 0.35);");
     connect(aboutButton, &QPushButton::clicked, this, showAbout);
+    connect(assistantButton, &QPushButton::clicked, this, showAssistant);
 
     // Wrap the list + footer into one pane; the pane (not the list) now carries the
     // sidebar's width bounds so the splitter treats the whole column as one band.
@@ -93,6 +110,7 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
     sidebarLayout->setSpacing(0);
     sidebarLayout->addWidget(sidebar, 1);  // the list takes all the slack
     sidebarLayout->addWidget(footerDivider);
+    sidebarLayout->addWidget(assistantButton);
     sidebarLayout->addWidget(aboutButton);
 
     // Section order must match the sidebar row order above: a row selects the
@@ -176,6 +194,9 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
     // elsewhere it renders in-window under Help. The dialog is parented to the
     // window so it centers over it and shares its lifetime.
     auto* menuBar = new QMenuBar(this);
+    QMenu* toolsMenu = menuBar->addMenu(tr("Tools"));
+    QAction* assistantAction = toolsMenu->addAction(tr("AI Assistant…"));
+    connect(assistantAction, &QAction::triggered, this, showAssistant);
     QMenu* helpMenu = menuBar->addMenu(tr("Help"));
     QAction* aboutAction = helpMenu->addAction(tr("About Pokédex TCG"));
     aboutAction->setMenuRole(QAction::AboutRole);

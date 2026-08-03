@@ -13,25 +13,38 @@ namespace pokedex {
 // Q_LOGGING_CATEGORY would leave qCInfo filtered on some Qt builds).
 Q_LOGGING_CATEGORY(lcNet, "pokedex.net", QtInfoMsg)
 
-QNetworkReply* loggedGet(QNetworkAccessManager* nam, QNetworkRequest request) {
-    // Owned here so every outbound GET gets safe-redirect handling and no call
-    // site has to remember it.
+namespace {
+
+// Session-cumulative count per host, shared by every logged verb. GUI-thread only,
+// so a plain static is safe — no mutex. It answers "are we hammering some API": the
+// running total per host is right there on every line. Also stamps the safe-redirect
+// policy so no call site can forget it. Logs ONLY the URL (never headers/body), so a
+// secret carried in a header is never written out.
+void logCall(const char* method, QNetworkRequest& request) {
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                          QNetworkRequest::NoLessSafeRedirectPolicy);
 
     const QUrl url = request.url();
     const QString host = url.host();
 
-    // Session-cumulative count per host. GUI-thread only, so a plain static is
-    // safe — no mutex. It answers "are we hammering some API": the running total
-    // per host is right there on every line.
     static QHash<QString, int> callsByHost;
     const int count = ++callsByHost[host];
 
-    qCInfo(lcNet).noquote() << "GET" << url.toString(QUrl::PrettyDecoded)
+    qCInfo(lcNet).noquote() << method << url.toString(QUrl::PrettyDecoded)
                             << QStringLiteral("[%1: %2 calls this session]").arg(host).arg(count);
+}
 
+}  // namespace
+
+QNetworkReply* loggedGet(QNetworkAccessManager* nam, QNetworkRequest request) {
+    logCall("GET", request);
     return nam->get(request);
+}
+
+QNetworkReply* loggedPost(QNetworkAccessManager* nam, QNetworkRequest request,
+                          const QByteArray& body) {
+    logCall("POST", request);
+    return nam->post(request, body);
 }
 
 }  // namespace pokedex

@@ -340,8 +340,10 @@ shows a compact "Wishlist (N)" / "Wishlist (none)" button (reading the source co
 (`PokemonListView`, `BinderView`) turn that into a `WishlistEditPage` push, and on Back
 re-show the species so the counter refreshes (the binder guide also `refresh()`es, since
 a wishlist change can flip a species' `CollectionStatus` between Missing and Wished).
-The **Settings section** (`SettingsView`) is the app's configuration screen — today two
-settings: the collection **workspace folder** and the **default card language**, both loaded
+The **Settings section** (`SettingsView`) is the app's configuration screen — today three
+settings: the collection **workspace folder**, the **default card language**, and the **AI
+assistant API key** (a masked field; the provider secret, stored under the vendor-neutral
+config key `assistant_api_key` and read fresh per call so it applies live), all loaded
 from and saved to the `config` file the app already uses (`storage/workspace.h`). That file
 is now a tiny **`key=value` store** (`readConfigValue`/`writeConfigValue` over an internal
 load→map→write, one setting per line, `std::map`-sorted; every write *merges* so one setting
@@ -393,7 +395,26 @@ under the `pokedex.net` `QLoggingCategory` and bumps a per-host session counter 
 single place that sees and tallies every call we make to a free public API (answering "are we
 hammering some API"). Silence it with `QT_LOGGING_RULES="pokedex.net.info=false"`. Each service
 keeps its own `QNetworkAccessManager` (ownership/abort semantics unchanged); `loggedGet` only wraps
-the `get`. `gui/services/` holds `MediaService` (Pokémon artwork fetch+cache), `CardSearchService`
+the `get`. Its POST counterpart `loggedPost(nam, request, body)` (same chokepoint, for the AI
+assistant) shares the per-host tally and logs **only the URL** — never headers/body — so a secret
+carried in a request header never reaches the log.
+
+The **AI-assistant module** is a vendor-neutral LLM seam, mirroring the card-catalog seam. It is
+abstractly named so the provider (Gemini today) can be swapped by changing **one line in
+`main.cpp`** with no caller, transport, config key, or UI change: `core/app/ai_assistant.h` is the
+Qt-free `AiAssistant` interface + neutral DTOs (`AiPrompt`, `AiRequest`, `AiResult`) — it *builds*
+the HTTP request and *parses* the response (BOTH behind the interface, since both shapes are
+provider-specific), no I/O, headlessly testable; `core/app/gemini_assistant.*` is the sole
+Gemini-aware class (generateContent URL, JSON body, response layout; the API key rides the
+`x-goog-api-key` **header**, never the URL, so it can't leak to the log). The GUI transport
+`gui/services/AssistantService` (a QObject) reads the key from config at call time (so a Settings
+change applies live; missing key fails fast with a Settings hint), POSTs via `loggedPost`, and
+emits `answerReady`/`failed`. The demo `gui/views/AssistantPromptDialog` (a modal prompt/answer
+box, opened from the sidebar footer "✦ AI Assistant" and the Tools menu) exercises it.
+**Webcam card-scanning for autofill** (a future feature) was assessed but deliberately NOT built:
+Gemini's same endpoint accepts image input (`inline_data` base64 parts), so the HTTP layer already
+supports it and `AiPrompt` is left open to grow an image field — but capture (Qt Multimedia),
+encoding, and the autofill flow are all unbuilt. See `docs/ai-assistant.md`. `gui/services/` holds `MediaService` (Pokémon artwork fetch+cache), `CardSearchService`
 (card search transport — search results/thumbnails are **display/memory-only, never
 cached to disk**; the lone exception is the small, near-static set table, which — when a
 `CardSetCache` is injected — is loaded from disk on startup if younger than a 24h TTL

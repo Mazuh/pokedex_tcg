@@ -14,6 +14,7 @@ manage my physical card collection using local files.
 - Fetch a card's market prices on demand (via the tcgdex pricing aggregator), even for
   brand-new sets — resolved straight from the card's set and collector number.
 - Keep a wishlist of the cards and sources you're still after.
+- Ask a built-in AI assistant (Google Gemini) — optional, and only if you add a key.
 
 ## Instructions
 
@@ -91,6 +92,23 @@ you still get a `pokedex` command, no privileges required.
 
 Re-run `./install.sh` whenever you want that installed command to pick up the
 latest changes.
+
+### AI assistant (optional)
+
+The app has a small built-in AI assistant, opened from **✦ AI Assistant** in the
+sidebar (or the Tools menu). It is entirely optional: it does nothing until you paste
+an [API key](https://aistudio.google.com/app/api-keys) into **Settings → AI assistant
+API key**, which you can [create for free](https://aistudio.google.com/app/api-keys)
+for the Google Gemini API. The key is stored only in your local app config and is sent
+only to the assistant provider.
+
+By default the assistant uses Google's rolling `gemini-flash-latest` model, so it always
+tracks the current Flash tier. To pin a specific model instead, add an `assistant_model`
+line to your config file (`~/.config/pokedex-tcg/config`) — see the code comment on
+`kGeminiDefaultModel` for how to look up the [supported models](https://ai.google.dev/gemini-api/docs/models).
+
+The provider is deliberately abstracted behind a vendor-neutral seam, so Gemini can be
+swapped for another LLM without touching the rest of the app.
 
 ## Acknowledgments
 

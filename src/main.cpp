@@ -8,6 +8,7 @@
 
 #include "core/app/binder_guide_service.h"
 #include "core/app/binder_service.h"
+#include "core/app/gemini_assistant.h"
 #include "core/app/card_copy_service.h"
 #include "core/app/card_price_cache.h"
 #include "core/app/card_price_service.h"
@@ -21,6 +22,8 @@
 #include "core/storage/card_copy_repository.h"
 #include "core/storage/database.h"
 #include "core/storage/wishlist_repository.h"
+#include "core/storage/workspace.h"  // readConfigValue (assistant_model override)
+#include "gui/services/assistant_service.h"
 #include "gui/services/card_image_store.h"
 #include "gui/services/card_price_lookup_service.h"
 #include "gui/services/card_search_service.h"
@@ -123,9 +126,19 @@ int main(int argc, char *argv[]) {
         pokedex::CardPriceService cardPrices(priceCache);
         pokedex::CardPriceLookupService priceLookup(cardPrices, &tcgdexSetCache);
 
+        // The AI-assistant adapter (swap this ONE line to change LLM providers — no
+        // caller, the transport, or the Settings key field learns the difference) and
+        // its GUI transport. The API key is read from the app config at call time; the
+        // model can be overridden from the `assistant_model` config key (else the
+        // provider's built-in default), so a per-account model gate needs no rebuild.
+        pokedex::GeminiAssistant assistant(
+            pokedex::readConfigValue(pokedex::kAssistantModelConfigKey)
+                .value_or(pokedex::kGeminiDefaultModel));
+        pokedex::AssistantService assistantService(assistant);
+
         pokedex::MainWindow window(
             service, guide, browse, wishlist, media, cardSearch, priceLookup, cardCopies,
-            cardImages, QString::fromStdString(workspace->root().string()));
+            cardImages, assistantService, QString::fromStdString(workspace->root().string()));
         // Open maximized so the window fills the screen straight away — the sections'
         // list/detail splits have room to breathe without the user having to maximize
         // (the title-bar double-click) first.

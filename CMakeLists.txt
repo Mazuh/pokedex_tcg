@@ -128,6 +128,7 @@ add_library(pokedex_core STATIC
     src/core/app/wishlist_service.cpp
     src/core/app/poke_api.cpp
     src/core/app/pokemon_tcg_io_api.cpp
+    src/core/app/gemini_assistant.cpp
     src/core/app/card_catalog_parse.cpp
     src/core/app/card_set_cache.cpp
     src/core/app/card_price_cache.cpp
@@ -191,12 +192,14 @@ qt_add_executable(pokedex_tcg
     src/gui/views/wishlist_edit_page.cpp
     src/gui/views/wishlist_view.cpp
     src/gui/views/settings_view.cpp
+    src/gui/views/assistant_prompt_dialog.cpp
     src/gui/views/toast.cpp
     src/gui/services/network_log.cpp
     src/gui/services/media_service.cpp
     src/gui/services/card_image_store.cpp
     src/gui/services/card_search_service.cpp
     src/gui/services/card_price_lookup_service.cpp
+    src/gui/services/assistant_service.cpp
 )
 target_link_libraries(pokedex_tcg PRIVATE pokedex_core pokedex_warnings pokedex_sanitizers Qt6::Widgets Qt6::Network)
 # The generated gui/version.h is under the build tree; make it includable and
@@ -266,6 +269,7 @@ if(BUILD_TESTING)
         tests/app/wishlist_service_test.cpp
         tests/app/pokemon_external_api_test.cpp
         tests/app/pokemon_tcg_io_api_test.cpp
+        tests/app/gemini_assistant_test.cpp
         tests/app/card_catalog_parse_test.cpp
         tests/app/card_set_cache_test.cpp
         tests/app/card_price_cache_test.cpp

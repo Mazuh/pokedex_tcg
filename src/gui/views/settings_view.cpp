@@ -19,6 +19,7 @@
 
 #include "core/app/install_service.h"
 #include "core/storage/workspace.h"
+#include "gui/services/assistant_service.h"  // kAssistantApiKeyConfigKey
 #include "gui/views/empty_option.h"
 #include "gui/views/language_codes.h"
 #include "gui/views/primary_button.h"
@@ -78,12 +79,31 @@ SettingsView::SettingsView(QWidget* parent) : QWidget(parent) {
     languageHelp->setEnabled(false);
     languageHelp->setWordWrap(true);
 
+    // --- AI assistant API key ---------------------------------------------
+    // The secret for the app's AI-assistant provider. Masked (Password echo) so it
+    // isn't shoulder-surfed; stored under a provider-neutral config key and read at
+    // call time, so it applies live (no restart) and survives a provider swap.
+    assistantKeyEdit_ = new QLineEdit(this);
+    assistantKeyEdit_->setEchoMode(QLineEdit::Password);
+    assistantKeyEdit_->setPlaceholderText(tr("Paste your API key"));
+    connect(assistantKeyEdit_, &QLineEdit::textChanged, this, &SettingsView::refreshDirtyState);
+
+    auto* assistantHelp = new QLabel(
+        tr("Used by the AI Assistant tool (in the sidebar). Stored in your app configuration "
+           "on this computer and sent only to the assistant provider. Takes effect "
+           "immediately — no restart needed."),
+        this);
+    assistantHelp->setEnabled(false);
+    assistantHelp->setWordWrap(true);
+
     auto* form = new QFormLayout;
     form->setLabelAlignment(Qt::AlignLeft);
     form->addRow(tr("Workspace folder"), workspaceRow);
     form->addRow(QString(), workspaceHelp);
     form->addRow(tr("Default language"), languageEdit_);
     form->addRow(QString(), languageHelp);
+    form->addRow(tr("AI assistant API key"), assistantKeyEdit_);
+    form->addRow(QString(), assistantHelp);
 
     // A muted note that a workspace change is a next-launch change, shown only while
     // the form is dirty (there's nothing pending to restart for otherwise).
@@ -143,14 +163,21 @@ void SettingsView::loadFromConfig() {
     // Set the language baseline before touching any widget, so a stray signal (e.g. the
     // workspace setText below) computing dirtiness sees a consistent, clean baseline.
     savedLanguage_ = languageEdit_->itemData(langIndex).toString();
+
+    const std::optional<std::string> assistantKey =
+        readConfigValue(kAssistantApiKeyConfigKey);
+    savedAssistantKey_ = assistantKey ? QString::fromStdString(*assistantKey) : QString();
+
     languageEdit_->setCurrentIndex(langIndex);  // activated-only, so no dirty signal here
+    assistantKeyEdit_->setText(savedAssistantKey_);  // triggers refreshDirtyState
     workspaceEdit_->setText(savedWorkspace_);   // triggers refreshDirtyState → clean
     refreshDirtyState();
 }
 
 bool SettingsView::isDirty() const {
     return workspaceEdit_->text().trimmed() != savedWorkspace_ ||
-           languageEdit_->currentData().toString() != savedLanguage_;
+           languageEdit_->currentData().toString() != savedLanguage_ ||
+           assistantKeyEdit_->text() != savedAssistantKey_;
 }
 
 void SettingsView::refreshDirtyState() {
@@ -178,17 +205,28 @@ bool SettingsView::save() {
     }
 
     const QString language = languageEdit_->currentData().toString();
+    const QString assistantKey = assistantKeyEdit_->text().trimmed();
     const bool workspaceChanged = (text != savedWorkspace_);
+    const bool languageChanged = (language != savedLanguage_);
+    const bool keyChanged = (assistantKey != savedAssistantKey_);
 
     try {
-        // Validate + set up the target like the relaunch path: openWorkspace is
-        // permissive (it creates/migrates the folder), so this both proves the path is
-        // usable now and prepares an existing workspace to be switched to. Only after
-        // it succeeds do we record the settings in the config file. Both writes merge
-        // into the same key=value file, so neither clobbers the other.
-        openWorkspace(std::filesystem::path(text.toStdString()));
-        writeConfiguredWorkspacePath(std::filesystem::path(text.toStdString()));
-        writeConfigValue(kDefaultLanguageConfigKey, language.toStdString());
+        // Persist only the settings that actually changed — each writeConfig* call is a
+        // full read-modify-write of the config file, so writing untouched keys is wasted
+        // I/O. Crucially, only a real workspace change re-runs openWorkspace: it is the
+        // heavy, permissive validate+create+migrate the relaunch path uses, and opening a
+        // second connection to the DB the running app already holds is both needless and a
+        // file-lock contender. An unchanged path is already open and proven usable.
+        if (workspaceChanged) {
+            openWorkspace(std::filesystem::path(text.toStdString()));
+            writeConfiguredWorkspacePath(std::filesystem::path(text.toStdString()));
+        }
+        if (languageChanged) {
+            writeConfigValue(kDefaultLanguageConfigKey, language.toStdString());
+        }
+        if (keyChanged) {
+            writeConfigValue(kAssistantApiKeyConfigKey, assistantKey.toStdString());
+        }
     } catch (const std::exception& e) {
         QMessageBox::critical(
             this, tr("Settings"),
@@ -198,7 +236,9 @@ bool SettingsView::save() {
 
     savedWorkspace_ = text;
     savedLanguage_ = language;
-    workspaceEdit_->setText(text);  // normalize the field to the saved value
+    savedAssistantKey_ = assistantKey;
+    workspaceEdit_->setText(text);           // normalize the field to the saved value
+    assistantKeyEdit_->setText(assistantKey);  // normalize (trimmed)
     refreshDirtyState();
     // The workspace change is the only one needing a restart; a language-only change is
     // live, so don't nag about restarting when the folder didn't move.

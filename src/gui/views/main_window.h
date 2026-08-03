@@ -15,6 +15,7 @@ class CardSearchService;
 class CardPriceLookupService;
 class CardCopyService;
 class CardImageStore;
+class AssistantService;
 
 // GUI — the application's top-level window: a macOS-style shell with a left
 // sidebar (a source list, like Finder's or System Settings') selecting between
@@ -36,8 +37,8 @@ public:
                PokemonBrowseService& browse, WishlistService& wishlist,
                MediaService& media, CardSearchService& cardSearch,
                CardPriceLookupService& priceLookup, CardCopyService& cardCopies,
-               CardImageStore& cardImages, const QString& collectionPath,
-               QWidget* parent = nullptr);
+               CardImageStore& cardImages, AssistantService& assistant,
+               const QString& collectionPath, QWidget* parent = nullptr);
 
 protected:
     // Guard the window close the same way a section switch is guarded: if the

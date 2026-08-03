@@ -28,4 +28,13 @@ Q_DECLARE_LOGGING_CATEGORY(lcNet)
 // a plain static map with no locking, matching how these services are used.
 QNetworkReply* loggedGet(QNetworkAccessManager* nam, QNetworkRequest request);
 
+// The POST counterpart, for the outbound calls that send a body (the AI assistant).
+// Same chokepoint contract: it logs the URL and bumps the shared per-host tally,
+// then issues the POST with `body`. It logs ONLY the URL — never the request
+// headers or body — so a secret carried in a header (an API key) is never written
+// to the log. Callers set their own content-type / auth headers on `request`
+// before calling; the safe-redirect policy is applied here as in loggedGet.
+QNetworkReply* loggedPost(QNetworkAccessManager* nam, QNetworkRequest request,
+                          const QByteArray& body);
+
 }  // namespace pokedex
