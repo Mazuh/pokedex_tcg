@@ -289,7 +289,7 @@ A `CardSearchQuery` is scoped EITHER by species
 `name:"…"`) — the latter is how a species-free card is found; on the GUI side
 `CardSearchService::searchByName` and `CardFinderPanel`'s name-search mode drive it. `gui/views/` holds the
 `MainWindow` shell (a macOS-style sidebar selecting sections in an outer
-`QStackedWidget`: Binders, Pokémon, My Cards, Wishlist), the first-run setup dialog,
+`QStackedWidget`: Binders, Pokémon, My Cards, Wishlist, Settings), the first-run setup dialog,
 the binders section (`BindersPage`, a table with its own list ⇄ binder-guide/edit
 stack), the `BinderEditPage` (the create/edit-binder screen — see "GUI navigation"
 below), the reusable `BinderPickerDialog`, the binder guide view, the
@@ -340,6 +340,18 @@ shows a compact "Wishlist (N)" / "Wishlist (none)" button (reading the source co
 (`PokemonListView`, `BinderView`) turn that into a `WishlistEditPage` push, and on Back
 re-show the species so the counter refreshes (the binder guide also `refresh()`es, since
 a wishlist change can flip a species' `CollectionStatus` between Missing and Wished).
+The **Settings section** (`SettingsView`) is the app's configuration screen — today one
+setting, the collection **workspace folder**, loaded from and saved to the same one-line
+`config` file the app already uses (`storage/workspace.h`). Unlike every other page (which
+writes straight through), it is a **manually-applied form**: edits are staged in the field
+and committed only by the accented "Save changes" primary button, which validates+opens the
+target via `openWorkspace` (creating/migrating it, the relaunch path) *before*
+`writeConfiguredWorkspacePath` — a switch takes effect on the **next launch** (a muted note
+says so while dirty). Because leaving a staged form would silently drop edits, `MainWindow`
+**guards every section switch** (and the window close) through `SettingsView::confirmLeave`
+(Save / Discard / Cancel); on Cancel it snaps the sidebar selection back to Settings via a
+**queued** `setCurrentRow` (an inline revert gets overwritten by the list's own in-progress
+key/click handling, leaving the highlight on the new row while the page stays on Settings).
 `PokemonDetailPanel` is the **single inspector** shared by all three card surfaces —
 the Pokémon browser, the binder guide, and My Cards (`CardImagePanel` was deleted). Top
 to bottom it renders: the card's name (falling back to the species name), a printed

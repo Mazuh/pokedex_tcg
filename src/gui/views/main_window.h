@@ -22,6 +22,8 @@ class CardImageStore;
 // unscoped Pokémon browser; section 2 is the unscoped Wishlist. It owns nothing
 // but the layout — each section is a thin shell over its Qt-free service, all of
 // which are owned by main() and outlive this window.
+class SettingsView;
+
 class MainWindow : public QWidget {
     Q_OBJECT
 
@@ -37,8 +39,21 @@ public:
                CardImageStore& cardImages, const QString& collectionPath,
                QWidget* parent = nullptr);
 
+protected:
+    // Guard the window close the same way a section switch is guarded: if the
+    // Settings form holds unsaved edits, prompt Save/Discard/Cancel and ignore the
+    // close on Cancel.
+    void closeEvent(QCloseEvent* event) override;
+
 private:
     QStackedWidget* sections_;
+    SettingsView* settings_;
+    // The section currently shown; the leave-guard needs the row we're leaving, which
+    // QListWidget::currentRowChanged doesn't report on its own.
+    int currentRow_ = -1;
+    // True while the guard is programmatically reverting the sidebar selection, so its
+    // own currentRowChanged handler ignores that synthetic change (no re-prompt).
+    bool guarding_ = false;
 };
 
 }  // namespace pokedex

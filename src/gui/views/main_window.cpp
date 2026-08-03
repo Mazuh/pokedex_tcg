@@ -1,6 +1,7 @@
 #include "gui/views/main_window.h"
 
 #include <QAction>
+#include <QCloseEvent>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QListWidget>
@@ -16,6 +17,7 @@
 #include "gui/views/binders_page.h"
 #include "gui/views/owned_cards_view.h"
 #include "gui/views/pokemon_list_view.h"
+#include "gui/views/settings_view.h"
 #include "gui/views/splitter_style.h"
 #include "gui/views/wishlist_view.h"
 
@@ -60,6 +62,7 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
     new QListWidgetItem(tr("All Pokémon"), sidebar);
     new QListWidgetItem(tr("My Cards"), sidebar);
     new QListWidgetItem(tr("Wishlist"), sidebar);
+    new QListWidgetItem(tr("Settings"), sidebar);
 
     // An "About" affordance pinned at the bottom of the sidebar, so the same dialog
     // is reachable inside the window (not only via the native macOS menu). Flat, so
@@ -104,9 +107,40 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
                                          priceLookup, media, wishlist);
     sections_->addWidget(ownedView);
     sections_->addWidget(new WishlistView(wishlist));
+    settings_ = new SettingsView;
+    const int settingsRow = sections_->addWidget(settings_);
 
-    connect(sidebar, &QListWidget::currentRowChanged, sections_,
-            &QStackedWidget::setCurrentIndex);
+    // The Settings section is the one page with a manually-applied form, so leaving
+    // it must not silently drop unsaved edits. Route section switches through a guard
+    // that, when leaving Settings with a dirty form, prompts Save/Discard/Cancel — and
+    // on Cancel snaps the sidebar selection back without re-prompting (guarding_).
+    connect(sidebar, &QListWidget::currentRowChanged, this,
+            [this, sidebar, settingsRow](int row) {
+                if (row < 0 || guarding_) {
+                    return;
+                }
+                if (row == currentRow_) {
+                    sections_->setCurrentIndex(row);
+                    return;
+                }
+                if (currentRow_ == settingsRow && !settings_->confirmLeave(this)) {
+                    // Snap the selection back to Settings. Deferred (queued) because the
+                    // list is still mid-keypress/mid-click here — reverting inline gets
+                    // overwritten when that handler finishes moving the selection, leaving
+                    // the highlight on the new row while the page stays on Settings.
+                    QMetaObject::invokeMethod(
+                        this,
+                        [this, sidebar]() {
+                            guarding_ = true;
+                            sidebar->setCurrentRow(currentRow_);  // no re-prompt
+                            guarding_ = false;
+                        },
+                        Qt::QueuedConnection);
+                    return;
+                }
+                currentRow_ = row;
+                sections_->setCurrentIndex(row);
+            });
 
     // Double-clicking an owned species in the Pokémon browser jumps to "My Cards"
     // pre-filtered to that species: set the filter first (it persists through the
@@ -149,6 +183,16 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
     layout->setMenuBar(menuBar);
 
     sidebar->setCurrentRow(0);  // start on Binders
+}
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+    // Only relevant while Settings is the visible section; when it's not, its form is
+    // clean (leaving it required saving/discarding), so confirmLeave() is a no-op.
+    if (!settings_->confirmLeave(this)) {
+        event->ignore();
+        return;
+    }
+    QWidget::closeEvent(event);
 }
 
 }  // namespace pokedex
