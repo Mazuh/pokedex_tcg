@@ -94,6 +94,12 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
         tr("Search copy by Pokémon, collector number, set or binder…"));
     search_->setClearButtonEnabled(true);
     connect(search_, &QLineEdit::textChanged, this, [this](const QString&) { applyFilter(); });
+    // A stashed scan (from applyScannedCard) is meant for the add that immediately follows
+    // it. If the user instead edits the search themselves — moving on to a different card,
+    // or clearing it — drop the stash so a later "Add a card" isn't prefilled from a stale
+    // reading. textEdited fires ONLY on user edits, so applyScannedCard's own setText (which
+    // sets the stash) doesn't clear it.
+    connect(search_, &QLineEdit::textEdited, this, [this](const QString&) { pendingScan_.reset(); });
 
     // A read-only nine-column table: Pokémon, set, collector, language, condition,
     // rarity, foil, ownership, binder. Whole-row selection, no editing; the Pokémon
@@ -614,6 +620,14 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
     updateButtonState();
 }
 
+void OwnedCardsView::applyScannedCard(const ScannedCard& scanned) {
+    // Stash the reading for the next add (consumed once in addNewCard), then filter the
+    // inventory to the scan's query so the user can eyeball whether they already own it —
+    // the "check if I've added this before" step of the booster workflow.
+    pendingScan_ = scanned;
+    searchFor(QString::fromStdString(scanned.query));
+}
+
 void OwnedCardsView::searchFor(const QString& text) {
     // setText fires textChanged → applyFilter immediately; if the section isn't visible
     // yet the rows may not be loaded, but the text persists so the reload showEvent
@@ -900,6 +914,14 @@ void OwnedCardsView::addNewCard() {
     // window push/pop idiom as editSelectedCard.
     auto* page = new AddCardCopyPage(cardSearch_, copies_, priceLookup_, binders_, images_,
                                      std::nullopt, /*speciesName=*/QString());
+    // If this add follows a card scan, pre-fill the form + finder from it (one-shot).
+    if (pendingScan_) {
+        page->prefillFrom(QString::fromStdString(pendingScan_->cardName),
+                          QString::fromStdString(pendingScan_->setName),
+                          QString::fromStdString(pendingScan_->setCode),
+                          QString::fromStdString(pendingScan_->collectorNumber));
+        pendingScan_.reset();
+    }
     stack_->addWidget(page);
     const auto pop = [this, page]() {
         stack_->setCurrentIndex(0);

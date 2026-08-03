@@ -18,6 +18,7 @@
 #include "gui/views/binders_page.h"
 #include "gui/views/owned_cards_view.h"
 #include "gui/views/pokemon_list_view.h"
+#include "gui/views/scan_card_dialog.h"
 #include "gui/views/settings_view.h"
 #include "gui/views/splitter_style.h"
 #include "gui/views/wishlist_view.h"
@@ -83,11 +84,13 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
         " color: palette(text); }"
         "QPushButton:hover { background: rgba(128, 128, 128, 0.20); }");
 
-    // A sibling footer action opening the AI-assistant demo, styled to match About.
-    auto* assistantButton = new QPushButton(tr("✦  AI Assistant"));
-    assistantButton->setFlat(true);
-    assistantButton->setCursor(Qt::PointingHandCursor);
-    assistantButton->setStyleSheet(
+    // A sibling footer action opening the card scanner (webcam → assistant reads the
+    // card → search), styled to match About. This is the primary entry to the scan flow;
+    // the AI-assistant demo stays reachable from the Tools menu.
+    auto* scanButton = new QPushButton(tr("✦  Scan card"));
+    scanButton->setFlat(true);
+    scanButton->setCursor(Qt::PointingHandCursor);
+    scanButton->setStyleSheet(
         "QPushButton { border: none; text-align: left; padding: 14px 20px;"
         " color: palette(text); }"
         "QPushButton:hover { background: rgba(128, 128, 128, 0.20); }");
@@ -98,7 +101,7 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
     footerDivider->setFrameShadow(QFrame::Plain);
     footerDivider->setStyleSheet("color: rgba(128, 128, 128, 0.35);");
     connect(aboutButton, &QPushButton::clicked, this, showAbout);
-    connect(assistantButton, &QPushButton::clicked, this, showAssistant);
+    // scanButton is connected below, once the "My Cards" section it routes into exists.
 
     // Wrap the list + footer into one pane; the pane (not the list) now carries the
     // sidebar's width bounds so the splitter treats the whole column as one band.
@@ -110,7 +113,7 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
     sidebarLayout->setSpacing(0);
     sidebarLayout->addWidget(sidebar, 1);  // the list takes all the slack
     sidebarLayout->addWidget(footerDivider);
-    sidebarLayout->addWidget(assistantButton);
+    sidebarLayout->addWidget(scanButton);
     sidebarLayout->addWidget(aboutButton);
 
     // Section order must match the sidebar row order above: a row selects the
@@ -171,6 +174,20 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
                 sidebar->setCurrentRow(2);
             });
 
+    // Opens the webcam Scan-a-card dialog. When it resolves a reading, route the query
+    // into "My Cards" (fills its search so the user sees whether they already own it, and
+    // stashes the scan so the next "Add a card" pre-fills from it) and switch there.
+    const auto showScan = [this, &assistant, sidebar, ownedView]() {
+        ScanCardDialog dialog(assistant, this);
+        connect(&dialog, &ScanCardDialog::cardResolved, this,
+                [sidebar, ownedView](const ScannedCard& scanned) {
+                    ownedView->applyScannedCard(scanned);
+                    sidebar->setCurrentRow(2);  // My Cards
+                });
+        dialog.exec();
+    };
+    connect(scanButton, &QPushButton::clicked, this, showScan);
+
     // A draggable split: a narrow sidebar that keeps its size while the section
     // area takes the slack when the window resizes.
     auto* splitter = new QSplitter(Qt::Horizontal, this);
@@ -195,6 +212,8 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
     // window so it centers over it and shares its lifetime.
     auto* menuBar = new QMenuBar(this);
     QMenu* toolsMenu = menuBar->addMenu(tr("Tools"));
+    QAction* scanAction = toolsMenu->addAction(tr("Scan a card…"));
+    connect(scanAction, &QAction::triggered, this, showScan);
     QAction* assistantAction = toolsMenu->addAction(tr("AI Assistant…"));
     connect(assistantAction, &QAction::triggered, this, showAssistant);
     QMenu* helpMenu = menuBar->addMenu(tr("Help"));

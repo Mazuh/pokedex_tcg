@@ -85,6 +85,14 @@ public:
                     std::optional<CardBinderId> lockedBinder = std::nullopt,
                     QWidget* parent = nullptr);
 
+    // Pre-fill the printed-identity fields and drive the finder search from a card scan
+    // (name-search / "My Cards" add only). Writes the set / number / name onto the form —
+    // so the copy is meaningful and pricing can resolve even if the search finds nothing —
+    // and runs a finder search by card name so the catalog lists that card's printings for
+    // a one-click autofill. Call right after construction, before the page is shown.
+    void prefillFrom(const QString& cardName, const QString& setName, const QString& setCode,
+                     const QString& collectorNumber);
+
 Q_SIGNALS:
     void backRequested();
     // A copy was persisted; the host should refresh any owned-copy counts it shows.

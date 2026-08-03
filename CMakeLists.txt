@@ -129,6 +129,7 @@ add_library(pokedex_core STATIC
     src/core/app/poke_api.cpp
     src/core/app/pokemon_tcg_io_api.cpp
     src/core/app/gemini_assistant.cpp
+    src/core/app/card_scan.cpp
     src/core/app/card_catalog_parse.cpp
     src/core/app/card_set_cache.cpp
     src/core/app/card_price_cache.cpp
@@ -142,8 +143,10 @@ target_link_libraries(pokedex_core
 
 # --- GUI application (Qt 6 Widgets) ------------------------------------------
 # Network is used only by the GUI's media-fetching service (MediaService); core
-# stays Qt-free, so it is linked here and never into pokedex_core.
-find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
+# stays Qt-free, so it is linked here and never into pokedex_core. Multimedia +
+# MultimediaWidgets back the webcam Scan-a-card dialog (QCamera / QMediaCaptureSession
+# / QImageCapture / QVideoWidget); on Ubuntu they need the qt6-multimedia-dev package.
+find_package(Qt6 REQUIRED COMPONENTS Widgets Network Multimedia MultimediaWidgets)
 
 qt_standard_project_setup()
 
@@ -193,6 +196,7 @@ qt_add_executable(pokedex_tcg
     src/gui/views/wishlist_view.cpp
     src/gui/views/settings_view.cpp
     src/gui/views/assistant_prompt_dialog.cpp
+    src/gui/views/scan_card_dialog.cpp
     src/gui/views/toast.cpp
     src/gui/services/network_log.cpp
     src/gui/services/media_service.cpp
@@ -201,22 +205,75 @@ qt_add_executable(pokedex_tcg
     src/gui/services/card_price_lookup_service.cpp
     src/gui/services/assistant_service.cpp
 )
-target_link_libraries(pokedex_tcg PRIVATE pokedex_core pokedex_warnings pokedex_sanitizers Qt6::Widgets Qt6::Network)
+target_link_libraries(pokedex_tcg PRIVATE pokedex_core pokedex_warnings pokedex_sanitizers Qt6::Widgets Qt6::Network Qt6::Multimedia Qt6::MultimediaWidgets)
 # The generated gui/version.h is under the build tree; make it includable and
 # ensure it's (re)generated before the GUI compiles.
 add_dependencies(pokedex_tcg pokedex_version_header)
 target_include_directories(pokedex_tcg PRIVATE ${POKEDEX_VERSION_DIR})
 
+# macOS: embed an Info.plist (carrying NSCameraUsageDescription) directly into the
+# plain executable via the linker, so the webcam Scan-a-card dialog can obtain camera
+# permission. Without this key macOS TCC denies the camera and Qt's QCameraPermission
+# plugin can't even prompt ("Could not find permission plugin ... include the required
+# usage description in your Info.plist"). This keeps ./build/pokedex_tcg a plain binary
+# (dev.sh / install.sh / docs still refer to it) rather than restructuring into a .app;
+# a distributable build would be a proper signed bundle carrying the same key.
+if(APPLE)
+    # Build a real .app bundle so the webcam Scan-a-card dialog can obtain camera
+    # permission. Two macOS facts force this:
+    #   1. Qt's QCameraPermission request reads NSCameraUsageDescription from
+    #      [NSBundle mainBundle].infoDictionary and only prompts when it's present. A
+    #      bare executable (even with an embedded __TEXT,__info_plist section) does NOT
+    #      reliably satisfy that lookup, nor does LaunchServices/TCC register it (tccutil
+    #      can't even find its bundle id) — so the request fails and the app never appears
+    #      in System Settings ▸ Camera. A proper Contents/Info.plist fixes all of that.
+    #   2. Homebrew's Qt is a STATIC build, so permission backends are .a plugins that
+    #      only exist at runtime when explicitly imported; Qt does NOT auto-import them
+    #      (opt-in, each needs a usage description). Without this the camera plugin is
+    #      absent and QCameraPermission has no handler at all.
+    # (This is why ./build/pokedex_tcg is now ./build/pokedex_tcg.app on macOS — dev.sh /
+    # install.sh / README launch the bundle accordingly.)
+    set_target_properties(pokedex_tcg PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_BUNDLE_NAME "Pokedex TCG"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.mazuh.pokedex-tcg"
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/cmake/macos/Info.plist.in")
+    qt_import_plugins(pokedex_tcg INCLUDE Qt6::QDarwinCameraPermissionPlugin)
+
+    # Ad-hoc-sign the finished bundle (stable identifier) so TCC attributes and remembers
+    # the camera grant. Ad-hoc (`-`), so no developer certificate is needed for a local
+    # build; a distributable build would use a Developer ID identity instead.
+    add_custom_command(TARGET pokedex_tcg POST_BUILD
+        COMMAND codesign --force --sign - "$<TARGET_BUNDLE_DIR:pokedex_tcg>"
+        COMMENT "Ad-hoc signing the .app bundle (macOS camera permission)"
+        VERBATIM)
+endif()
+
 # --- Install (drop a `pokedex` command onto PATH) ----------------------------
 # install.sh runs `cmake --install` after a Release build so the app is
-# launchable from any directory. We install via PROGRAMS + RENAME rather than
-# install(TARGETS): TARGETS has no RENAME, and renaming the target's OUTPUT_NAME
-# would also rename ./build/pokedex_tcg, which dev.sh and the docs refer to.
-# The genex resolves to the built binary regardless of the build directory.
+# launchable from any directory.
 include(GNUInstallDirs)
-install(PROGRAMS "$<TARGET_FILE:pokedex_tcg>"
-        DESTINATION "${CMAKE_INSTALL_BINDIR}"
-        RENAME pokedex)
+if(APPLE)
+    # The macOS build is a .app bundle (needed for camera permission — see the if(APPLE)
+    # block above), so install the WHOLE bundle and add a `pokedex` symlink on PATH that
+    # points at the bundle's inner binary. Running the symlink resolves to the real path
+    # inside the .app, so [NSBundle mainBundle] still finds Contents/Info.plist and the
+    # camera permission keeps working from the installed command. (A bare copy of the
+    # inner binary would run but couldn't scan cards.)
+    install(DIRECTORY "$<TARGET_BUNDLE_DIR:pokedex_tcg>"
+            DESTINATION "${CMAKE_INSTALL_BINDIR}" USE_SOURCE_PERMISSIONS)
+    install(CODE "file(CREATE_LINK
+        \"pokedex_tcg.app/Contents/MacOS/pokedex_tcg\"
+        \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/pokedex\"
+        SYMBOLIC)")
+else()
+    # Elsewhere it's a plain binary: install it renamed to `pokedex` (PROGRAMS + RENAME;
+    # install(TARGETS) has no RENAME). The genex resolves to the built binary regardless
+    # of the build directory.
+    install(PROGRAMS "$<TARGET_FILE:pokedex_tcg>"
+            DESTINATION "${CMAKE_INSTALL_BINDIR}"
+            RENAME pokedex)
+endif()
 
 # --- Tests (GoogleTest + CTest) ----------------------------------------------
 include(CTest)
@@ -270,6 +327,7 @@ if(BUILD_TESTING)
         tests/app/pokemon_external_api_test.cpp
         tests/app/pokemon_tcg_io_api_test.cpp
         tests/app/gemini_assistant_test.cpp
+        tests/app/card_scan_test.cpp
         tests/app/card_catalog_parse_test.cpp
         tests/app/card_set_cache_test.cpp
         tests/app/card_price_cache_test.cpp

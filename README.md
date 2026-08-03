@@ -47,8 +47,10 @@ cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH="$(brew --prefix qt)"
 # Build the app and the tests
 cmake --build build
 
-# Run the visual Hello World
-./build/pokedex_tcg
+# Run the app (macOS builds a .app bundle — for camera permission; run its inner
+# binary so logs stay in the terminal. Elsewhere it's a plain ./build/pokedex_tcg.)
+./build/pokedex_tcg.app/Contents/MacOS/pokedex_tcg   # macOS
+# ./build/pokedex_tcg                                # Linux
 
 # Run the tests
 ctest --test-dir build --output-on-failure

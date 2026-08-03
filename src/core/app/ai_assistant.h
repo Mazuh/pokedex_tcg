@@ -5,21 +5,29 @@
 
 namespace pokedex {
 
-// APP — the neutral input to the assistant: a user prompt, plus an optional
-// system instruction that steers the assistant's behavior (persona, output
-// format). Vendor-agnostic on purpose — no field names a provider's wire format.
-//
-// MULTIMODAL / VISION (assessment only — deliberately NOT implemented): a text
-// LLM's HTTP API can also accept image input alongside the text (Gemini's
-// generateContent takes base64 `inline_data` parts; the OpenAI/Anthropic message
-// APIs take image blocks the same way), which is exactly what a future "scan a
-// card photo from the webcam → autofill its name + set" feature would send. This
-// struct is intentionally left open to grow an image-parts field for that, but no
-// capture/encoding/vision code exists anywhere in the app today. See
-// docs/ai-assistant.md for the feasibility notes.
+// APP — one inline image sent alongside the text prompt (the vision input). The
+// bytes are ALREADY base64-encoded by the caller (the GUI, which has Qt's codec) so
+// core needs no base64 implementation of its own — a provider builder just embeds
+// the string verbatim. Vendor-neutral: Gemini folds it into an `inline_data` part,
+// the OpenAI/Anthropic message APIs into an image block, from the same two fields.
+struct AiImagePart {
+    std::string mimeType;    // e.g. "image/jpeg"
+    std::string base64Data;  // the image bytes, base64-encoded (no data: prefix)
+};
+
+// APP — the neutral input to the assistant: a user prompt, an optional system
+// instruction that steers the assistant's behavior (persona, output format), any
+// inline images (the vision input), and a hint that the reply should be JSON.
+// Vendor-agnostic on purpose — no field names a provider's wire format.
 struct AiPrompt {
     std::string userText;
-    std::string systemInstruction;  // optional; empty = none
+    std::string systemInstruction;      // optional; empty = none
+    std::vector<AiImagePart> images;    // optional; empty = text-only prompt
+    // When true, ask the provider to return application/json only (Gemini maps this
+    // to generationConfig.responseMimeType) — used by the card-scan flow, which
+    // parses the reply as structured JSON. Providers that can't honor it ignore it;
+    // the prompt should still instruct "reply with JSON" as a belt-and-suspenders.
+    bool wantsJsonResponse = false;
 };
 
 // One HTTP header the transport must set on the outbound request — e.g. the

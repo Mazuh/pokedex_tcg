@@ -10,6 +10,7 @@ class QNetworkAccessManager;
 namespace pokedex {
 
 class AiAssistant;
+struct AiPrompt;
 
 // The config-file key under which the user's AI-assistant API key is stored (see
 // storage/workspace.h's key=value config). Named vendor-neutrally on purpose — the
@@ -34,11 +35,14 @@ inline constexpr char kAssistantModelConfigKey[] = "assistant_model";
 // with a message pointing the user at Settings, rather than hitting the network.
 //
 // One request at a time is the intended usage (the demo dialog disables Send while a
-// call is in flight). Because ONE service is shared app-wide, a stale reply must not
-// be delivered to whatever caller is connected when it lands: a monotonic generation
-// counter drops every reply but the most recent ask()'s. (Otherwise closing the demo
-// dialog mid-request and reopening it would show the first question's answer against
-// the second question.)
+// call is in flight). Because ONE service is shared app-wide (the text demo AND the
+// card scanner), a stale reply must not be delivered to whatever caller is connected
+// when it lands: a monotonic generation counter drops every reply but the most recent
+// ask()'s. But advancing the counter only on ask() isn't enough — a caller that closes
+// mid-request without a successor ask leaves the reply "current", so the NEXT caller to
+// connect would receive it (e.g. a pending scan's raw JSON surfacing in a freshly opened
+// Assistant dialog). So a caller MUST call cancelPending() when it goes away, which
+// advances the counter and orphans any reply still in flight.
 class AssistantService : public QObject {
     Q_OBJECT
 
@@ -50,6 +54,20 @@ public:
     // or failed(). A blank prompt or a missing API key fails synchronously-ish via
     // failed() without a network call.
     void ask(const QString& prompt);
+
+    // Send a fully-built neutral prompt — the richer entry point used by the
+    // card-scan flow, which needs a system instruction, an inline image, and the
+    // JSON-response hint that `ask(QString)` doesn't expose. Same outcome contract
+    // (answerReady/failed with the raw reply text; the caller parses it) and the same
+    // stale-reply guard. A missing API key still fails fast without a network call;
+    // an empty prompt (no text and no image) is rejected too.
+    void ask(const AiPrompt& prompt);
+
+    // Orphan any reply currently in flight, so it is dropped rather than delivered to the
+    // next caller that connects. A caller (dialog) must call this when it closes/goes away
+    // after an ask() that may not have completed — otherwise the shared service could hand
+    // its late reply to an unrelated, later-opened caller. Idempotent and cheap.
+    void cancelPending();
 
 Q_SIGNALS:
     void answerReady(const QString& text);

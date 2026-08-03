@@ -3,11 +3,13 @@
 #include <QString>
 #include <QWidget>
 
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 #include "core/app/card_price_dto.h"
+#include "core/app/card_scan.h"
 #include "core/domain/card_binder.h"
 #include "core/domain/card_copy.h"
 
@@ -66,6 +68,13 @@ public:
     // is safe to call before switching here. Used by MainWindow when the Pokémon browser
     // asks to "search in My Cards" for a species.
     void searchFor(const QString& text);
+
+    // Route a card scan into this section: fill the live search with the scan's query
+    // (so the user immediately sees whether they already own the card) and stash the
+    // scan so the NEXT "Add a card" pre-fills its form + finder from it (one-shot — a
+    // manual add afterward isn't affected, since a fresh scan replaces the stash). Used
+    // by MainWindow when the Scan-a-card dialog resolves a reading.
+    void applyScannedCard(const ScannedCard& scanned);
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -166,6 +175,9 @@ private:
     // showSelectedImage() can skip the disk read when the selection hasn't changed —
     // it fires on every keystroke via applyFilter().
     std::string shownCopyId_;
+    // A pending card scan awaiting the next "Add a card": applyScannedCard() stashes it,
+    // addNewCard() consumes it once to pre-fill the add page, then clears it.
+    std::optional<ScannedCard> pendingScan_;
 };
 
 }  // namespace pokedex

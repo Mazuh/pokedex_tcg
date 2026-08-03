@@ -41,7 +41,10 @@ fi
 # The build already succeeded, so don't leave the user empty-handed if the
 # privileged install can't run. Fall back to the old non-invasive alias hint
 # pointing at the built binary — they paste one line and still get `pokedex`.
-BIN="$BUILD/pokedex_tcg"
+# macOS builds a .app bundle; point the alias at its inner binary (running that path
+# still resolves the bundle, so camera permission works). Elsewhere it's a plain binary.
+BIN="$BUILD/pokedex_tcg.app/Contents/MacOS/pokedex_tcg"
+[ -x "$BIN" ] || BIN="$BUILD/pokedex_tcg"
 case "${SHELL:-}" in
     *zsh)  rc="~/.zshrc" ;;
     *bash) rc="~/.bashrc" ;;

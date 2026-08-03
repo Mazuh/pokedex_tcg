@@ -38,15 +38,31 @@ GeminiAssistant::GeminiAssistant(std::string model) : model_(std::move(model)) {
 AiRequest GeminiAssistant::buildRequest(const AiPrompt& prompt,
                                         const std::string& apiKey) const {
     // Body shape:
-    //   { "contents": [ { "role": "user", "parts": [ { "text": "…" } ] } ],
-    //     "systemInstruction": { "parts": [ { "text": "…" } ] } }   // optional
+    //   { "contents": [ { "role": "user", "parts": [ { "text": "…" },
+    //                     { "inline_data": { "mime_type": "…", "data": "<b64>" } } ] } ],
+    //     "systemInstruction": { "parts": [ { "text": "…" } ] },        // optional
+    //     "generationConfig": { "responseMimeType": "application/json" } }  // optional
+    //
+    // The text part comes first, then any image parts — Gemini accepts either order,
+    // and text-first keeps the plain-prompt case byte-identical to before.
+    json parts = json::array({json{{"text", prompt.userText}}});
+    for (const AiImagePart& image : prompt.images) {
+        parts.push_back(json{{"inline_data",
+                              json{{"mime_type", image.mimeType}, {"data", image.base64Data}}}});
+    }
+
     json body;
     body["contents"] = json::array({
-        json{{"role", "user"}, {"parts", json::array({json{{"text", prompt.userText}}})}},
+        json{{"role", "user"}, {"parts", std::move(parts)}},
     });
     if (!prompt.systemInstruction.empty()) {
         body["systemInstruction"] =
             json{{"parts", json::array({json{{"text", prompt.systemInstruction}}})}};
+    }
+    if (prompt.wantsJsonResponse) {
+        // Make the model return raw JSON (no ``` fences / prose), so the card-scan
+        // parser gets a clean body. Ignored by models that don't support it.
+        body["generationConfig"] = json{{"responseMimeType", "application/json"}};
     }
 
     AiRequest request;

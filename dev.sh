@@ -33,7 +33,12 @@ cmd="${1:-run}"
 case "$cmd" in
     run|"")
         build
-        "$BUILD/pokedex_tcg"
+        # macOS builds a .app bundle (for camera permission); run its inner binary so the
+        # app is recognized as the bundle (NSBundle/TCC) while stdout stays in the terminal
+        # for dev logs. Elsewhere it's a plain binary.
+        APP="$BUILD/pokedex_tcg.app/Contents/MacOS/pokedex_tcg"
+        [ -x "$APP" ] || APP="$BUILD/pokedex_tcg"
+        "$APP"
         ;;
     build)
         build

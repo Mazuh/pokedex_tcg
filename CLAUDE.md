@@ -409,12 +409,53 @@ Gemini-aware class (generateContent URL, JSON body, response layout; the API key
 `x-goog-api-key` **header**, never the URL, so it can't leak to the log). The GUI transport
 `gui/services/AssistantService` (a QObject) reads the key from config at call time (so a Settings
 change applies live; missing key fails fast with a Settings hint), POSTs via `loggedPost`, and
-emits `answerReady`/`failed`. The demo `gui/views/AssistantPromptDialog` (a modal prompt/answer
-box, opened from the sidebar footer "✦ AI Assistant" and the Tools menu) exercises it.
-**Webcam card-scanning for autofill** (a future feature) was assessed but deliberately NOT built:
-Gemini's same endpoint accepts image input (`inline_data` base64 parts), so the HTTP layer already
-supports it and `AiPrompt` is left open to grow an image field — but capture (Qt Multimedia),
-encoding, and the autofill flow are all unbuilt. See `docs/ai-assistant.md`. `gui/services/` holds `MediaService` (Pokémon artwork fetch+cache), `CardSearchService`
+emits `answerReady`/`failed`. `AssistantService::ask` has two overloads: `ask(QString)` (the text
+demo) and `ask(const AiPrompt&)` (the richer entry — a system instruction, an inline image, the
+JSON-response hint — used by the card scanner); both share one send path + the stale-reply guard.
+The demo `gui/views/AssistantPromptDialog` (a modal prompt/answer box, opened from the Tools menu)
+exercises the text path.
+**Webcam card-scanning (BUILT).** The sidebar footer's **"✦ Scan card"** button (and Tools ▸
+*Scan a card…*) opens `gui/views/ScanCardDialog` — a live `QVideoWidget` preview (QCamera /
+QMediaCaptureSession / QImageCapture) with a *Scan* button. The captured frame is downscaled
+(≤1024px) + JPEG-base64-encoded GUI-side, then sent as a **vision `AiPrompt`**: `AiPrompt` grew an
+`images` field (`std::vector<AiImagePart>` of `{mimeType, base64Data}` — base64 done GUI-side so
+core needs no base64 impl) and a `wantsJsonResponse` flag (→ Gemini's
+`generationConfig.responseMimeType`), and `GeminiAssistant::buildRequest` folds images into
+`inline_data` parts. **The LLM only READS the print, it never "finds" the card** — the card-scan
+intelligence is the Qt-free `core/app/card_scan.{h,cpp}`: a **system instruction** that asks for a
+JSON object, `buildCardScanPrompt(base64)`, and the tolerant `parseScannedCard(reply)` →
+`ScannedCard { identified, cardName, setName, setCode, collectorNumber, query, note }` (strips
+```-fences/prose, never throws, synthesizes `query` from set+number when the model omits it, and
+degrades an unreadable card to `identified=false` + a `note`). The `query` is a plain search
+string (a distinctive slice of the English set name — or the set code — plus the collector number,
+e.g. `collection 2021 1/25`) tuned for the existing **flexible My Cards substring search**. On
+*Search my cards* the dialog emits `cardResolved(ScannedCard)`; `MainWindow` fills the My Cards
+live search with `query` (so the user eyeballs whether they already own it — the booster workflow's
+"have I added this?" step) and switches there. The scan is **stashed on `OwnedCardsView`** and the
+NEXT *Add a card* consumes it once (`AddCardCopyPage::prefillFrom` writes the set/number/name onto
+the form as a baseline AND drives the name-mode finder search) — so the deterministic catalog
+search still produces the trustworthy printing, not the LLM's verbatim reading. New GUI dependency:
+`Qt6::Multimedia` + `Qt6::MultimediaWidgets` (Ubuntu CI adds `qt6-multimedia-dev`); core stays
+Qt-free. **macOS camera permission** is handled: `startCamera()` gates on
+`qApp->checkPermission/requestPermission(QCameraPermission{})` and shows every state IN the dialog
+(waiting / denied-with-a-Settings-hint / no-camera), rather than the silent `qt.permissions` log
+line users can't see. The `if(APPLE)` block does TWO build-side things — BOTH required, missing
+either silently auto-denies (no prompt, no Settings entry, just a log line): (1) the macOS build is
+a real **`.app` bundle** (`MACOSX_BUNDLE` + `cmake/macos/Info.plist.in` → a `Contents/Info.plist`
+with `NSCameraUsageDescription`, ad-hoc-signed with id `com.mazuh.pokedex-tcg`) — Qt's handler reads
+the usage description from `[NSBundle mainBundle].infoDictionary` and TCC/LaunchServices register the
+app by its bundle; a **bare binary does NOT work** (even with an embedded `__TEXT,__info_plist`
+section: the request fails "Could not request QCameraPermission", `tccutil` can't find the id, the
+app never appears in System Settings ▸ Camera — we tried and abandoned that path); (2)
+**`qt_import_plugins(pokedex_tcg INCLUDE Qt6::QDarwinCameraPermissionPlugin)`** — brew's Qt is STATIC
+so the permission plugin is a `.a` that must be explicitly imported (Qt doesn't auto-import them),
+else `QCameraPermission` has no handler ("Could not find permission plugin"). Because it's a bundle,
+the binary is `build/pokedex_tcg.app/Contents/MacOS/pokedex_tcg`: **dev.sh** runs that inner path
+(bundle-recognized, logs still in the terminal), **install.sh**/CMake install the whole `.app` + a
+`pokedex` symlink into it, README points at the `.app`. Reset the grant with `tccutil reset Camera
+com.mazuh.pokedex-tcg` (after first launch). The captured frame is not persisted — see
+`docs/ai-assistant.md`.
+`gui/services/` holds `MediaService` (Pokémon artwork fetch+cache), `CardSearchService`
 (card search transport — search results/thumbnails are **display/memory-only, never
 cached to disk**; the lone exception is the small, near-static set table, which — when a
 `CardSetCache` is injected — is loaded from disk on startup if younger than a 24h TTL

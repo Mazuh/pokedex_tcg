@@ -33,6 +33,23 @@ void AssistantService::ask(const QString& prompt) {
         Q_EMIT failed(tr("Please type something to ask."));
         return;
     }
+    AiPrompt aiPrompt;
+    aiPrompt.userText = trimmed.toStdString();
+    ask(aiPrompt);
+}
+
+void AssistantService::cancelPending() {
+    // Advance the generation so the in-flight reply's captured generation no longer
+    // matches — its finished handler will drop it instead of emitting. No network abort
+    // is needed: the reply still arrives and is deleteLater'd, just never delivered.
+    ++generation_;
+}
+
+void AssistantService::ask(const AiPrompt& aiPrompt) {
+    if (aiPrompt.userText.empty() && aiPrompt.images.empty()) {
+        Q_EMIT failed(tr("Please provide something to send."));
+        return;
+    }
 
     // The key is read fresh each call so a change in Settings applies with no restart.
     const std::optional<std::string> apiKey = readConfigValue(kAssistantApiKeyConfigKey);
@@ -41,8 +58,6 @@ void AssistantService::ask(const QString& prompt) {
         return;
     }
 
-    AiPrompt aiPrompt;
-    aiPrompt.userText = trimmed.toStdString();
     const AiRequest req = assistant_.buildRequest(aiPrompt, *apiKey);
 
     QNetworkRequest request{QUrl(QString::fromStdString(req.url))};

@@ -57,6 +57,11 @@ AssistantPromptDialog::AssistantPromptDialog(AssistantService& service, QWidget*
         setBusy(false);
     });
 
+    // Orphan any reply still in flight when this dialog closes, so the shared service
+    // can't deliver it to a later-opened caller (e.g. its answer surfacing against a
+    // fresh dialog with no visible question).
+    connect(this, &QDialog::finished, this, [this](int) { service_.cancelPending(); });
+
     auto* layout = new QVBoxLayout(this);
     layout->addWidget(heading);
     layout->addWidget(subtitle);

@@ -178,6 +178,29 @@ void AddCardCopyPage::chooseSet(const CardSetInfo& set) {
     form_->setCardReference(ref);
 }
 
+void AddCardCopyPage::prefillFrom(const QString& cardName, const QString& setName,
+                                 const QString& setCode, const QString& collectorNumber) {
+    // Write the read-off identity onto the form first, as a baseline the search can't lose:
+    // even if the finder flakes or lists nothing, the set + number still save (and pricing
+    // resolves from them). setCardReference is silent (no referenceEdited), so it doesn't
+    // trip checkUnmatch.
+    CardReference ref;
+    ref.name = cardName.toStdString();
+    ref.setName = setName.toStdString();
+    ref.expansionCode = setCode.toStdString();
+    ref.collectorNumber = collectorNumber.toStdString();
+    form_->setCardReference(ref);
+
+    // Then drive the finder (name-search mode here) so the catalog lists this card's
+    // printings and a pick autofills the full identity + image. The card name is the
+    // name-mode query; fall back to the set when there's no name to search on.
+    const QString query = !cardName.isEmpty() ? cardName : setName;
+    if (!query.isEmpty()) {
+        finder_->searchFor(query);
+    }
+    updateSubmitEnabled();  // the prefilled collector number may already satisfy submit
+}
+
 void AddCardCopyPage::reuseLastFields() {
     if (!lastAdded_.has) {
         return;  // button is disabled in this case, but guard anyway

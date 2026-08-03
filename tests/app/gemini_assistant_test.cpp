@@ -64,6 +64,41 @@ TEST(GeminiAssistantTest, EncodesSystemInstructionWhenPresent) {
     EXPECT_TRUE(bodyContains(req, "Be brief."));
 }
 
+// A text-only prompt carries no inline_data and no generationConfig — the plain
+// prompt path stays byte-for-byte the shape it always was.
+TEST(GeminiAssistantTest, TextOnlyPromptHasNoImageOrJsonConfig) {
+    GeminiAssistant assistant;
+    const AiRequest req = assistant.buildRequest({.userText = "Hi"}, "k");
+
+    EXPECT_FALSE(bodyContains(req, "inline_data"));
+    EXPECT_FALSE(bodyContains(req, "generationConfig"));
+}
+
+// An image part becomes an inline_data part with its mime type and base64 payload,
+// alongside the text part.
+TEST(GeminiAssistantTest, EncodesInlineImagePart) {
+    GeminiAssistant assistant;
+    pokedex::AiPrompt prompt{.userText = "Read this card."};
+    prompt.images.push_back({.mimeType = "image/jpeg", .base64Data = "QUJD"});
+    const AiRequest req = assistant.buildRequest(prompt, "k");
+
+    EXPECT_TRUE(bodyContains(req, "inline_data"));
+    EXPECT_TRUE(bodyContains(req, "image/jpeg"));
+    EXPECT_TRUE(bodyContains(req, "QUJD"));
+    EXPECT_TRUE(bodyContains(req, "Read this card."));  // text part still present
+}
+
+// The JSON-response hint emits generationConfig.responseMimeType so the model
+// returns raw JSON.
+TEST(GeminiAssistantTest, EmitsJsonResponseHint) {
+    GeminiAssistant assistant;
+    const AiRequest req =
+        assistant.buildRequest({.userText = "Hi", .wantsJsonResponse = true}, "k");
+
+    EXPECT_TRUE(bodyContains(req, "generationConfig"));
+    EXPECT_TRUE(bodyContains(req, "application/json"));
+}
+
 // A well-formed success payload yields the concatenated candidate text.
 TEST(GeminiAssistantTest, ParsesCandidateText) {
     GeminiAssistant assistant;
