@@ -3,6 +3,7 @@
 #include <QString>
 #include <QWidget>
 
+class QComboBox;
 class QLabel;
 class QLineEdit;
 class QPushButton;
@@ -10,10 +11,10 @@ class QPushButton;
 namespace pokedex {
 
 // GUI — the Settings section of the main window: the app's configuration screen.
-// Today it holds a single setting — the collection *workspace* folder — which is
-// persisted to (and loaded from) the same one-line `config` file the app already
-// uses to remember where the collection lives (storage/workspace.h). More settings
-// can join it later as new rows on the same form.
+// Today it holds two settings — the collection *workspace* folder and the *default
+// card language* pre-selected when adding a new copy — persisted to (and loaded from)
+// the same `config` file the app already uses (storage/workspace.h, a small key=value
+// store). More settings can join them as new rows on the same form.
 //
 // The whole page is one form applied MANUALLY: edits are staged in the fields and
 // only committed when the user presses "Save changes" (the primary button). This
@@ -56,16 +57,18 @@ private:
     bool save();
     // Open a folder picker seeded at the current field value.
     void browse();
-    // Recompute the dirty state from the field vs. the saved baseline and update the
+    // Recompute the dirty state from the fields vs. the saved baselines and update the
     // Save button's enabled state + the restart hint's visibility.
     void refreshDirtyState();
 
     QLineEdit* workspaceEdit_;
+    QComboBox* languageEdit_;
     QPushButton* saveButton_;
     QLabel* dirtyHint_;
-    // The workspace path last written/loaded — the clean baseline the field is
-    // compared against to decide dirtiness.
+    // The values last written/loaded — the clean baselines the fields are compared
+    // against to decide dirtiness.
     QString savedWorkspace_;
+    QString savedLanguage_;
 };
 
 }  // namespace pokedex

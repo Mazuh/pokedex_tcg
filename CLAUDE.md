@@ -340,18 +340,30 @@ shows a compact "Wishlist (N)" / "Wishlist (none)" button (reading the source co
 (`PokemonListView`, `BinderView`) turn that into a `WishlistEditPage` push, and on Back
 re-show the species so the counter refreshes (the binder guide also `refresh()`es, since
 a wishlist change can flip a species' `CollectionStatus` between Missing and Wished).
-The **Settings section** (`SettingsView`) is the app's configuration screen — today one
-setting, the collection **workspace folder**, loaded from and saved to the same one-line
-`config` file the app already uses (`storage/workspace.h`). Unlike every other page (which
-writes straight through), it is a **manually-applied form**: edits are staged in the field
-and committed only by the accented "Save changes" primary button, which validates+opens the
-target via `openWorkspace` (creating/migrating it, the relaunch path) *before*
-`writeConfiguredWorkspacePath` — a switch takes effect on the **next launch** (a muted note
-says so while dirty). Because leaving a staged form would silently drop edits, `MainWindow`
-**guards every section switch** (and the window close) through `SettingsView::confirmLeave`
-(Save / Discard / Cancel); on Cancel it snaps the sidebar selection back to Settings via a
-**queued** `setCurrentRow` (an inline revert gets overwritten by the list's own in-progress
-key/click handling, leaving the highlight on the new row while the page stays on Settings).
+The **Settings section** (`SettingsView`) is the app's configuration screen — today two
+settings: the collection **workspace folder** and the **default card language**, both loaded
+from and saved to the `config` file the app already uses (`storage/workspace.h`). That file
+is now a tiny **`key=value` store** (`readConfigValue`/`writeConfigValue` over an internal
+load→map→write, one setting per line, `std::map`-sorted; every write *merges* so one setting
+never clobbers another) — with **back-compat** for the old single-bare-path format (a first
+line with no `=` is read as the workspace path, and the first write upgrades the file);
+`readConfiguredWorkspacePath`/`writeConfiguredWorkspacePath` are now thin wrappers over the
+reserved `workspace` key. Unlike every other page (which writes straight through), Settings is
+a **manually-applied form**: edits are staged in the fields and committed only by the accented
+"Save changes" primary button, which validates+opens the workspace via `openWorkspace`
+(creating/migrating it, the relaunch path) *before* recording both settings. A **workspace**
+switch takes effect on the **next launch** (a muted note says so while the workspace field is
+dirty — the note is workspace-only); the **default language** applies **live** — `AddCardCopyPage`
+reads it (`readConfigValue(kDefaultLanguageConfigKey)`) fresh per open and pre-selects it on the
+form for a new copy (reuse-last / a manual pick still override), so a change needs no restart.
+The language code list is the shared `gui/views/language_codes.h` (also the config-key constant),
+used by both the card form's Language picker and this screen so they can't drift. Because leaving
+a staged form would silently drop edits, `MainWindow` **guards every section switch** (and the
+window close) through `SettingsView::confirmLeave` (Save / Discard / Cancel); on Cancel it snaps
+the sidebar selection back to Settings via a **queued** `setCurrentRow` (an inline revert gets
+overwritten by the list's own in-progress key/click handling, leaving the highlight on the new
+row while the page stays on Settings). `showEvent` reloads from config only when `!isDirty()`, so
+a spontaneous re-show (Cmd+H / minimize) never wipes staged edits.
 `PokemonDetailPanel` is the **single inspector** shared by all three card surfaces —
 the Pokémon browser, the binder guide, and My Cards (`CardImagePanel` was deleted). Top
 to bottom it renders: the card's name (falling back to the species name), a printed

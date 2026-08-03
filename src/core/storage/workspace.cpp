@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <fstream>
+#include <map>
 #include <string>
 
 #include "core/storage/database.h"  // StorageError
@@ -11,6 +12,9 @@ namespace pokedex {
 namespace fs = std::filesystem;
 
 namespace {
+
+// The reserved key under which the workspace path is stored in the config file.
+constexpr const char* kWorkspaceKey = "workspace";
 
 // Return the value of environment variable `name`, or nullopt when it is unset
 // or empty (an empty override is treated as "not set").
@@ -37,6 +41,59 @@ std::string trim(const std::string& s) {
     return std::string(begin, end);
 }
 
+// Parse the config file into a key→value map. The format is one `key=value` per line;
+// blank lines are skipped. For backward compatibility with the pre-key-value format
+// (which stored just the bare workspace path on the first line), a first line without
+// an '=' is taken as the workspace path. std::map keeps writes deterministic (sorted).
+std::map<std::string, std::string> loadConfigMap() {
+    std::map<std::string, std::string> config;
+    const fs::path file = configFilePath();
+    std::error_code ec;
+    if (!fs::exists(file, ec)) {
+        return config;
+    }
+    std::ifstream in(file);
+    if (!in) {
+        return config;
+    }
+    std::string line;
+    bool firstLine = true;
+    while (std::getline(in, line)) {
+        const std::string trimmed = trim(line);
+        if (!trimmed.empty()) {
+            const auto eq = trimmed.find('=');
+            if (eq == std::string::npos) {
+                // Legacy bare-path line: only the very first line meant anything.
+                if (firstLine) {
+                    config[kWorkspaceKey] = trimmed;
+                }
+            } else {
+                config[trim(trimmed.substr(0, eq))] = trim(trimmed.substr(eq + 1));
+            }
+        }
+        firstLine = false;
+    }
+    return config;
+}
+
+// Write the whole key→value map back to the config file, creating the config dir as
+// needed. Throws StorageError if the write/flush fails (the caller relies on the file
+// actually landing — e.g. losing the workspace path locks the user out of their folder).
+void writeConfigMap(const std::map<std::string, std::string>& config) {
+    const fs::path file = configFilePath();
+    std::error_code ec;
+    fs::create_directories(configDir(), ec);
+
+    std::ofstream out(file, std::ios::trunc);
+    for (const auto& [key, value] : config) {
+        out << key << '=' << value << '\n';
+    }
+    out.close();  // flush; sets failbit if the write/flush failed
+    if (!out) {
+        throw StorageError("could not write config file: " + file.string());
+    }
+}
+
 }  // namespace
 
 Workspace::Workspace(fs::path root) : root_(std::move(root)) {}
@@ -61,39 +118,37 @@ fs::path configDir() {
 fs::path configFilePath() { return configDir() / "config"; }
 
 std::optional<fs::path> readConfiguredWorkspacePath() {
-    const fs::path file = configFilePath();
-    std::error_code ec;
-    if (!fs::exists(file, ec)) {
-        return std::nullopt;
+    if (auto value = readConfigValue(kWorkspaceKey)) {
+        return fs::path(*value);
     }
-    std::ifstream in(file);
-    if (!in) {
-        return std::nullopt;
-    }
-    std::string line;
-    std::getline(in, line);
-    const std::string path = trim(line);
-    if (path.empty()) {
-        return std::nullopt;
-    }
-    return fs::path(path);
+    return std::nullopt;
 }
 
 void writeConfiguredWorkspacePath(const fs::path& workspaceRoot) {
-    const fs::path file = configFilePath();
-    std::error_code ec;
-    fs::create_directories(configDir(), ec);
+    // Merge the path into the existing config so a workspace change never drops other
+    // settings (e.g. the default language). If we cannot record the path, the user
+    // would be sent back to first-run and locked out of their now-populated folder by
+    // the emptiness guard, so writeConfigMap fails loudly.
+    writeConfigValue(kWorkspaceKey, workspaceRoot.string());
+}
 
-    std::ofstream out(file, std::ios::trunc);
-    out << workspaceRoot.string() << '\n';
-    out.close();  // flush; sets failbit if the write/flush failed
-
-    // If we cannot record the workspace path, the user would be sent back to
-    // first-run on next launch and locked out of their now-populated folder by
-    // the emptiness guard. Fail loudly instead so init as a whole fails.
-    if (!out) {
-        throw StorageError("could not write workspace config file: " + file.string());
+std::optional<std::string> readConfigValue(const std::string& key) {
+    const std::map<std::string, std::string> config = loadConfigMap();
+    const auto it = config.find(key);
+    if (it == config.end() || it->second.empty()) {
+        return std::nullopt;
     }
+    return it->second;
+}
+
+void writeConfigValue(const std::string& key, const std::string& value) {
+    std::map<std::string, std::string> config = loadConfigMap();
+    if (value.empty()) {
+        config.erase(key);  // an empty value clears the setting rather than storing blank
+    } else {
+        config[key] = value;
+    }
+    writeConfigMap(config);
 }
 
 }  // namespace pokedex

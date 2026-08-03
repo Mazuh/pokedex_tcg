@@ -1,5 +1,6 @@
 #include "gui/views/settings_view.h"
 
+#include <QComboBox>
 #include <QDir>
 #include <QFileDialog>
 #include <QFont>
@@ -14,9 +15,12 @@
 #include <exception>
 #include <filesystem>
 #include <optional>
+#include <string>
 
 #include "core/app/install_service.h"
 #include "core/storage/workspace.h"
+#include "gui/views/empty_option.h"
+#include "gui/views/language_codes.h"
 #include "gui/views/primary_button.h"
 #include "gui/views/toast.h"
 
@@ -57,10 +61,29 @@ SettingsView::SettingsView(QWidget* parent) : QWidget(parent) {
     workspaceHelp->setEnabled(false);
     workspaceHelp->setWordWrap(true);
 
+    // --- Default language setting -----------------------------------------
+    // The language pre-selected in the "Add copy" form for a fresh copy — handy when a
+    // whole collection (or booster) is one language. Shares the card form's code list so
+    // the two pickers never drift; the leading blank entry means "no default".
+    languageEdit_ = new QComboBox(this);
+    for (const QString& code : languageCodes()) {
+        languageEdit_->addItem(code.isEmpty() ? noneOptionLabel() : code, code);
+    }
+    connect(languageEdit_, &QComboBox::activated, this, &SettingsView::refreshDirtyState);
+
+    auto* languageHelp = new QLabel(
+        tr("Pre-selected as the language when you add a new card. You can still change it "
+           "per card. Takes effect on the next card you add — no restart needed."),
+        this);
+    languageHelp->setEnabled(false);
+    languageHelp->setWordWrap(true);
+
     auto* form = new QFormLayout;
     form->setLabelAlignment(Qt::AlignLeft);
     form->addRow(tr("Workspace folder"), workspaceRow);
     form->addRow(QString(), workspaceHelp);
+    form->addRow(tr("Default language"), languageEdit_);
+    form->addRow(QString(), languageHelp);
 
     // A muted note that a workspace change is a next-launch change, shown only while
     // the form is dirty (there's nothing pending to restart for otherwise).
@@ -106,21 +129,35 @@ void SettingsView::showEvent(QShowEvent* event) {
 }
 
 void SettingsView::loadFromConfig() {
-    // The single source of truth for "where the workspace lives" is the config file.
+    // The config file is the single source of truth for both settings.
     const std::optional<std::filesystem::path> configured = readConfiguredWorkspacePath();
     savedWorkspace_ =
         configured ? QString::fromStdString(configured->string()) : QString();
-    workspaceEdit_->setText(savedWorkspace_);  // triggers refreshDirtyState → clean
+
+    const std::optional<std::string> lang = readConfigValue(kDefaultLanguageConfigKey);
+    const QString langCode = lang ? QString::fromStdString(*lang) : QString();
+    int langIndex = languageEdit_->findData(langCode);
+    if (langIndex < 0) {
+        langIndex = 0;  // an unrecognized stored code falls back to "no default"
+    }
+    // Set the language baseline before touching any widget, so a stray signal (e.g. the
+    // workspace setText below) computing dirtiness sees a consistent, clean baseline.
+    savedLanguage_ = languageEdit_->itemData(langIndex).toString();
+    languageEdit_->setCurrentIndex(langIndex);  // activated-only, so no dirty signal here
+    workspaceEdit_->setText(savedWorkspace_);   // triggers refreshDirtyState → clean
+    refreshDirtyState();
 }
 
 bool SettingsView::isDirty() const {
-    return workspaceEdit_->text().trimmed() != savedWorkspace_;
+    return workspaceEdit_->text().trimmed() != savedWorkspace_ ||
+           languageEdit_->currentData().toString() != savedLanguage_;
 }
 
 void SettingsView::refreshDirtyState() {
-    const bool dirty = isDirty();
-    saveButton_->setEnabled(dirty);
-    dirtyHint_->setVisible(dirty);
+    saveButton_->setEnabled(isDirty());
+    // The restart caveat is workspace-only (the language applies to the next add live),
+    // so show it only while the workspace field itself differs from what's saved.
+    dirtyHint_->setVisible(workspaceEdit_->text().trimmed() != savedWorkspace_);
 }
 
 void SettingsView::browse() {
@@ -140,26 +177,34 @@ bool SettingsView::save() {
         return false;
     }
 
+    const QString language = languageEdit_->currentData().toString();
+    const bool workspaceChanged = (text != savedWorkspace_);
+
     try {
         // Validate + set up the target like the relaunch path: openWorkspace is
         // permissive (it creates/migrates the folder), so this both proves the path is
         // usable now and prepares an existing workspace to be switched to. Only after
-        // it succeeds do we record the path in the config file.
+        // it succeeds do we record the settings in the config file. Both writes merge
+        // into the same key=value file, so neither clobbers the other.
         openWorkspace(std::filesystem::path(text.toStdString()));
         writeConfiguredWorkspacePath(std::filesystem::path(text.toStdString()));
+        writeConfigValue(kDefaultLanguageConfigKey, language.toStdString());
     } catch (const std::exception& e) {
         QMessageBox::critical(
             this, tr("Settings"),
-            tr("Could not use that workspace folder:\n%1").arg(QString::fromUtf8(e.what())));
+            tr("Could not save settings:\n%1").arg(QString::fromUtf8(e.what())));
         return false;  // leave the form dirty so the user can correct it
     }
 
-    const bool changed = (text != savedWorkspace_);
     savedWorkspace_ = text;
+    savedLanguage_ = language;
     workspaceEdit_->setText(text);  // normalize the field to the saved value
     refreshDirtyState();
-    showToast(this, changed ? tr("Saved — restart the app to open the new workspace.")
-                            : tr("Settings saved."));
+    // The workspace change is the only one needing a restart; a language-only change is
+    // live, so don't nag about restarting when the folder didn't move.
+    showToast(this, workspaceChanged
+                        ? tr("Saved — restart the app to open the new workspace.")
+                        : tr("Settings saved."));
     return true;
 }
 

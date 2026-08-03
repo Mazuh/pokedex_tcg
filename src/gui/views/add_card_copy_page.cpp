@@ -12,12 +12,14 @@
 
 #include <exception>
 #include <optional>
+#include <string>
 #include <utility>
 
 #include "core/app/binder_service.h"
 #include "core/app/card_catalog_dto.h"
 #include "core/app/card_copy_service.h"
 #include "core/domain/card_reference.h"
+#include "core/storage/workspace.h"
 #include "gui/services/card_image_store.h"
 #include "gui/services/card_price_lookup_service.h"
 #include "gui/views/back_button.h"
@@ -25,6 +27,7 @@
 #include "gui/views/card_copy_splitter.h"
 #include "gui/views/card_finder_panel.h"
 #include "gui/views/card_price_fetch_controller.h"
+#include "gui/views/language_codes.h"
 #include "gui/views/photo_upload.h"
 #include "gui/views/primary_button.h"
 #include "gui/views/rarity_from_catalog.h"
@@ -70,6 +73,14 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
     form_->setReferenceEditable(true);
     // Unscoped: a free binder choice ("— None —"). Scoped: pre-filled + locked.
     form_->setupBinderPicker(binders.list(), lockedBinder_, /*enabled=*/!lockedBinder_);
+    // Pre-select the user's default card language (Settings) on a fresh add, read live
+    // from the config file so a change takes effect on the next add with no restart. A
+    // reuse-last carry-over or a manual pick still overrides it. Read here (the page is
+    // built fresh per open) rather than threaded through every host.
+    if (const std::optional<std::string> defaultLang =
+            readConfigValue(kDefaultLanguageConfigKey)) {
+        form_->setLanguage(*defaultLang);
+    }
     // A user edit that no longer matches the picked card drops the preview; the
     // required collector number gates submit.
     connect(form_, &CardCopyForm::referenceEdited, this, [this]() {

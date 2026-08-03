@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <string>
 
 namespace pokedex {
 
@@ -37,6 +38,17 @@ std::filesystem::path configFilePath();
 std::optional<std::filesystem::path> readConfiguredWorkspacePath();
 
 // Record `workspaceRoot` in the config file, creating the config dir as needed.
+// Preserves any other settings already recorded (the file is a key=value store; the
+// workspace path is just one reserved key).
 void writeConfiguredWorkspacePath(const std::filesystem::path& workspaceRoot);
+
+// The config file is a tiny `key = value` store (one setting per line) — the workspace
+// path is one reserved key; these read/write any *other* named setting (e.g. the user's
+// default card language). Reading returns nullopt when the key is absent or its value is
+// empty. Writing merges the value in, preserving every other key; an empty value clears
+// the key rather than storing a blank. (An older format stored just the bare workspace
+// path on line 1 with no key; it is still read, and the first write upgrades the file.)
+std::optional<std::string> readConfigValue(const std::string& key);
+void writeConfigValue(const std::string& key, const std::string& value);
 
 }  // namespace pokedex

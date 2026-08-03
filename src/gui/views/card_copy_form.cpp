@@ -18,6 +18,7 @@
 #include "gui/views/condition_labels.h"
 #include "gui/views/empty_option.h"
 #include "gui/views/foil_labels.h"
+#include "gui/views/language_codes.h"
 #include "gui/views/muted_text.h"
 #include "gui/views/ownership_labels.h"
 #include "gui/views/rarity_labels.h"
@@ -25,14 +26,6 @@
 namespace pokedex {
 
 namespace {
-
-// The card languages this project recognizes (English-only source can't fill this,
-// so it is always the user's choice). Leading blank = "unspecified".
-const QStringList& languageCodes() {
-    static const QStringList codes = {"", "EN", "FR", "DE", "IT", "ES",
-                                      "LA", "PT", "C",  "F",  "T",  "I"};
-    return codes;
-}
 
 // The enum values each picker and its info popover iterate — the single lists, so a
 // new enumerator flows into both the combo and the explanation automatically. The
