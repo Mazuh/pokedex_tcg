@@ -201,6 +201,15 @@ void AddCardCopyPage::prefillFrom(const QString& cardName, const QString& setNam
     updateSubmitEnabled();  // the prefilled collector number may already satisfy submit
 }
 
+void AddCardCopyPage::prefillSetSearch(const QString& setQuery) {
+    // Species-scoped add from a scan: drive the finder's set search only, leaving the form
+    // blank so the user picks the printing (which autofills the identity + image). Nothing
+    // is written to the form — the picked card is the deterministic source of truth.
+    if (!setQuery.trimmed().isEmpty()) {
+        finder_->searchFor(setQuery);
+    }
+}
+
 void AddCardCopyPage::reuseLastFields() {
     if (!lastAdded_.has) {
         return;  // button is disabled in this case, but guard anyway

@@ -74,6 +74,11 @@ Q_SIGNALS:
     // emitted for a reading with a non-empty query (the button is disabled otherwise).
     void cardResolved(const ScannedCard& scanned);
 
+    // The user wants to create the card directly (skipping the search). `dexNumber` is the
+    // detected species (>0) so the host opens that species' add-copy page, or 0 for a card
+    // that names no species so the host opens the species-free "add a card" page.
+    void addRequested(const ScannedCard& reading, int dexNumber);
+
     // The user pressed Back — the host returns to the section it came from.
     void backRequested();
 
@@ -131,6 +136,7 @@ private:
     // Right-hand "first impressions": owned-name match count + the detected Pokémon line.
     QLabel* matchEstimate_ = nullptr;
     QLabel* speciesLabel_ = nullptr;
+    QPushButton* addButton_ = nullptr;  // "Add this card" — jumps straight to creation
     OwnedNameMatcher ownedNameMatcher_;  // supplied by the host; empty = no estimate
     QPushButton* scanButton_;
     QPushButton* retakeButton_;  // "Retake" — resume the live camera after a capture

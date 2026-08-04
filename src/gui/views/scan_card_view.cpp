@@ -146,11 +146,27 @@ ScanCardView::ScanCardView(AssistantService& service, OwnedNameMatcher ownedName
     matchEstimate_->setWordWrap(true);
     speciesLabel_ = new QLabel(rightPanel);    // "Pokémon: Charizard · #6 · Kanto"
     speciesLabel_->setWordWrap(true);
+
+    // Skip the search and go straight to creation: for a booster where the user already
+    // knows they don't own the card, "Search my cards" is a wasted step. The host routes
+    // this to the right add page (that species', or the species-free one) from the reading.
+    // A plain button, not the accent: "Scan" is already the view's one accented primary
+    // action, and a second accent would stop the accent reliably signalling the primary.
+    addButton_ = new QPushButton(tr("Add this card"), rightPanel);
+    addButton_->setEnabled(false);
+    connect(addButton_, &QPushButton::clicked, this, [this]() {
+        const ScannedCard reading = currentReading();
+        const std::optional<PokemonDexNum> dex = detectScannedSpecies(reading.cardName);
+        Q_EMIT addRequested(reading, dex.value_or(0));
+    });
+
     auto* rightLayout = new QVBoxLayout(rightPanel);
     rightLayout->setContentsMargins(16, 0, 0, 0);
     rightLayout->addWidget(impressionsHeading);
     rightLayout->addWidget(matchEstimate_);
     rightLayout->addWidget(speciesLabel_);
+    rightLayout->addSpacing(8);
+    rightLayout->addWidget(addButton_, 0, Qt::AlignLeft);
     rightLayout->addStretch(1);
 
     auto* resultLayout = new QHBoxLayout(resultForm_);
@@ -454,6 +470,9 @@ void ScanCardView::showResult() {
         queryEdit_->setText(QString::fromStdString(lastScan_.query));
     }
     useButton_->setEnabled(!queryEdit_->text().trimmed().isEmpty());
+    // "Add this card" needs no query — any read card can be created. It's a child of the
+    // (now visible) result form, so it's only reachable while a reading is shown.
+    addButton_->setEnabled(true);
     updateFirstImpressions();
 }
 

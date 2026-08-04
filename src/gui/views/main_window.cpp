@@ -145,18 +145,46 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
     // refreshes its owned-name matcher and shows it.
     auto* scanView = new ScanCardView(assistant);
     const int scanRow = sections_->addWidget(scanView);
+    // Make section `row` the visible one, coming FROM the scan page. Normally this is a
+    // sidebar row change; but when the sidebar already highlights `row` (the scan was
+    // opened from that very section), currentRowChanged won't fire, so switch the page
+    // directly. Leaving Settings was already reconciled when the scan opened (showScan
+    // runs confirmLeave), so no dirty-form prompt can fire here.
+    const auto goToSection = [this, sidebar](int row) {
+        if (sidebar->currentRow() == row) {
+            currentRow_ = row;
+            sections_->setCurrentIndex(row);
+        } else {
+            sidebar->setCurrentRow(row);
+        }
+    };
     connect(scanView, &ScanCardView::cardResolved, this,
-            [this, sidebar, ownedView](const ScannedCard& scanned) {
+            [goToSection, ownedView](const ScannedCard& scanned) {
                 // Route the reading into My Cards (fills its search + stashes the scan for
-                // the next "Add a card") and show that section. If the sidebar already
-                // highlights My Cards (scan was opened from there), its row-change signal
-                // won't fire, so switch the page directly.
+                // the next "Add a card") and show that section.
                 ownedView->applyScannedCard(scanned);
-                if (sidebar->currentRow() == 2) {
-                    currentRow_ = 2;
-                    sections_->setCurrentIndex(2);
+                goToSection(2);
+            });
+    connect(scanView, &ScanCardView::addRequested, this,
+            [goToSection, pokemonView, ownedView](const ScannedCard& reading, int dex) {
+                // Go straight to creation. A detected species opens that species' add-copy
+                // page with the set search pre-seeded; otherwise the species-free "add a
+                // card" page opens with the read name. The target section must be current
+                // BEFORE the inner add page is pushed, so switch first.
+                if (dex > 0) {
+                    const QString species = speciesName(dex);
+                    // Prefer the printed set code (abbreviation), else the full set name.
+                    // The finder only auto-searches at 3+ chars, so a short code (e.g.
+                    // "BS") also falls back to the name so the set still lists.
+                    QString setQuery = QString::fromStdString(reading.setCode).trimmed();
+                    if (setQuery.size() < 3) {
+                        setQuery = QString::fromStdString(reading.setName);
+                    }
+                    goToSection(1);  // Pokémon browser
+                    pokemonView->openAddCopy(dex, species, setQuery);
                 } else {
-                    sidebar->setCurrentRow(2);
+                    goToSection(2);  // My Cards
+                    ownedView->startAddScannedCard(reading);
                 }
             });
     connect(scanView, &ScanCardView::backRequested, this,

@@ -63,19 +63,28 @@ the wrong card, it just yields a search the user reviews.
    note }`. It strips ``` fences / prose, never throws, and — for an identified card
    that omitted the query — synthesizes one from set + number. An unreadable card is
    `identified=false` with a `note` the view shows so the user can reposition.
-4. **Review.** The reading is shown as **editable fields** (Card / Set / Set code /
-   Number / Search) so the user can fix a misread letter or digit before it's used, with
-   a muted **owned-name match estimate** ("(N possible matches in your cards)") beside the
-   Card field as a quick "have I already added this?" read (MainWindow supplies a snapshot
-   matcher via `ScanCardView::setOwnedNameMatcher`, so the view stays storage-free).
-5. **Search.** On *Search my cards* the view emits `cardResolved(ScannedCard)` carrying
-   the fields **as edited**; `MainWindow` fills the **My Cards** live search with `query`
-   (so the user instantly sees whether they already own it) and switches there.
-6. **Add (optional).** The scan is stashed on `OwnedCardsView`; the next *Add a card*
-   consumes it once, pre-filling the add page's form fields **and** driving its finder
-   search (`AddCardCopyPage::prefillFrom`). The finder pick still goes through the real
-   card catalog, so the saved copy is a trustworthy printing, not the LLM's verbatim
-   reading.
+4. **Review.** The reading is shown split in half: on the **left**, **editable fields**
+   (Card / Set / Set code / Number / Search) so the user can fix a misread letter or digit
+   before they're used; on the **right**, **"first impressions"** — a muted owned-name
+   match count ("N of your cards may match this name") as a "have I already added this?"
+   read (MainWindow supplies a snapshot matcher via `ScanCardView::setOwnedNameMatcher`, so
+   the view stays storage-free), and the **detected Pokémon** (species name, dex #, region)
+   via `detectScannedSpecies` (core, Qt-free: whole-word token match of the card name
+   against the National Pokédex catalog — "Ash's Pikachu"→Pikachu, "Mewtwo"≠Mew, "Parasol
+   Lady"→nothing).
+5. **Search (optional).** On *Search my cards* the view emits `cardResolved(ScannedCard)`
+   carrying the fields **as edited**; `MainWindow` fills the **My Cards** live search with
+   `query` (so the user sees whether they already own it) and switches there. From there
+   the next *Add a card* consumes the stash (`OwnedCardsView` → `AddCardCopyPage::prefillFrom`).
+6. **Add directly.** *Add this card* (right panel) skips the search — for a booster where
+   the user already knows they don't own it — via `addRequested(reading, dexNumber)`.
+   MainWindow routes it: a **detected species** opens that species' add-copy page with only
+   the finder's set search pre-seeded (`PokemonListView::openAddCopy` →
+   `AddCardCopyPage::prefillSetSearch`, using the set **code**, or the full name when the
+   code is too short to auto-search); a **non-Pokémon** opens the species-free add page with
+   only the read name in the by-name finder (`OwnedCardsView::startAddScannedCard`). Either
+   way the finder pick goes through the real card catalog, so the saved copy is a
+   trustworthy printing — the LLM's reading only seeds the search.
 
 ### Wire + config notes
 

@@ -439,20 +439,33 @@ degrades an unreadable card to `identified=false` + a `note`). The `query` is a 
 string (a distinctive slice of the English set name — or the set code — plus the collector number,
 e.g. `collection 2021 1/25`) tuned for the existing **flexible My Cards substring search** (which
 matches a **contiguous** slice of a column-ordered haystack, so the query is NOT regenerated from
-the full set name). The reading is shown as **editable fields** (Card / Set / Set code / Number /
-Search) so the user can fix a misread letter/digit; `cardResolved` carries the fields **as edited**
-(`currentReading()`). Beside the Card field a muted **owned-name match estimate** ("(N possible
-matches in your cards)") gives a quick "have I already added this?" read — MainWindow snapshots the
-live (non-Removed) collection's display names (deduped by printing) and passes a matcher via
-`ScanCardView::setOwnedNameMatcher`, so the view stays storage-free; the count is intentionally
-**name-based** (`owned.contains(scanned)`, per the feature request) and thus complementary to the
-set+number search the button runs. On *Search my cards* the view emits `cardResolved(ScannedCard)`;
-`MainWindow` fills the My Cards live search with `query` (so the user eyeballs whether they already
-own it — the booster workflow's "have I added this?" step) and switches there. The scan is
-**stashed on `OwnedCardsView`** and the NEXT *Add a card* consumes it once
-(`AddCardCopyPage::prefillFrom` writes the set/number/name onto the form as a baseline AND drives
-the name-mode finder search) — so the deterministic catalog search still produces the trustworthy
-printing, not the LLM's verbatim reading. New GUI dependency: `Qt6::Multimedia` +
+the full set name). The reader is instructed to return the card's **official ENGLISH name**,
+translating from whatever language is printed ("Pikachu do Ash" → "Ash's Pikachu"). The reading is
+shown **split in half**: LEFT = the **editable fields** (Card / Set / Set code / Number / Search) so
+the user can fix a misread letter/digit (`cardResolved`/`addRequested` carry the fields **as
+edited**, `currentReading()`); RIGHT = **"first impressions"** — a muted **owned-name match count**
+("N of your cards may match this name", hedged since it's approximate) plus the **detected Pokémon**
+(species name, dex #, region). Detection is the Qt-free, unit-tested `detectScannedSpecies` (in
+`core/app/card_scan`): a **whole-word token match** of the card name against the National Pokédex
+catalog — names are split on whitespace and stripped of intra-word punctuation/symbols (so
+"Farfetch'd"/"Farfetchd"/"Nidoran♀" match but "Parasol Lady" does NOT falsely match "Paras"), the
+longest match wins ("Mewtwo"≠Mew), and the catalog is tokenized once into a static index (no
+per-keystroke rescan). MainWindow snapshots the live (non-Removed) collection's display names
+(deduped by printing) and passes the owned-name matcher via `ScanCardView::setOwnedNameMatcher`, so
+the view stays storage-free; the count is intentionally **name-based** (`owned.contains(scanned)`,
+per the feature request) and thus complementary to the set+number search. The panel has **two
+actions**: *Search my cards* (emits `cardResolved` → `MainWindow` fills the My Cards live search
+with `query` and switches there; the scan is **stashed on `OwnedCardsView`** and the NEXT *Add a
+card* consumes it via `AddCardCopyPage::prefillFrom`) and *Add this card* (emits
+`addRequested(reading, dexNumber)` to **skip the search and go straight to creation**). MainWindow
+routes the add via a shared `goToSection(row)` (which handles the "sidebar already on that row →
+switch the page directly" case): a **detected species** (dex>0) opens that species' add-copy page
+with ONLY the finder's set search pre-seeded (`PokemonListView::openAddCopy` →
+`AddCardCopyPage::prefillSetSearch`, using the set **code**/abbreviation, falling back to the full
+set name when the code is <3 chars since the finder only auto-searches at 3+); a **non-Pokémon**
+(dex==0) opens the species-free add page with ONLY the read name in the by-name finder
+(`OwnedCardsView::startAddScannedCard` → `pushAddCardPage`). Either way the deterministic catalog
+finder still produces the trustworthy printing, not the LLM's verbatim reading. New GUI dependency: `Qt6::Multimedia` +
 `Qt6::MultimediaWidgets` (Ubuntu CI adds `qt6-multimedia-dev`); core stays Qt-free. **macOS camera
 permission** is handled: `startCamera()` gates on
 `qApp->checkPermission/requestPermission(QCameraPermission{})` and shows every state IN the screen

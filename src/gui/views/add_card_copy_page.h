@@ -93,6 +93,12 @@ public:
     void prefillFrom(const QString& cardName, const QString& setName, const QString& setCode,
                      const QString& collectorNumber);
 
+    // Drive the finder's set search from a scan (species-scoped add only). Sets ONLY the
+    // finder's "Find by set" query — nothing on the form — so the user picks the printing,
+    // which then autofills the whole card deterministically. Call right after construction,
+    // before the page is shown. A blank query is a no-op.
+    void prefillSetSearch(const QString& setQuery);
+
 Q_SIGNALS:
     void backRequested();
     // A copy was persisted; the host should refresh any owned-copy counts it shows.

@@ -55,6 +55,14 @@ public:
                     CardImageStore& cardImages, BinderService& binders,
                     QWidget* parent = nullptr);
 
+    // Push this species' add-copy page onto the inner stack; its Back pops and disposes it,
+    // returning to the browse splitter. `setQuery` (when non-empty) pre-seeds the finder's
+    // "Find by set" search and nothing else — the scan flow passes it after detecting a
+    // Pokémon so the user lands on that species' creation with the set already searched
+    // (the host must make this section current first, so the pushed page shows). Public so
+    // MainWindow can drive it; the detail panel's "Add copy" relays here too.
+    void openAddCopy(int dexNumber, const QString& name, const QString& setQuery = QString());
+
 signals:
     // Emitted when the user double-clicks a species that already owns copies: the host
     // (MainWindow) switches to the "My Cards" section and pre-filters its search to
@@ -96,9 +104,6 @@ private:
     // owns nothing, prompt to open the add-copy page; on one that owns copies, prompt
     // to jump to "My Cards" filtered to that species (via searchInMyCardsRequested).
     void activateRow(int row);
-    // Push an AddCardCopyPage for `dexNumber` onto the inner stack; its Back pops
-    // and disposes it, returning to the browse splitter.
-    void openAddCopy(int dexNumber, const QString& name);
     // Push an EditCardCopyPage for the owned copy `copyId` (the one the detail panel
     // is showing) onto the inner stack; Back pops it, then refreshes and re-shows the
     // just-edited copy so a change (comment, image, binder move) is reflected.

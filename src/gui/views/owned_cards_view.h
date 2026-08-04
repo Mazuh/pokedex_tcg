@@ -3,6 +3,7 @@
 #include <QString>
 #include <QWidget>
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -76,6 +77,12 @@ public:
     // by MainWindow when the Scan-a-card dialog resolves a reading.
     void applyScannedCard(const ScannedCard& scanned);
 
+    // Open the species-free "add a card" page directly for a scanned non-Pokémon card,
+    // with ONLY the read card name seeded into the finder's "Find a card by name…" search
+    // (the deterministic pick then fills the rest). The scan flow's "Add this card" button
+    // routes here; the host must make this section current first so the pushed page shows.
+    void startAddScannedCard(const ScannedCard& scanned);
+
 protected:
     void showEvent(QShowEvent* event) override;
 
@@ -131,6 +138,9 @@ private:
     // card that depicts no Pokémon) — the only place such a card can be recorded, since
     // the Pokémon browser's "Add copy" is always scoped to a species.
     void addNewCard();
+    // Build + push a species-free add page, running `prefill` on it (before it is shown)
+    // to seed the form/finder. Shared by addNewCard (the scan stash) and startAddScannedCard.
+    void pushAddCardPage(const std::function<void(AddCardCopyPage*)>& prefill);
 
     CardCopyService& copies_;
     BinderService& binders_;
