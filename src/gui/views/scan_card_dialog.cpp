@@ -17,12 +17,14 @@
 #include <QPixmap>
 #include <QPushButton>
 #include <QResizeEvent>
+#include <QSignalBlocker>
 #include <QStackedWidget>
 #include <QString>
 #include <QVBoxLayout>
 #include <QVideoWidget>
 
 #include <string>
+#include <utility>
 
 #include "core/app/card_scan.h"
 #include "gui/services/assistant_service.h"
@@ -52,8 +54,9 @@ std::string encodeJpegBase64(const QImage& frame) {
 
 }  // namespace
 
-ScanCardDialog::ScanCardDialog(AssistantService& service, QWidget* parent)
-    : QDialog(parent), service_(service) {
+ScanCardDialog::ScanCardDialog(AssistantService& service, OwnedNameMatcher ownedNameMatcher,
+                               QWidget* parent)
+    : QDialog(parent), service_(service), ownedNameMatcher_(std::move(ownedNameMatcher)) {
     setWindowTitle(tr("Scan a card"));
     setModal(true);
     resize(560, 620);
@@ -105,12 +108,23 @@ ScanCardDialog::ScanCardDialog(AssistantService& service, QWidget* parent)
         tr("The search string used to look through your cards — set (or set code) plus "
            "the collector number."));
 
+    // The Card row pairs the name field with a muted match estimate ("(3 possible
+    // matches)") — a quick "have I already added this?" read of how many owned cards
+    // share this name, updated as the reader fills it in or the user corrects it.
+    matchEstimate_ = new QLabel(resultForm_);
+    matchEstimate_->setEnabled(false);
+    auto* cardRow = new QWidget(resultForm_);
+    auto* cardRowLayout = new QHBoxLayout(cardRow);
+    cardRowLayout->setContentsMargins(0, 0, 0, 0);
+    cardRowLayout->addWidget(cardNameEdit_, 1);
+    cardRowLayout->addWidget(matchEstimate_);
+
     auto* formLayout = new QFormLayout(resultForm_);
     formLayout->setContentsMargins(0, 0, 0, 0);
     auto* readHeading = new QLabel(tr("Read from the card (edit to correct):"), resultForm_);
     readHeading->setEnabled(false);
     formLayout->addRow(readHeading);
-    formLayout->addRow(tr("Card"), cardNameEdit_);
+    formLayout->addRow(tr("Card"), cardRow);
     formLayout->addRow(tr("Set"), setNameEdit_);
     formLayout->addRow(tr("Set code"), setCodeEdit_);
     formLayout->addRow(tr("Number"), numberEdit_);
@@ -122,6 +136,9 @@ ScanCardDialog::ScanCardDialog(AssistantService& service, QWidget* parent)
             useButton_->setEnabled(!text.trimmed().isEmpty());
         }
     });
+    // Recount the estimate whenever the card name changes (reader fill-in or a correction).
+    connect(cardNameEdit_, &QLineEdit::textChanged, this,
+            [this](const QString&) { updateMatchEstimate(); });
 
     scanButton_ = new QPushButton(tr("Scan"), this);
     scanButton_->setAutoDefault(true);
@@ -343,18 +360,39 @@ void ScanCardDialog::onFailed(const QString& message) {
 }
 
 void ScanCardDialog::showResult() {
-    // Fill the editable fields from the reading.
+    // Fill the editable fields from the reading. Block the fields' textChanged during
+    // population so it doesn't drive the button/estimate updates — those are done once,
+    // explicitly, below. (Signals alone are unreliable here anyway: setText emits nothing
+    // when the value is unchanged, e.g. rescanning the same card.) The connections still
+    // fire for later manual edits.
     resultForm_->setVisible(true);
-    cardNameEdit_->setText(QString::fromStdString(lastScan_.cardName));
-    setNameEdit_->setText(QString::fromStdString(lastScan_.setName));
-    setCodeEdit_->setText(QString::fromStdString(lastScan_.setCode));
-    numberEdit_->setText(QString::fromStdString(lastScan_.collectorNumber));
-    queryEdit_->setText(QString::fromStdString(lastScan_.query));
-    // Enable "Search my cards" explicitly rather than leaning on setText's textChanged:
-    // rescanning the same card sets an identical query, which emits no textChanged, and
-    // the button (disabled by requestScan/retake) would otherwise stay greyed on a valid
-    // reading. The textChanged connection still handles later manual edits of the query.
+    {
+        const QSignalBlocker blockName(cardNameEdit_);
+        const QSignalBlocker blockQuery(queryEdit_);
+        cardNameEdit_->setText(QString::fromStdString(lastScan_.cardName));
+        setNameEdit_->setText(QString::fromStdString(lastScan_.setName));
+        setCodeEdit_->setText(QString::fromStdString(lastScan_.setCode));
+        numberEdit_->setText(QString::fromStdString(lastScan_.collectorNumber));
+        queryEdit_->setText(QString::fromStdString(lastScan_.query));
+    }
     useButton_->setEnabled(!queryEdit_->text().trimmed().isEmpty());
+    updateMatchEstimate();
+}
+
+void ScanCardDialog::updateMatchEstimate() {
+    if (!ownedNameMatcher_) {
+        matchEstimate_->clear();  // host gave no matcher — no estimate to show
+        return;
+    }
+    const QString name = cardNameEdit_->text().trimmed();
+    if (name.isEmpty()) {
+        matchEstimate_->clear();
+        return;
+    }
+    const int matches = ownedNameMatcher_(name);
+    matchEstimate_->setText(matches <= 0
+                                ? tr("none in your cards yet")
+                                : tr("%n possible match(es) in your cards", "", matches));
 }
 
 ScannedCard ScanCardDialog::currentReading() const {

@@ -4,6 +4,8 @@
 #include <QImage>
 #include <QPixmap>
 
+#include <functional>
+
 #include "core/app/card_scan.h"
 
 class QCamera;
@@ -39,9 +41,17 @@ class ScanCardDialog : public QDialog {
     Q_OBJECT
 
 public:
+    // Given a card name the reader produced, how many of the user's cards could be it —
+    // a quick "have I already added this?" estimate shown beside the Card field. The
+    // host supplies it (a snapshot of owned names), keeping the dialog free of storage.
+    // An empty function means "no estimate" (the label stays blank).
+    using OwnedNameMatcher = std::function<int(const QString& cardName)>;
+
     // `service` must outlive the dialog (it is app-owned, like the window). It is the
     // shared assistant transport; the dialog is modal, so no other caller competes.
-    explicit ScanCardDialog(AssistantService& service, QWidget* parent = nullptr);
+    // `ownedNameMatcher` is captured by value (may be empty).
+    explicit ScanCardDialog(AssistantService& service, OwnedNameMatcher ownedNameMatcher = {},
+                            QWidget* parent = nullptr);
     ~ScanCardDialog() override;
 
 protected:
@@ -66,6 +76,7 @@ private:
     void onAnswer(const QString& text);  // parse the reply → show it
     void onFailed(const QString& message);
     void showResult();           // fill the editable fields from lastScan_
+    void updateMatchEstimate();  // recount owned cards matching the Card field, show it
     // The current reading as edited in the fields (trimmed) — what cardResolved()
     // carries, so a fix the user typed (a misread letter, a wrong number) is honored.
     ScannedCard currentReading() const;
@@ -92,6 +103,8 @@ private:
     QLineEdit* setCodeEdit_ = nullptr;
     QLineEdit* numberEdit_ = nullptr;
     QLineEdit* queryEdit_ = nullptr;  // the actual search string driving My Cards
+    QLabel* matchEstimate_ = nullptr;  // "(N possible matches)" beside the Card field
+    OwnedNameMatcher ownedNameMatcher_;  // supplied by the host; empty = no estimate
     QPushButton* scanButton_;
     QPushButton* retakeButton_;  // "Retake" — resume the live camera after a capture
     QPushButton* useButton_;  // "Search my cards" — enabled once a card is identified

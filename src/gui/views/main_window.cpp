@@ -8,14 +8,23 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QPushButton>
+#include <QSet>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <memory>
+#include <utility>
+#include <vector>
+
+#include "core/app/card_copy_service.h"
+#include "core/domain/card_copy.h"
+#include "core/domain/card_ownership.h"
 #include "gui/views/about_dialog.h"
 #include "gui/views/assistant_prompt_dialog.h"
 #include "gui/views/binders_page.h"
+#include "gui/views/card_copy_labels.h"
 #include "gui/views/owned_cards_view.h"
 #include "gui/views/pokemon_list_view.h"
 #include "gui/views/scan_card_dialog.h"
@@ -177,8 +186,47 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
     // Opens the webcam Scan-a-card dialog. When it resolves a reading, route the query
     // into "My Cards" (fills its search so the user sees whether they already own it, and
     // stashes the scan so the next "Add a card" pre-fills from it) and switch there.
-    const auto showScan = [this, &assistant, sidebar, ownedView]() {
-        ScanCardDialog dialog(assistant, this);
+    const auto showScan = [this, &assistant, &cardCopies, sidebar, ownedView]() {
+        // A fresh snapshot of the live (non-Removed) collection's display names, taken at
+        // open so the dialog can estimate name matches without re-querying per keystroke.
+        // Collapse duplicate copies of the same printing to one entry (keyed by name +
+        // printed identity), so owning three of a card counts as one possible match, not
+        // three — the estimate answers "which cards could this be?", not "how many copies".
+        auto ownedNames = std::make_shared<std::vector<QString>>();
+        QSet<QString> seenPrintings;
+        for (const CardCopy& copy : cardCopies.listAll()) {
+            if (copy.ownership == CardOwnership::Removed) {
+                continue;  // history, not part of "do I already have this?"
+            }
+            const QString name = speciesOrCardName(copy).trimmed().toLower();
+            if (name.isEmpty()) {
+                continue;
+            }
+            const QString printing = name + QLatin1Char('|') +
+                                     QString::fromStdString(copy.cardRef.setName).toLower() +
+                                     QLatin1Char('|') +
+                                     QString::fromStdString(copy.cardRef.collectorNumber).toLower();
+            if (seenPrintings.contains(printing)) {
+                continue;  // another copy of a printing already counted
+            }
+            seenPrintings.insert(printing);
+            ownedNames->push_back(name);
+        }
+        ScanCardDialog::OwnedNameMatcher matcher = [ownedNames](const QString& cardName) {
+            const QString needle = cardName.trimmed().toLower();
+            if (needle.isEmpty()) {
+                return 0;
+            }
+            int count = 0;
+            for (const QString& owned : *ownedNames) {
+                if (owned.contains(needle)) {  // an owned name that contains the read name
+                    ++count;
+                }
+            }
+            return count;
+        };
+
+        ScanCardDialog dialog(assistant, std::move(matcher), this);
         connect(&dialog, &ScanCardDialog::cardResolved, this,
                 [sidebar, ownedView](const ScannedCard& scanned) {
                     ownedView->applyScannedCard(scanned);
