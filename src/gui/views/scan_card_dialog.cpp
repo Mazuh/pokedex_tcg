@@ -12,7 +12,10 @@
 #include <QMediaCaptureSession>
 #include <QMediaDevices>
 #include <QPermissions>
+#include <QPixmap>
 #include <QPushButton>
+#include <QResizeEvent>
+#include <QStackedWidget>
 #include <QString>
 #include <QVBoxLayout>
 #include <QVideoWidget>
@@ -22,6 +25,7 @@
 #include "core/app/card_scan.h"
 #include "gui/services/assistant_service.h"
 #include "gui/views/primary_button.h"
+#include "gui/views/scaled_pixmap.h"
 
 namespace pokedex {
 
@@ -65,9 +69,22 @@ ScanCardDialog::ScanCardDialog(AssistantService& service, QWidget* parent)
     subtitle->setEnabled(false);
     subtitle->setWordWrap(true);
 
-    auto* preview = new QVideoWidget(this);
-    preview->setMinimumHeight(320);
-    preview->setStyleSheet("background: black; border-radius: 6px;");
+    // The image area swaps between the live camera and the frozen still: after a Scan
+    // the camera turns off and the captured frame is shown in its place, so the user
+    // sees exactly what was sent (and that a blurry shot is worth retaking) instead of
+    // a still-moving preview that gives no feedback while the assistant thinks.
+    preview_ = new QVideoWidget;
+    preview_->setMinimumHeight(320);
+    preview_->setStyleSheet("background: black; border-radius: 6px;");
+
+    frozen_ = new QLabel;
+    frozen_->setMinimumHeight(320);
+    frozen_->setAlignment(Qt::AlignCenter);
+    frozen_->setStyleSheet("background: black; border-radius: 6px;");
+
+    viewStack_ = new QStackedWidget(this);
+    viewStack_->addWidget(preview_);  // page 0 — live
+    viewStack_->addWidget(frozen_);   // page 1 — frozen still
 
     status_ = new QLabel(this);
     status_->setWordWrap(true);
@@ -83,6 +100,12 @@ ScanCardDialog::ScanCardDialog(AssistantService& service, QWidget* parent)
     applyPrimaryButtonStyle(scanButton_);
     connect(scanButton_, &QPushButton::clicked, this, &ScanCardDialog::requestScan);
 
+    // Hidden until a still is frozen; turns the camera back on to reposition and shoot
+    // again. It's a secondary action, so it keeps the plain button look (not the accent).
+    retakeButton_ = new QPushButton(tr("Retake"), this);
+    retakeButton_->setVisible(false);
+    connect(retakeButton_, &QPushButton::clicked, this, &ScanCardDialog::retake);
+
     useButton_ = new QPushButton(tr("Search my cards"), this);
     useButton_->setEnabled(false);
     connect(useButton_, &QPushButton::clicked, this, [this]() {
@@ -97,6 +120,7 @@ ScanCardDialog::ScanCardDialog(AssistantService& service, QWidget* parent)
 
     auto* buttons = new QHBoxLayout;
     buttons->addWidget(scanButton_);
+    buttons->addWidget(retakeButton_);
     buttons->addWidget(useButton_);
     buttons->addStretch(1);
     buttons->addWidget(closeButton);
@@ -104,7 +128,7 @@ ScanCardDialog::ScanCardDialog(AssistantService& service, QWidget* parent)
     auto* layout = new QVBoxLayout(this);
     layout->addWidget(heading);
     layout->addWidget(subtitle);
-    layout->addWidget(preview, 1);
+    layout->addWidget(viewStack_, 1);
     layout->addWidget(status_);
     layout->addWidget(result_);
     layout->addLayout(buttons);
@@ -123,7 +147,7 @@ ScanCardDialog::ScanCardDialog(AssistantService& service, QWidget* parent)
 
     // Wire the capture session against the default camera and start the preview.
     session_ = new QMediaCaptureSession(this);
-    session_->setVideoOutput(preview);
+    session_->setVideoOutput(preview_);
     startCamera();
 }
 
@@ -222,12 +246,43 @@ void ScanCardDialog::requestScan() {
     capture_->capture();  // → imageCaptured → identify()
 }
 
+void ScanCardDialog::freezeFrame(const QImage& frame) {
+    // Turn the camera off and show the captured still in its place: the user gets clear
+    // feedback that the shot was taken (and can judge whether it's blurry) while the
+    // assistant works, instead of a live preview that keeps moving with no result.
+    capturedPixmap_ = QPixmap::fromImage(frame);
+    stopCamera();
+    viewStack_->setCurrentWidget(frozen_);  // make it the current page before scaling,
+    setScaledPixmap(frozen_, capturedPixmap_);  // so it scales to the shown geometry
+    retakeButton_->setVisible(true);
+}
+
+void ScanCardDialog::retake() {
+    // Resume the live preview so the user can reposition and shoot again. Cancel any
+    // still-pending identify() reply first, so a late answer from the discarded capture
+    // can't land on (and render a result over) the resumed live preview.
+    service_.cancelPending();
+    viewStack_->setCurrentWidget(preview_);
+    retakeButton_->setVisible(false);
+    result_->setVisible(false);
+    useButton_->setEnabled(false);
+    frozen_->clear();
+    capturedPixmap_ = QPixmap();
+    if (camera_) {
+        camera_->start();
+    }
+    setBusy(false);
+    status_->setText(tr("Point a card at the camera, then press Scan."));
+}
+
 void ScanCardDialog::identify(const QImage& frame) {
+    freezeFrame(frame);
     const std::string base64 = encodeJpegBase64(frame);
     if (base64.empty()) {
         onFailed(tr("Could not read the captured image."));
         return;
     }
+    setBusy(true);  // frozen + in flight: Scan and Retake both wait for the reply
     status_->setText(tr("Identifying…"));
     service_.ask(buildCardScanPrompt(base64));
 }
@@ -244,7 +299,7 @@ void ScanCardDialog::onAnswer(const QString& text) {
         const QString note = lastScan_.note.empty()
                                  ? tr("Couldn't read a card.")
                                  : QString::fromStdString(lastScan_.note);
-        status_->setText(tr("%1 Reposition the card and press Scan again.").arg(note));
+        status_->setText(tr("%1 Press Retake to reposition and try again.").arg(note));
     }
 }
 
@@ -252,7 +307,10 @@ void ScanCardDialog::onFailed(const QString& message) {
     setBusy(false);
     result_->setVisible(false);
     useButton_->setEnabled(false);
-    status_->setText(tr("Error: %1").arg(message));
+    // The camera is off and a still is frozen at this point, so Scan is greyed —
+    // point the user at Retake as the way to try again (it's the only live action).
+    const QString retry = isFrozen() ? tr(" Press Retake to try again.") : QString();
+    status_->setText(tr("Error: %1").arg(message) + retry);
 }
 
 void ScanCardDialog::showResult() {
@@ -275,8 +333,26 @@ void ScanCardDialog::showResult() {
 }
 
 void ScanCardDialog::setBusy(bool busy) {
-    // Keep Scan disabled while a capture/identify round-trip is in flight.
-    scanButton_->setEnabled(!busy && hasCamera_);
+    // Scan is live-only (the camera is off while a still is frozen). Retake stays
+    // enabled whenever a still is frozen — including mid-flight, where it doubles as
+    // an abort (retake() cancels the pending reply) so the dialog can never look dead.
+    const bool frozen = isFrozen();
+    scanButton_->setEnabled(!busy && hasCamera_ && !frozen);
+    retakeButton_->setEnabled(frozen);
+}
+
+bool ScanCardDialog::isFrozen() const {
+    // Null-safe: a QResizeEvent can reach this override before the ctor wires the stack.
+    return viewStack_ && viewStack_->currentWidget() == frozen_;
+}
+
+void ScanCardDialog::resizeEvent(QResizeEvent* event) {
+    QDialog::resizeEvent(event);
+    // Keep the frozen still fit-scaled to the (new) preview size while it is shown.
+    // Rescale the cached pixmap — never re-convert the QImage — so a resize drag is cheap.
+    if (isFrozen() && !capturedPixmap_.isNull()) {
+        setScaledPixmap(frozen_, capturedPixmap_);
+    }
 }
 
 }  // namespace pokedex

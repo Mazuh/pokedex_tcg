@@ -2,6 +2,7 @@
 
 #include <QDialog>
 #include <QImage>
+#include <QPixmap>
 
 #include "core/app/card_scan.h"
 
@@ -10,6 +11,9 @@ class QImageCapture;
 class QLabel;
 class QMediaCaptureSession;
 class QPushButton;
+class QResizeEvent;
+class QStackedWidget;
+class QVideoWidget;
 
 namespace pokedex {
 
@@ -39,6 +43,11 @@ public:
     explicit ScanCardDialog(AssistantService& service, QWidget* parent = nullptr);
     ~ScanCardDialog() override;
 
+protected:
+    // Rescale the frozen still to the (possibly new) preview size, so the captured
+    // frame stays fit-scaled when the window is resized while it is shown.
+    void resizeEvent(QResizeEvent* event) override;
+
 Q_SIGNALS:
     // The user accepted a reading: route `scanned.query` into the app's search. Only
     // emitted for an identified card (the button is disabled otherwise).
@@ -50,11 +59,14 @@ private:
     void showCameraBlocked(const QString& message);  // permission denied / unavailable UI
     void stopCamera();           // stop capture (on close) — safe to call twice
     void requestScan();          // capture a still, then hand it to identify()
+    void freezeFrame(const QImage& frame);  // stop the camera, show the captured still
+    void retake();               // discard the still, resume the live preview
     void identify(const QImage& frame);  // encode + send the frame to the assistant
     void onAnswer(const QString& text);  // parse the reply → show it
     void onFailed(const QString& message);
     void showResult();           // render lastScan_ into the result label
     void setBusy(bool busy);     // disable Scan / show progress while a call is in flight
+    bool isFrozen() const;       // true while the captured still (not the camera) is shown
 
     AssistantService& service_;
 
@@ -62,9 +74,15 @@ private:
     QMediaCaptureSession* session_ = nullptr;
     QImageCapture* capture_ = nullptr;
 
+    QStackedWidget* viewStack_ = nullptr;  // page 0: live camera preview; page 1: still
+    QVideoWidget* preview_ = nullptr;      // the live camera output (page 0)
+    QLabel* frozen_ = nullptr;             // the captured still, shown after Scan (page 1)
+    QPixmap capturedPixmap_;      // the last captured frame, kept so it can be rescaled
+                                  // on resize without re-converting from the QImage
     QLabel* status_;        // "Point a card at the camera" / "Identifying…" / errors
     QLabel* result_;        // the parsed reading (rich text), hidden until there is one
     QPushButton* scanButton_;
+    QPushButton* retakeButton_;  // "Retake" — resume the live camera after a capture
     QPushButton* useButton_;  // "Search my cards" — enabled once a card is identified
 
     ScannedCard lastScan_;  // the most recent reading, carried to cardResolved()
