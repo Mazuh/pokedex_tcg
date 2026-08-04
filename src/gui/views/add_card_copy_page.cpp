@@ -18,6 +18,7 @@
 #include "core/app/binder_service.h"
 #include "core/app/card_catalog_dto.h"
 #include "core/app/card_copy_service.h"
+#include "core/app/card_scan.h"
 #include "core/domain/card_reference.h"
 #include "core/storage/workspace.h"
 #include "gui/services/card_image_store.h"
@@ -182,14 +183,8 @@ void AddCardCopyPage::prefillFrom(const QString& cardName, const QString& setNam
                                  const QString& setCode, const QString& collectorNumber) {
     // Write the read-off identity onto the form first, as a baseline the search can't lose:
     // even if the finder flakes or lists nothing, the set + number still save (and pricing
-    // resolves from them). setCardReference is silent (no referenceEdited), so it doesn't
-    // trip checkUnmatch.
-    CardReference ref;
-    ref.name = cardName.toStdString();
-    ref.setName = setName.toStdString();
-    ref.expansionCode = setCode.toStdString();
-    ref.collectorNumber = collectorNumber.toStdString();
-    form_->setCardReference(ref);
+    // resolves from them). This is prefillFormFields plus a finder search.
+    prefillFormFields(cardName, setName, setCode, collectorNumber);
 
     // Then drive the finder (name-search mode here) so the catalog lists this card's
     // printings and a pick autofills the full identity + image. The card name is the
@@ -198,7 +193,20 @@ void AddCardCopyPage::prefillFrom(const QString& cardName, const QString& setNam
     if (!query.isEmpty()) {
         finder_->searchFor(query);
     }
-    updateSubmitEnabled();  // the prefilled collector number may already satisfy submit
+}
+
+void AddCardCopyPage::prefillFrom(const ScannedCard& scanned) {
+    prefillFrom(QString::fromStdString(scanned.cardName),
+                QString::fromStdString(scanned.setName),
+                QString::fromStdString(scanned.setCode),
+                QString::fromStdString(scanned.collectorNumber));
+}
+
+void AddCardCopyPage::prefillFormFields(const ScannedCard& scanned) {
+    prefillFormFields(QString::fromStdString(scanned.cardName),
+                      QString::fromStdString(scanned.setName),
+                      QString::fromStdString(scanned.setCode),
+                      QString::fromStdString(scanned.collectorNumber));
 }
 
 void AddCardCopyPage::prefillSetSearch(const QString& setQuery) {
@@ -208,6 +216,20 @@ void AddCardCopyPage::prefillSetSearch(const QString& setQuery) {
     if (!setQuery.trimmed().isEmpty()) {
         finder_->searchFor(setQuery);
     }
+}
+
+void AddCardCopyPage::prefillFormFields(const QString& cardName, const QString& setName,
+                                       const QString& setCode, const QString& collectorNumber) {
+    // Paste the read fields onto the form and run NO search (the escape hatch for a flaky
+    // catalog). setCardReference is silent (no referenceEdited) and leaves the form's
+    // language/condition/ownership — so the default language pre-selection is kept.
+    CardReference ref;
+    ref.name = cardName.toStdString();
+    ref.setName = setName.toStdString();
+    ref.expansionCode = setCode.toStdString();
+    ref.collectorNumber = collectorNumber.toStdString();
+    form_->setCardReference(ref);
+    updateSubmitEnabled();  // the pasted collector number may already satisfy submit
 }
 
 void AddCardCopyPage::reuseLastFields() {

@@ -74,10 +74,13 @@ Q_SIGNALS:
     // emitted for a reading with a non-empty query (the button is disabled otherwise).
     void cardResolved(const ScannedCard& scanned);
 
-    // The user wants to create the card directly (skipping the search). `dexNumber` is the
-    // detected species (>0) so the host opens that species' add-copy page, or 0 for a card
-    // that names no species so the host opens the species-free "add a card" page.
-    void addRequested(const ScannedCard& reading, int dexNumber);
+    // The user wants to create the card directly (skipping "Search my cards"). `dexNumber`
+    // is the detected species (>0 → that species' add-copy page; 0 → the species-free "add
+    // a card" page). `copyFieldsToForm` picks how it's pre-filled: false = seed the catalog
+    // finder search (by set for a species, by name otherwise) and let the picked printing
+    // autofill; true = paste the read fields straight onto the form with no search (the
+    // escape hatch when the card search is flaky).
+    void addRequested(const ScannedCard& reading, int dexNumber, bool copyFieldsToForm);
 
     // The user pressed Back — the host returns to the section it came from.
     void backRequested();
@@ -133,10 +136,13 @@ private:
     QLineEdit* setCodeEdit_ = nullptr;
     QLineEdit* numberEdit_ = nullptr;
     QLineEdit* queryEdit_ = nullptr;  // the actual search string driving My Cards
-    // Right-hand "first impressions": owned-name match count + the detected Pokémon line.
+    // Right-hand "first impressions": owned-name match count + the detected Pokémon line,
+    // then the two direct-add actions.
     QLabel* matchEstimate_ = nullptr;
     QLabel* speciesLabel_ = nullptr;
-    QPushButton* addButton_ = nullptr;  // "Add this card" — jumps straight to creation
+    QPushButton* findButton_ = nullptr;  // "Create by set/name" — seed the catalog finder
+    QPushButton* copyButton_ = nullptr;  // "Copy to creation form" — paste fields, no search
+    int detectedDex_ = 0;  // dex # the card name matches (0 = none); drives findButton_ label + routing
     OwnedNameMatcher ownedNameMatcher_;  // supplied by the host; empty = no estimate
     QPushButton* scanButton_;
     QPushButton* retakeButton_;  // "Retake" — resume the live camera after a capture

@@ -147,18 +147,26 @@ ScanCardView::ScanCardView(AssistantService& service, OwnedNameMatcher ownedName
     speciesLabel_ = new QLabel(rightPanel);    // "Pokémon: Charizard · #6 · Kanto"
     speciesLabel_->setWordWrap(true);
 
-    // Skip the search and go straight to creation: for a booster where the user already
-    // knows they don't own the card, "Search my cards" is a wasted step. The host routes
-    // this to the right add page (that species', or the species-free one) from the reading.
-    // A plain button, not the accent: "Scan" is already the view's one accented primary
-    // action, and a second accent would stop the accent reliably signalling the primary.
-    addButton_ = new QPushButton(tr("Add this card"), rightPanel);
-    addButton_->setEnabled(false);
-    connect(addButton_, &QPushButton::clicked, this, [this]() {
-        const ScannedCard reading = currentReading();
-        const std::optional<PokemonDexNum> dex = detectScannedSpecies(reading.cardName);
-        Q_EMIT addRequested(reading, dex.value_or(0));
-    });
+    // Skip "Search my cards" and go straight to creation, two ways (both plain buttons —
+    // "Scan" is the view's one accent). (1) Find in catalog: seed the finder search (by
+    // set for a species, by name otherwise) and let the picked printing autofill — the
+    // deterministic, reliable-when-the-search-works path. (2) Copy to creation form: paste
+    // the read fields verbatim with no search — the escape hatch when the card search is
+    // flaky. The findButton_ label switches with the detected species (set below).
+    findButton_ = new QPushButton(tr("Create by name"), rightPanel);
+    findButton_->setEnabled(false);
+    findButton_->setToolTip(
+        tr("Open creation and search the catalog to autofill from a real printing."));
+    connect(findButton_, &QPushButton::clicked, this,
+            [this]() { Q_EMIT addRequested(currentReading(), detectedDex_, /*copyFieldsToForm=*/false); });
+
+    copyButton_ = new QPushButton(tr("Copy to creation form"), rightPanel);
+    copyButton_->setEnabled(false);
+    copyButton_->setToolTip(
+        tr("Open creation with these read fields pasted in — no catalog search (handy when "
+           "the card search is flaky)."));
+    connect(copyButton_, &QPushButton::clicked, this,
+            [this]() { Q_EMIT addRequested(currentReading(), detectedDex_, /*copyFieldsToForm=*/true); });
 
     auto* rightLayout = new QVBoxLayout(rightPanel);
     rightLayout->setContentsMargins(16, 0, 0, 0);
@@ -166,7 +174,8 @@ ScanCardView::ScanCardView(AssistantService& service, OwnedNameMatcher ownedName
     rightLayout->addWidget(matchEstimate_);
     rightLayout->addWidget(speciesLabel_);
     rightLayout->addSpacing(8);
-    rightLayout->addWidget(addButton_, 0, Qt::AlignLeft);
+    rightLayout->addWidget(findButton_, 0, Qt::AlignLeft);
+    rightLayout->addWidget(copyButton_, 0, Qt::AlignLeft);
     rightLayout->addStretch(1);
 
     auto* resultLayout = new QHBoxLayout(resultForm_);
@@ -470,9 +479,10 @@ void ScanCardView::showResult() {
         queryEdit_->setText(QString::fromStdString(lastScan_.query));
     }
     useButton_->setEnabled(!queryEdit_->text().trimmed().isEmpty());
-    // "Add this card" needs no query — any read card can be created. It's a child of the
-    // (now visible) result form, so it's only reachable while a reading is shown.
-    addButton_->setEnabled(true);
+    // The direct-add buttons need no query — any read card can be created. They're children
+    // of the (now visible) result form, so they're only reachable while a reading is shown.
+    findButton_->setEnabled(true);
+    copyButton_->setEnabled(true);
     updateFirstImpressions();
 }
 
@@ -491,8 +501,10 @@ void ScanCardView::updateFirstImpressions() {
                                     : tr("%n of your cards may match this name.", "", matches));
     }
 
-    // Which Pokémon (if any) the card depicts — name, dex number, and region.
+    // Which Pokémon (if any) the card depicts — name, dex number, and region. Cached in
+    // detectedDex_ (0 = none) to route the direct-add and label the "find in catalog" button.
     const std::optional<PokemonDexNum> dex = detectScannedSpecies(name.toStdString());
+    detectedDex_ = dex.value_or(0);
     if (dex) {
         const Pokemon* entry = catalogEntry(*dex);
         const QString species = entry ? QString::fromStdString(entry->name) : QString();
@@ -503,6 +515,8 @@ void ScanCardView::updateFirstImpressions() {
     } else {
         speciesLabel_->setText(tr("No matching Pokémon (a Trainer/Energy card, or unrecognized)."));
     }
+    // A species is added by searching its set; a species-free card by searching its name.
+    findButton_->setText(detectedDex_ > 0 ? tr("Create by set") : tr("Create by name"));
 }
 
 ScannedCard ScanCardView::currentReading() const {

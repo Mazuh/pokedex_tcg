@@ -76,15 +76,18 @@ the wrong card, it just yields a search the user reviews.
    carrying the fields **as edited**; `MainWindow` fills the **My Cards** live search with
    `query` (so the user sees whether they already own it) and switches there. From there
    the next *Add a card* consumes the stash (`OwnedCardsView` → `AddCardCopyPage::prefillFrom`).
-6. **Add directly.** *Add this card* (right panel) skips the search — for a booster where
-   the user already knows they don't own it — via `addRequested(reading, dexNumber)`.
-   MainWindow routes it: a **detected species** opens that species' add-copy page with only
-   the finder's set search pre-seeded (`PokemonListView::openAddCopy` →
-   `AddCardCopyPage::prefillSetSearch`, using the set **code**, or the full name when the
-   code is too short to auto-search); a **non-Pokémon** opens the species-free add page with
-   only the read name in the by-name finder (`OwnedCardsView::startAddScannedCard`). Either
-   way the finder pick goes through the real card catalog, so the saved copy is a
-   trustworthy printing — the LLM's reading only seeds the search.
+6. **Add directly.** Two right-panel buttons skip the search — for a booster where the user
+   already knows they don't own the card — both via `addRequested(reading, dexNumber,
+   copyFieldsToForm)`, routed by MainWindow to the species add page (detected dex) or the
+   species-free one:
+   - **"Create by set" / "Create by name"** (`copyFieldsToForm=false`): seed the catalog
+     finder search and let the picked printing autofill — species by set
+     (`openAddCopyBySet` → `prefillSetSearch`, set code or full-name fallback when the code
+     is too short to auto-search), non-Pokémon by name (`startAddScannedCard(…, false)` →
+     `prefillFrom`). The reliable path when the search works.
+   - **"Copy to creation form"** (`copyFieldsToForm=true`): paste the read fields straight
+     onto the form with **no catalog search** (`prefillFormFields`) — the escape hatch when
+     the card search is flaky. The user reviews/edits and saves.
 
 ### Wire + config notes
 

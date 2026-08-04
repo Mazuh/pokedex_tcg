@@ -27,6 +27,7 @@ class CardFinderPanel;
 class CardCopyForm;
 struct CardCandidate;
 struct CardSetInfo;
+struct ScannedCard;
 
 // GUI — the "add a copy" screen: the shared CardCopyForm (editable) on the left and
 // the shared CardFinderPanel (search + preview) on the right — the same two building
@@ -92,12 +93,24 @@ public:
     // a one-click autofill. Call right after construction, before the page is shown.
     void prefillFrom(const QString& cardName, const QString& setName, const QString& setCode,
                      const QString& collectorNumber);
+    // Convenience overload: prefill from a card scan (form baseline + name-search).
+    void prefillFrom(const ScannedCard& scanned);
 
     // Drive the finder's set search from a scan (species-scoped add only). Sets ONLY the
     // finder's "Find by set" query — nothing on the form — so the user picks the printing,
     // which then autofills the whole card deterministically. Call right after construction,
     // before the page is shown. A blank query is a no-op.
     void prefillSetSearch(const QString& setQuery);
+
+    // Paste the read printed-identity fields straight onto the form, with NO catalog
+    // search — the "copy to creation form" escape hatch for when the card search is
+    // flaky/down. The user reviews/edits and saves; the finder is left untouched (a pick
+    // would still override). Language/condition/ownership are left as-is (the default
+    // language pre-selection survives). Call right after construction.
+    void prefillFormFields(const QString& cardName, const QString& setName,
+                           const QString& setCode, const QString& collectorNumber);
+    // Convenience overload: paste a card scan's read fields onto the form (no search).
+    void prefillFormFields(const ScannedCard& scanned);
 
 Q_SIGNALS:
     void backRequested();

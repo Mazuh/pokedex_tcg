@@ -3,9 +3,11 @@
 #include <QWidget>
 
 #include <QString>
+#include <functional>
 #include <unordered_map>
 #include <vector>
 
+#include "core/app/card_scan.h"
 #include "core/app/pokemon_browse_service.h"
 #include "core/domain/card_copy.h"
 #include "core/domain/types.h"
@@ -25,6 +27,7 @@ class CardImageStore;
 class BinderService;
 class WishlistService;
 class PokemonDetailPanel;
+class AddCardCopyPage;
 
 // GUI — the Pokémon section of the main window: an unscoped, read-only browse of
 // the whole National Pokédex (# / name / region / owned-copy count) with a live
@@ -55,13 +58,13 @@ public:
                     CardImageStore& cardImages, BinderService& binders,
                     QWidget* parent = nullptr);
 
-    // Push this species' add-copy page onto the inner stack; its Back pops and disposes it,
-    // returning to the browse splitter. `setQuery` (when non-empty) pre-seeds the finder's
-    // "Find by set" search and nothing else — the scan flow passes it after detecting a
-    // Pokémon so the user lands on that species' creation with the set already searched
-    // (the host must make this section current first, so the pushed page shows). Public so
-    // MainWindow can drive it; the detail panel's "Add copy" relays here too.
-    void openAddCopy(int dexNumber, const QString& name, const QString& setQuery = QString());
+    // Open this species' add-copy page from a scan, two ways (the host must make this
+    // section current first, so the pushed page shows). openAddCopyBySet pre-seeds the
+    // finder's "Find by set" search (and nothing else) so the user picks the printing;
+    // openAddCopyWithFields pastes the read fields straight onto the form with no search
+    // (the escape hatch when the card search is flaky).
+    void openAddCopyBySet(int dexNumber, const QString& name, const QString& setQuery);
+    void openAddCopyWithFields(int dexNumber, const QString& name, const ScannedCard& reading);
 
 signals:
     // Emitted when the user double-clicks a species that already owns copies: the host
@@ -104,6 +107,14 @@ private:
     // owns nothing, prompt to open the add-copy page; on one that owns copies, prompt
     // to jump to "My Cards" filtered to that species (via searchInMyCardsRequested).
     void activateRow(int row);
+    // Push a species-scoped add-copy page onto the inner stack (Back pops + disposes it),
+    // running `prefill` on it before it is shown. The shared body of openAddCopy and the
+    // two scan entry points (mirrors OwnedCardsView::pushAddCardPage).
+    void pushAddPage(int dexNumber, const QString& name,
+                     const std::function<void(AddCardCopyPage*)>& prefill);
+    // Push an AddCardCopyPage for `dexNumber` (the plain browse path: double-click / the
+    // detail panel's "Add copy"); no pre-fill.
+    void openAddCopy(int dexNumber, const QString& name);
     // Push an EditCardCopyPage for the owned copy `copyId` (the one the detail panel
     // is showing) onto the inner stack; Back pops it, then refreshes and re-shows the
     // just-edited copy so a change (comment, image, binder move) is reflected.

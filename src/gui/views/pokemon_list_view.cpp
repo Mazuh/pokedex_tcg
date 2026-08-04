@@ -109,10 +109,8 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService&
     // showRow — by the time it fires, the row is selected and a copy is on screen.
     connect(table_, &QTableWidget::cellActivated, this,
             [this](int row, int) { activateRow(row); });
-    // The detail panel's "Add copy" relays up to an in-place page push. (A lambda, not a
-    // direct slot bind: openAddCopy now takes an optional set-search arg the signal lacks.)
-    connect(detail_, &PokemonDetailPanel::addCopyRequested, this,
-            [this](int dex, const QString& name) { openAddCopy(dex, name); });
+    // The detail panel's "Add copy" relays up to an in-place page push.
+    connect(detail_, &PokemonDetailPanel::addCopyRequested, this, &PokemonListView::openAddCopy);
     // In copy mode, "Edit card" relays up to an in-place edit-page push.
     connect(detail_, &PokemonDetailPanel::editCopyRequested, this, &PokemonListView::openEditCopy);
     // The "Wishlist (N)" button relays up to an in-place wishlist-page push.
@@ -347,13 +345,14 @@ void PokemonListView::activateRow(int row) {
          [this, species]() { emit searchInMyCardsRequested(species); }});
 }
 
-void PokemonListView::openAddCopy(int dexNumber, const QString& name, const QString& setQuery) {
+void PokemonListView::pushAddPage(int dexNumber, const QString& name,
+                                  const std::function<void(AddCardCopyPage*)>& prefill) {
     // Unscoped browse: the binder picker is a free choice defaulting to "— None —".
     auto* page = new AddCardCopyPage(cardSearch_, cardCopies_, priceLookup_, binders_,
                                      cardImages_, dexNumber, name);
-    // From a scan: pre-seed the finder's set search (before the page is shown) so the
-    // set's printings list for a one-click pick. Nothing else is pre-filled.
-    page->prefillSetSearch(setQuery);  // no-op when blank (the normal browse path)
+    if (prefill) {
+        prefill(page);  // seed the finder/form before the page is shown
+    }
     // A newly added copy changes the Owned column; refresh so it's current.
     connect(page, &AddCardCopyPage::copyAdded, this, &PokemonListView::refresh);
     connect(page, &AddCardCopyPage::backRequested, this, [this, page]() {
@@ -363,6 +362,26 @@ void PokemonListView::openAddCopy(int dexNumber, const QString& name, const QStr
     });
     stack_->addWidget(page);
     stack_->setCurrentWidget(page);
+}
+
+void PokemonListView::openAddCopy(int dexNumber, const QString& name) {
+    pushAddPage(dexNumber, name, {});  // plain browse add — no pre-fill
+}
+
+void PokemonListView::openAddCopyBySet(int dexNumber, const QString& name,
+                                       const QString& setQuery) {
+    // From a scan: pre-seed the finder's set search so the set's printings list for a
+    // one-click pick. Nothing is written to the form (the pick supplies the identity).
+    pushAddPage(dexNumber, name,
+                [setQuery](AddCardCopyPage* page) { page->prefillSetSearch(setQuery); });
+}
+
+void PokemonListView::openAddCopyWithFields(int dexNumber, const QString& name,
+                                            const ScannedCard& reading) {
+    // From a scan, the "copy to form" escape hatch: paste the read fields onto the form
+    // with no catalog search (robust to a flaky search).
+    pushAddPage(dexNumber, name,
+                [reading](AddCardCopyPage* page) { page->prefillFormFields(reading); });
 }
 
 void PokemonListView::openEditCopy(const QString& copyId) {

@@ -77,11 +77,13 @@ public:
     // by MainWindow when the Scan-a-card dialog resolves a reading.
     void applyScannedCard(const ScannedCard& scanned);
 
-    // Open the species-free "add a card" page directly for a scanned non-Pokémon card,
-    // with ONLY the read card name seeded into the finder's "Find a card by name…" search
-    // (the deterministic pick then fills the rest). The scan flow's "Add this card" button
-    // routes here; the host must make this section current first so the pushed page shows.
-    void startAddScannedCard(const ScannedCard& scanned);
+    // Open the species-free "add a card" page directly for a scanned non-Pokémon card.
+    // `copyFieldsToForm` picks the prefill: false = seed the finder's "Find a card by
+    // name…" search with the read name (the deterministic pick fills the rest, with the
+    // set/number kept as a form baseline); true = paste the read fields onto the form with
+    // no search (the escape hatch when the card search is flaky). The scan flow routes
+    // here; the host must make this section current first so the pushed page shows.
+    void startAddScannedCard(const ScannedCard& scanned, bool copyFieldsToForm);
 
 protected:
     void showEvent(QShowEvent* event) override;

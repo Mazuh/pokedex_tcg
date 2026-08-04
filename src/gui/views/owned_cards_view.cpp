@@ -935,28 +935,26 @@ void OwnedCardsView::addNewCard() {
         // If this add follows a card scan (the search-first flow), pre-fill the form +
         // finder from the stashed reading (one-shot).
         if (pendingScan_) {
-            page->prefillFrom(QString::fromStdString(pendingScan_->cardName),
-                              QString::fromStdString(pendingScan_->setName),
-                              QString::fromStdString(pendingScan_->setCode),
-                              QString::fromStdString(pendingScan_->collectorNumber));
+            page->prefillFrom(*pendingScan_);
             pendingScan_.reset();
         }
     });
 }
 
-void OwnedCardsView::startAddScannedCard(const ScannedCard& scanned) {
+void OwnedCardsView::startAddScannedCard(const ScannedCard& scanned, bool copyFieldsToForm) {
     // A direct add is a fresh intent — drop any stash from an earlier "Search my cards" so
     // a later manual "+ Add a card" doesn't prefill that now-stale reading.
     pendingScan_.reset();
-    pushAddCardPage([&scanned](AddCardCopyPage* page) {
-        // Only the read card NAME goes into the "Find a card by name…" search; the set and
-        // collector number ride along as the form baseline prefillFrom preserves — so they
-        // aren't lost if the finder flakes/lists nothing, and pricing can still resolve —
-        // and are overwritten when the user picks a printing.
-        page->prefillFrom(QString::fromStdString(scanned.cardName),
-                          QString::fromStdString(scanned.setName),
-                          QString::fromStdString(scanned.setCode),
-                          QString::fromStdString(scanned.collectorNumber));
+    pushAddCardPage([&scanned, copyFieldsToForm](AddCardCopyPage* page) {
+        if (copyFieldsToForm) {
+            // Escape hatch: paste the read fields, no catalog search.
+            page->prefillFormFields(scanned);
+        } else {
+            // Only the read NAME goes into the "Find a card by name…" search; the set and
+            // collector number ride along as the form baseline prefillFrom preserves (not
+            // lost if the finder flakes, pricing still resolves), overwritten on a pick.
+            page->prefillFrom(scanned);
+        }
     });
 }
 

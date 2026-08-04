@@ -453,19 +453,29 @@ longest match wins ("Mewtwo"≠Mew), and the catalog is tokenized once into a st
 per-keystroke rescan). MainWindow snapshots the live (non-Removed) collection's display names
 (deduped by printing) and passes the owned-name matcher via `ScanCardView::setOwnedNameMatcher`, so
 the view stays storage-free; the count is intentionally **name-based** (`owned.contains(scanned)`,
-per the feature request) and thus complementary to the set+number search. The panel has **two
-actions**: *Search my cards* (emits `cardResolved` → `MainWindow` fills the My Cards live search
-with `query` and switches there; the scan is **stashed on `OwnedCardsView`** and the NEXT *Add a
-card* consumes it via `AddCardCopyPage::prefillFrom`) and *Add this card* (emits
-`addRequested(reading, dexNumber)` to **skip the search and go straight to creation**). MainWindow
-routes the add via a shared `goToSection(row)` (which handles the "sidebar already on that row →
-switch the page directly" case): a **detected species** (dex>0) opens that species' add-copy page
-with ONLY the finder's set search pre-seeded (`PokemonListView::openAddCopy` →
-`AddCardCopyPage::prefillSetSearch`, using the set **code**/abbreviation, falling back to the full
-set name when the code is <3 chars since the finder only auto-searches at 3+); a **non-Pokémon**
-(dex==0) opens the species-free add page with ONLY the read name in the by-name finder
-(`OwnedCardsView::startAddScannedCard` → `pushAddCardPage`). Either way the deterministic catalog
-finder still produces the trustworthy printing, not the LLM's verbatim reading. New GUI dependency: `Qt6::Multimedia` +
+per the feature request) and thus complementary to the set+number search. The panel has a
+*Search my cards* action (emits `cardResolved` → `MainWindow` fills the My Cards live search with
+`query` and switches there; the scan is **stashed on `OwnedCardsView`** and the NEXT *Add a card*
+consumes it via `AddCardCopyPage::prefillFrom`) plus **two direct-add buttons** that **skip the
+search and go straight to creation** — both emit `addRequested(reading, dexNumber, copyFieldsToForm)`
+(the `bool` picks the prefill). MainWindow routes via a shared `goToSection(row)` (which handles the
+"sidebar already on that row → switch the page directly" case) to the species add page (dex>0) or the
+species-free one (dex==0), and then, per `copyFieldsToForm`:
+- **"Create by set" / "Create by name"** (`copyFieldsToForm=false`) — seed the catalog **finder
+  search** and let the picked printing autofill deterministically (the reliable path when the search
+  works). Species → `PokemonListView::openAddCopyBySet` → `AddCardCopyPage::prefillSetSearch` (the
+  set **code**/abbreviation, falling back to the full set name when the code is <3 chars since the
+  finder only auto-searches at 3+); non-Pokémon → `OwnedCardsView::startAddScannedCard(…, false)` →
+  `AddCardCopyPage::prefillFrom` (read name into the by-name search, set/number as a form baseline).
+- **"Copy to creation form"** (`copyFieldsToForm=true`) — the **escape hatch for a flaky search**:
+  paste the read fields straight onto the form with NO catalog search, for the user to review/save.
+  Both routes call `AddCardCopyPage::prefillFormFields` (species → `openAddCopyWithFields`,
+  non-Pokémon → `startAddScannedCard(…, true)`); `prefillFormFields` writes only the printed-identity
+  fields (leaving the default language pick intact) and touches the finder not at all.
+
+Both hosts share a `pushAddPage`/`pushAddCardPage` helper (create + wire + run a prefill callback
+before showing). Either way the deterministic catalog finder still produces the trustworthy printing
+when used, and the LLM's reading is never the silent source of a saved copy's identity. New GUI dependency: `Qt6::Multimedia` +
 `Qt6::MultimediaWidgets` (Ubuntu CI adds `qt6-multimedia-dev`); core stays Qt-free. **macOS camera
 permission** is handled: `startCamera()` gates on
 `qApp->checkPermission/requestPermission(QCameraPermission{})` and shows every state IN the screen

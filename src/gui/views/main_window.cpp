@@ -166,25 +166,31 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
                 goToSection(2);
             });
     connect(scanView, &ScanCardView::addRequested, this,
-            [goToSection, pokemonView, ownedView](const ScannedCard& reading, int dex) {
+            [goToSection, pokemonView, ownedView](const ScannedCard& reading, int dex,
+                                                  bool copyFieldsToForm) {
                 // Go straight to creation. A detected species opens that species' add-copy
-                // page with the set search pre-seeded; otherwise the species-free "add a
-                // card" page opens with the read name. The target section must be current
-                // BEFORE the inner add page is pushed, so switch first.
+                // page; otherwise the species-free "add a card" page. The target section
+                // must be current BEFORE the inner add page is pushed, so switch first.
+                // copyFieldsToForm picks the prefill: paste the read fields (no search) vs
+                // seed the finder search (by set for a species, by name otherwise).
                 if (dex > 0) {
                     const QString species = speciesName(dex);
-                    // Prefer the printed set code (abbreviation), else the full set name.
-                    // The finder only auto-searches at 3+ chars, so a short code (e.g.
-                    // "BS") also falls back to the name so the set still lists.
-                    QString setQuery = QString::fromStdString(reading.setCode).trimmed();
-                    if (setQuery.size() < 3) {
-                        setQuery = QString::fromStdString(reading.setName);
-                    }
                     goToSection(1);  // Pokémon browser
-                    pokemonView->openAddCopy(dex, species, setQuery);
+                    if (copyFieldsToForm) {
+                        pokemonView->openAddCopyWithFields(dex, species, reading);
+                    } else {
+                        // Prefer the printed set code (abbreviation), else the full set
+                        // name. The finder only auto-searches at 3+ chars, so a short code
+                        // (e.g. "BS") also falls back to the name so the set still lists.
+                        QString setQuery = QString::fromStdString(reading.setCode).trimmed();
+                        if (setQuery.size() < 3) {
+                            setQuery = QString::fromStdString(reading.setName);
+                        }
+                        pokemonView->openAddCopyBySet(dex, species, setQuery);
+                    }
                 } else {
                     goToSection(2);  // My Cards
-                    ownedView->startAddScannedCard(reading);
+                    ownedView->startAddScannedCard(reading, copyFieldsToForm);
                 }
             });
     connect(scanView, &ScanCardView::backRequested, this,
