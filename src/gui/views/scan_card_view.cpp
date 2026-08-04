@@ -1,4 +1,4 @@
-#include "gui/views/scan_card_dialog.h"
+#include "gui/views/scan_card_view.h"
 
 #include <QApplication>
 #include <QBuffer>
@@ -8,6 +8,7 @@
 #include <QFont>
 #include <QHBoxLayout>
 #include <QFormLayout>
+#include <QHideEvent>
 #include <QImageCapture>
 #include <QLabel>
 #include <QLineEdit>
@@ -17,6 +18,7 @@
 #include <QPixmap>
 #include <QPushButton>
 #include <QResizeEvent>
+#include <QShowEvent>
 #include <QSignalBlocker>
 #include <QStackedWidget>
 #include <QString>
@@ -54,12 +56,18 @@ std::string encodeJpegBase64(const QImage& frame) {
 
 }  // namespace
 
-ScanCardDialog::ScanCardDialog(AssistantService& service, OwnedNameMatcher ownedNameMatcher,
-                               QWidget* parent)
-    : QDialog(parent), service_(service), ownedNameMatcher_(std::move(ownedNameMatcher)) {
-    setWindowTitle(tr("Scan a card"));
-    setModal(true);
-    resize(560, 620);
+ScanCardView::ScanCardView(AssistantService& service, OwnedNameMatcher ownedNameMatcher,
+                           QWidget* parent)
+    : QWidget(parent), service_(service), ownedNameMatcher_(std::move(ownedNameMatcher)) {
+    // A Back top bar (matching the other in-window pages) returns to the section the
+    // user came from; the host wires it to pop back to that section.
+    auto* backButton = new QPushButton(tr("‹ Back"), this);
+    backButton->setFlat(true);
+    backButton->setCursor(Qt::PointingHandCursor);
+    connect(backButton, &QPushButton::clicked, this, &ScanCardView::backRequested);
+    auto* topBar = new QHBoxLayout;
+    topBar->addWidget(backButton);
+    topBar->addStretch(1);
 
     auto* heading = new QLabel(tr("Scan a card"), this);
     QFont headingFont = heading->font();
@@ -144,35 +152,31 @@ ScanCardDialog::ScanCardDialog(AssistantService& service, OwnedNameMatcher owned
     scanButton_->setAutoDefault(true);
     scanButton_->setDefault(true);
     applyPrimaryButtonStyle(scanButton_);
-    connect(scanButton_, &QPushButton::clicked, this, &ScanCardDialog::requestScan);
+    connect(scanButton_, &QPushButton::clicked, this, &ScanCardView::requestScan);
 
     // Hidden until a still is frozen; turns the camera back on to reposition and shoot
     // again. It's a secondary action, so it keeps the plain button look (not the accent).
     retakeButton_ = new QPushButton(tr("Retake"), this);
     retakeButton_->setVisible(false);
-    connect(retakeButton_, &QPushButton::clicked, this, &ScanCardDialog::retake);
+    connect(retakeButton_, &QPushButton::clicked, this, &ScanCardView::retake);
 
     useButton_ = new QPushButton(tr("Search my cards"), this);
     useButton_->setEnabled(false);
     connect(useButton_, &QPushButton::clicked, this, [this]() {
         const ScannedCard reading = currentReading();
         if (!reading.query.empty()) {
-            Q_EMIT cardResolved(reading);
-            accept();
+            Q_EMIT cardResolved(reading);  // host switches to My Cards → hideEvent stops us
         }
     });
-
-    auto* closeButton = new QPushButton(tr("Close"), this);
-    connect(closeButton, &QPushButton::clicked, this, &QDialog::reject);
 
     auto* buttons = new QHBoxLayout;
     buttons->addWidget(scanButton_);
     buttons->addWidget(retakeButton_);
     buttons->addWidget(useButton_);
     buttons->addStretch(1);
-    buttons->addWidget(closeButton);
 
     auto* layout = new QVBoxLayout(this);
+    layout->addLayout(topBar);
     layout->addWidget(heading);
     layout->addWidget(subtitle);
     layout->addWidget(viewStack_, 1);
@@ -180,30 +184,72 @@ ScanCardDialog::ScanCardDialog(AssistantService& service, OwnedNameMatcher owned
     layout->addWidget(resultForm_);
     layout->addLayout(buttons);
 
-    connect(&service_, &AssistantService::answerReady, this, &ScanCardDialog::onAnswer);
-    connect(&service_, &AssistantService::failed, this, &ScanCardDialog::onFailed);
+    connect(&service_, &AssistantService::answerReady, this, &ScanCardView::onAnswer);
+    connect(&service_, &AssistantService::failed, this, &ScanCardView::onFailed);
 
-    // Stop the camera as soon as the dialog is dismissed (either button, Esc, or the
-    // window close), so the device light goes off promptly rather than at destruction.
-    // Also orphan any in-flight identify() reply so its raw JSON can't be delivered to a
-    // later-opened caller of the shared assistant service.
-    connect(this, &QDialog::finished, this, [this](int) {
-        stopCamera();
-        service_.cancelPending();
-    });
-
-    // Wire the capture session against the default camera and start the preview.
+    // The capture session outlives individual camera opens; the camera itself is opened
+    // in showEvent (only while the page is visible) rather than here.
     session_ = new QMediaCaptureSession(this);
     session_->setVideoOutput(preview_);
+}
+
+ScanCardView::~ScanCardView() { stopCamera(); }
+
+void ScanCardView::setOwnedNameMatcher(OwnedNameMatcher matcher) {
+    ownedNameMatcher_ = std::move(matcher);
+}
+
+void ScanCardView::startScan() {
+    // Reset to a fresh live scan and start the camera now — NOT from showEvent. The host
+    // shows the page right after this; driving the camera off showEvent would fail to
+    // restart it when Scan is re-opened while this page is already current (setCurrentIndex
+    // is then a no-op, so no showEvent fires). active_ marks the scan flow as live so a
+    // minimize/restore (a spontaneous show) knows to resume the camera.
+    active_ = true;
+    resetForNewScan();
     startCamera();
 }
 
-ScanCardDialog::~ScanCardDialog() { stopCamera(); }
+void ScanCardView::showEvent(QShowEvent* event) {
+    QWidget::showEvent(event);
+    // Resume the live camera after a restore-from-minimize (a spontaneous show), and only
+    // while a live scan is in progress. A frozen still under review keeps the camera off
+    // (Retake resumes it); navigation *to* the page is driven by startScan(), which already
+    // started the camera, so a non-spontaneous show must not double-start it.
+    if (event->spontaneous() && active_ && !isFrozen()) {
+        startCamera();
+    }
+}
 
-void ScanCardDialog::startCamera() {
+void ScanCardView::hideEvent(QHideEvent* event) {
+    QWidget::hideEvent(event);
+    // Turn the device off whenever the page isn't visible (navigating away OR minimizing),
+    // so the camera indicator goes out. But only an explicit hide means we're actually
+    // leaving the scan flow (a section switch or window close): cancel any in-flight
+    // identify() reply and go inactive. A spontaneous hide (minimize) must NOT cancel — the
+    // reply the user is waiting on should survive a minimize/restore.
+    stopCamera();
+    if (!event->spontaneous()) {
+        service_.cancelPending();
+        active_ = false;
+    }
+}
+
+void ScanCardView::resetForNewScan() {
+    viewStack_->setCurrentWidget(preview_);
+    retakeButton_->setVisible(false);
+    resultForm_->setVisible(false);
+    useButton_->setEnabled(false);
+    frozen_->clear();
+    capturedPixmap_ = QPixmap();
+    lastScan_ = ScannedCard{};
+    status_->clear();
+}
+
+void ScanCardView::startCamera() {
     if (QMediaDevices::defaultVideoInput().isNull()) {
         hasCamera_ = false;
-        status_->setText(tr("No camera was found. Connect a webcam and reopen this window."));
+        status_->setText(tr("No camera was found. Connect a webcam and return to this screen."));
         scanButton_->setEnabled(false);
         return;
     }
@@ -220,65 +266,76 @@ void ScanCardDialog::startCamera() {
             status_->setText(tr("Waiting for camera permission…"));
             scanButton_->setEnabled(false);
             qApp->requestPermission(permission, this, [this](const QPermission& result) {
-                if (result.status() == Qt::PermissionStatus::Granted) {
-                    openCamera();
-                } else {
+                if (result.status() != Qt::PermissionStatus::Granted) {
                     showCameraBlocked(
                         tr("Camera access was denied. To scan cards, allow it in System "
-                           "Settings ▸ Privacy & Security ▸ Camera, then reopen this window."));
+                           "Settings ▸ Privacy & Security ▸ Camera, then return to this screen."));
+                    return;
+                }
+                // The grant can resolve after the user has left the page; only open the
+                // camera if the scan is still active and on-screen, else a stale callback
+                // would turn the camera on off-screen (the view is persistent, so unlike
+                // the old modal it is never destroyed to auto-disconnect this callback).
+                if (active_ && isVisible()) {
+                    openCamera();
                 }
             });
             return;
         case Qt::PermissionStatus::Denied:
             showCameraBlocked(
                 tr("Camera access is blocked. Enable it for Pokedex TCG in System Settings ▸ "
-                   "Privacy & Security ▸ Camera, then reopen this window."));
+                   "Privacy & Security ▸ Camera, then return to this screen."));
             return;
     }
 
     openCamera();
 }
 
-void ScanCardDialog::showCameraBlocked(const QString& message) {
+void ScanCardView::showCameraBlocked(const QString& message) {
     hasCamera_ = false;
     scanButton_->setEnabled(false);
     resultForm_->setVisible(false);
     status_->setText(message);
 }
 
-void ScanCardDialog::openCamera() {
+void ScanCardView::openCamera() {
     hasCamera_ = true;
     scanButton_->setEnabled(true);
 
-    camera_ = new QCamera(QMediaDevices::defaultVideoInput(), this);
-    capture_ = new QImageCapture(this);
-    session_->setCamera(camera_);
-    session_->setImageCapture(capture_);
+    // Create the camera + capture once and reuse them across show/hide cycles — openCamera
+    // now runs from every showEvent (the page is reopened repeatedly), so recreating them
+    // each time would leak a QCamera per open and stack duplicate captures.
+    if (!camera_) {
+        camera_ = new QCamera(QMediaDevices::defaultVideoInput(), this);
+        capture_ = new QImageCapture(this);
+        session_->setCamera(camera_);
+        session_->setImageCapture(capture_);
 
-    connect(camera_, &QCamera::errorOccurred, this,
-            [this](QCamera::Error error, const QString& message) {
-                if (error != QCamera::NoError) {
-                    onFailed(tr("Camera error: %1").arg(message));
-                }
-            });
-    connect(capture_, &QImageCapture::imageCaptured, this,
-            [this](int, const QImage& image) { identify(image); });
-    connect(capture_, &QImageCapture::errorOccurred, this,
-            [this](int, QImageCapture::Error, const QString& message) {
-                onFailed(tr("Could not capture a frame: %1").arg(message));
-            });
+        connect(camera_, &QCamera::errorOccurred, this,
+                [this](QCamera::Error error, const QString& message) {
+                    if (error != QCamera::NoError) {
+                        onFailed(tr("Camera error: %1").arg(message));
+                    }
+                });
+        connect(capture_, &QImageCapture::imageCaptured, this,
+                [this](int, const QImage& image) { identify(image); });
+        connect(capture_, &QImageCapture::errorOccurred, this,
+                [this](int, QImageCapture::Error, const QString& message) {
+                    onFailed(tr("Could not capture a frame: %1").arg(message));
+                });
+    }
 
     camera_->start();
     status_->setText(tr("Point a card at the camera, then press Scan."));
 }
 
-void ScanCardDialog::stopCamera() {
+void ScanCardView::stopCamera() {
     if (camera_) {
         camera_->stop();
     }
 }
 
-void ScanCardDialog::requestScan() {
+void ScanCardView::requestScan() {
     if (!hasCamera_ || !capture_) {
         return;
     }
@@ -293,7 +350,7 @@ void ScanCardDialog::requestScan() {
     capture_->capture();  // → imageCaptured → identify()
 }
 
-void ScanCardDialog::freezeFrame(const QImage& frame) {
+void ScanCardView::freezeFrame(const QImage& frame) {
     // Turn the camera off and show the captured still in its place: the user gets clear
     // feedback that the shot was taken (and can judge whether it's blurry) while the
     // assistant works, instead of a live preview that keeps moving with no result.
@@ -304,7 +361,7 @@ void ScanCardDialog::freezeFrame(const QImage& frame) {
     retakeButton_->setVisible(true);
 }
 
-void ScanCardDialog::retake() {
+void ScanCardView::retake() {
     // Resume the live preview so the user can reposition and shoot again. Cancel any
     // still-pending identify() reply first, so a late answer from the discarded capture
     // can't land on (and render a result over) the resumed live preview.
@@ -322,7 +379,7 @@ void ScanCardDialog::retake() {
     status_->setText(tr("Point a card at the camera, then press Scan."));
 }
 
-void ScanCardDialog::identify(const QImage& frame) {
+void ScanCardView::identify(const QImage& frame) {
     freezeFrame(frame);
     const std::string base64 = encodeJpegBase64(frame);
     if (base64.empty()) {
@@ -334,7 +391,7 @@ void ScanCardDialog::identify(const QImage& frame) {
     service_.ask(buildCardScanPrompt(base64));
 }
 
-void ScanCardDialog::onAnswer(const QString& text) {
+void ScanCardView::onAnswer(const QString& text) {
     lastScan_ = parseScannedCard(text.toStdString());
     setBusy(false);
     if (lastScan_.identified) {
@@ -349,7 +406,7 @@ void ScanCardDialog::onAnswer(const QString& text) {
     }
 }
 
-void ScanCardDialog::onFailed(const QString& message) {
+void ScanCardView::onFailed(const QString& message) {
     setBusy(false);
     resultForm_->setVisible(false);
     useButton_->setEnabled(false);
@@ -359,7 +416,7 @@ void ScanCardDialog::onFailed(const QString& message) {
     status_->setText(tr("Error: %1").arg(message) + retry);
 }
 
-void ScanCardDialog::showResult() {
+void ScanCardView::showResult() {
     // Fill the editable fields from the reading. Block the fields' textChanged during
     // population so it doesn't drive the button/estimate updates — those are done once,
     // explicitly, below. (Signals alone are unreliable here anyway: setText emits nothing
@@ -379,7 +436,7 @@ void ScanCardDialog::showResult() {
     updateMatchEstimate();
 }
 
-void ScanCardDialog::updateMatchEstimate() {
+void ScanCardView::updateMatchEstimate() {
     if (!ownedNameMatcher_) {
         matchEstimate_->clear();  // host gave no matcher — no estimate to show
         return;
@@ -395,7 +452,7 @@ void ScanCardDialog::updateMatchEstimate() {
                                 : tr("%n possible match(es) in your cards", "", matches));
 }
 
-ScannedCard ScanCardDialog::currentReading() const {
+ScannedCard ScanCardView::currentReading() const {
     // The reading as it now stands in the fields — the user may have corrected a misread
     // letter or digit. identified is true because the form is only shown for a read card.
     ScannedCard reading;
@@ -408,7 +465,7 @@ ScannedCard ScanCardDialog::currentReading() const {
     return reading;
 }
 
-void ScanCardDialog::setBusy(bool busy) {
+void ScanCardView::setBusy(bool busy) {
     // Scan is live-only (the camera is off while a still is frozen). Retake stays
     // enabled whenever a still is frozen — including mid-flight, where it doubles as
     // an abort (retake() cancels the pending reply) so the dialog can never look dead.
@@ -417,13 +474,13 @@ void ScanCardDialog::setBusy(bool busy) {
     retakeButton_->setEnabled(frozen);
 }
 
-bool ScanCardDialog::isFrozen() const {
+bool ScanCardView::isFrozen() const {
     // Null-safe: a QResizeEvent can reach this override before the ctor wires the stack.
     return viewStack_ && viewStack_->currentWidget() == frozen_;
 }
 
-void ScanCardDialog::resizeEvent(QResizeEvent* event) {
-    QDialog::resizeEvent(event);
+void ScanCardView::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
     // Keep the frozen still fit-scaled to the (new) preview size while it is shown.
     // Rescale the cached pixmap — never re-convert the QImage — so a resize drag is cheap.
     if (isFrozen() && !capturedPixmap_.isNull()) {

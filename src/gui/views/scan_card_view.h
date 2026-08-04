@@ -1,8 +1,8 @@
 #pragma once
 
-#include <QDialog>
 #include <QImage>
 #include <QPixmap>
+#include <QWidget>
 
 #include <functional>
 
@@ -14,7 +14,9 @@ class QLabel;
 class QLineEdit;
 class QMediaCaptureSession;
 class QPushButton;
+class QHideEvent;
 class QResizeEvent;
+class QShowEvent;
 class QStackedWidget;
 class QVideoWidget;
 
@@ -22,53 +24,74 @@ namespace pokedex {
 
 class AssistantService;
 
-// GUI — the "Scan a card" dialog: a live webcam preview with a Scan button. The user
+// GUI — the "Scan a card" screen: a live webcam preview with a Scan button. The user
 // positions a physical card in front of the default camera, presses Scan, and the
 // snapshot is sent to the assistant, which reads the card and returns a search string
-// (see ScannedCard / card_scan.h). The dialog shows what was read; on "Search my
-// cards" it emits cardResolved() so the host can drive the app's own deterministic
-// search — the assistant only reads the print, it never "finds" the card.
+// (see ScannedCard / card_scan.h). The screen shows what was read as editable fields;
+// on "Search my cards" it emits cardResolved() so the host can drive the app's own
+// deterministic search — the assistant only reads the print, it never "finds" the card.
 //
-// A modal dialog is the right shape (like About / the assistant demo): a transient
-// tool opened, used, and dismissed — not a CRUD screen. The camera starts when the
-// dialog opens and stops when it closes. When no camera is available (or access is
-// denied) the preview shows a message and Scan is disabled; the user can still cancel.
+// It is an in-window page (pushed into the shell's section stack with a Back top bar),
+// not a modal — matching the app's preference for full screens over dialogs for real
+// workflows. The camera runs only while the page is in use: startScan() resets it for a
+// fresh scan and starts the camera; hideEvent stops it (so navigating away or minimizing
+// turns the device light off) and, on an explicit hide only, cancels any pending reply;
+// a spontaneous show (restore-from-minimize) resumes a live scan. When no camera is
+// available (or access is denied) the preview shows a message and Scan is disabled.
 //
 // It depends only on the vendor-neutral AssistantService (for the vision call) and the
 // Qt-free card_scan helpers (for the prompt + reply parse) — it knows nothing of the
 // concrete LLM provider.
-class ScanCardDialog : public QDialog {
+class ScanCardView : public QWidget {
     Q_OBJECT
 
 public:
     // Given a card name the reader produced, how many of the user's cards could be it —
     // a quick "have I already added this?" estimate shown beside the Card field. The
-    // host supplies it (a snapshot of owned names), keeping the dialog free of storage.
+    // host supplies it (a snapshot of owned names), keeping the view free of storage.
     // An empty function means "no estimate" (the label stays blank).
     using OwnedNameMatcher = std::function<int(const QString& cardName)>;
 
-    // `service` must outlive the dialog (it is app-owned, like the window). It is the
-    // shared assistant transport; the dialog is modal, so no other caller competes.
-    // `ownedNameMatcher` is captured by value (may be empty).
-    explicit ScanCardDialog(AssistantService& service, OwnedNameMatcher ownedNameMatcher = {},
-                            QWidget* parent = nullptr);
-    ~ScanCardDialog() override;
+    // `service` must outlive the view (it is app-owned, like the window). It is the
+    // shared assistant transport. `ownedNameMatcher` is captured by value (may be empty).
+    explicit ScanCardView(AssistantService& service, OwnedNameMatcher ownedNameMatcher = {},
+                          QWidget* parent = nullptr);
+    ~ScanCardView() override;
 
-protected:
-    // Rescale the frozen still to the (possibly new) preview size, so the captured
-    // frame stays fit-scaled when the window is resized while it is shown.
-    void resizeEvent(QResizeEvent* event) override;
+    // Replace the owned-name matcher (see OwnedNameMatcher). The view is created once but
+    // the estimate needs a fresh snapshot of the collection per open, so the host sets it
+    // right before startScan(); passing {} disables the estimate.
+    void setOwnedNameMatcher(OwnedNameMatcher matcher);
+
+    // Reset to a fresh scan (clear the last reading, return to the live view) and start
+    // the camera. Call this each time the page is (re)opened from the sidebar/menu so a
+    // new scan doesn't inherit the last result — and so re-opening while the page is
+    // already current still restarts the camera (a no-op setCurrentIndex fires no show).
+    void startScan();
 
 Q_SIGNALS:
     // The user accepted a reading: route `scanned.query` into the app's search. Only
-    // emitted for an identified card (the button is disabled otherwise).
+    // emitted for a reading with a non-empty query (the button is disabled otherwise).
     void cardResolved(const ScannedCard& scanned);
+
+    // The user pressed Back — the host returns to the section it came from.
+    void backRequested();
+
+protected:
+    // Start the camera when the page is shown, stop it (and cancel any pending reply)
+    // when it is hidden — so the camera runs only while this screen is visible.
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
+    // Rescale the frozen still to the (possibly new) preview size, so the captured
+    // frame stays fit-scaled when the window is resized while it is shown.
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     void startCamera();          // check/request camera permission, then open the camera
     void openCamera();           // actually wire the session against the default camera
     void showCameraBlocked(const QString& message);  // permission denied / unavailable UI
-    void stopCamera();           // stop capture (on close) — safe to call twice
+    void stopCamera();           // stop capture — safe to call twice
+    void resetForNewScan();      // return to the live view, clear the last reading
     void requestScan();          // capture a still, then hand it to identify()
     void freezeFrame(const QImage& frame);  // stop the camera, show the captured still
     void retake();               // discard the still, resume the live preview
@@ -111,6 +134,8 @@ private:
 
     ScannedCard lastScan_;  // the most recent reading, carried to cardResolved()
     bool hasCamera_ = false;
+    bool active_ = false;   // true between startScan() and leaving the page; gates whether
+                            // showEvent should (re)start the camera
 };
 
 }  // namespace pokedex

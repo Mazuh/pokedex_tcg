@@ -16,7 +16,7 @@ The module follows the same seam pattern as the card catalog (`CardCatalogApi` +
 | GUI transport | `gui/services/assistant_service.{h,cpp}` | `AssistantService` (QObject) — reads the API key from config, POSTs via the `loggedPost` chokepoint, emits `answerReady` / `failed`. Never names the provider. |
 | Demo UI | `gui/views/assistant_prompt_dialog.{h,cpp}` | A modal prompt/answer box, opened from the Tools menu. |
 | Card reader (core) | `core/app/card_scan.{h,cpp}` | Qt-free: the card-scan **system instruction**, the vision-prompt builder (`buildCardScanPrompt`), and the tolerant JSON **reply parser** (`parseScannedCard` → `ScannedCard`). No I/O, unit-tested. |
-| Scan UI | `gui/views/scan_card_dialog.{h,cpp}` | A modal webcam dialog (QCamera / QMediaCaptureSession / QImageCapture / QVideoWidget): capture a frame → send it as a vision prompt → show the reading → `cardResolved()`. |
+| Scan UI | `gui/views/scan_card_view.{h,cpp}` | An in-window webcam screen (QCamera / QMediaCaptureSession / QImageCapture / QVideoWidget), pushed into the shell's section stack with a Back top bar — not a modal: capture a frame → freeze the still → send it as a vision prompt → show the reading as editable fields → `cardResolved()`. |
 | Config | key `assistant_api_key` in the `key=value` config file | The provider secret. Entered (masked) in **Settings**, read fresh per call so it applies live. |
 | Config | key `assistant_model` (optional) | Overrides which model the provider queries — e.g. a pinned version like `gemini-3.6-flash` — whatever the account can access. Absent = `GeminiAssistant`'s built-in default, the rolling alias `gemini-flash-latest` (always the current GA Flash, so it never breaks when a specific version is retired/gated). Read once at startup in `main.cpp`. |
 
@@ -49,9 +49,11 @@ the wrong card, it just yields a search the user reviews.
 
 ### Flow
 
-1. **Capture.** `ScanCardDialog` shows a live `QVideoWidget` preview; pressing *Scan*
-   grabs a frame via `QImageCapture`. The frame is downscaled to ≤1024px and JPEG-
-   encoded to base64 (cost + latency control) GUI-side.
+1. **Capture.** `ScanCardView` shows a live `QVideoWidget` preview; pressing *Scan*
+   grabs a frame via `QImageCapture`, then **freezes** it — the camera stops and the
+   captured still replaces the preview (a `QStackedWidget` swap) so the user sees exactly
+   what was sent; a *Retake* button resumes the live camera. The frame is downscaled to
+   ≤1024px and JPEG-encoded to base64 (cost + latency control) GUI-side.
 2. **Read.** `buildCardScanPrompt(base64)` (core) builds a vision `AiPrompt` — the
    image part, the card-scan **system instruction**, and `wantsJsonResponse=true`.
    `AssistantService::ask(const AiPrompt&)` POSTs it through the same transport as the
@@ -60,11 +62,16 @@ the wrong card, it just yields a search the user reviews.
    `ScannedCard { identified, cardName, setName, setCode, collectorNumber, query,
    note }`. It strips ``` fences / prose, never throws, and — for an identified card
    that omitted the query — synthesizes one from set + number. An unreadable card is
-   `identified=false` with a `note` the dialog shows so the user can reposition.
-4. **Search.** On *Search my cards* the dialog emits `cardResolved(ScannedCard)`;
-   `MainWindow` fills the **My Cards** live search with `query` (so the user instantly
-   sees whether they already own it) and switches there.
-5. **Add (optional).** The scan is stashed on `OwnedCardsView`; the next *Add a card*
+   `identified=false` with a `note` the view shows so the user can reposition.
+4. **Review.** The reading is shown as **editable fields** (Card / Set / Set code /
+   Number / Search) so the user can fix a misread letter or digit before it's used, with
+   a muted **owned-name match estimate** ("(N possible matches in your cards)") beside the
+   Card field as a quick "have I already added this?" read (MainWindow supplies a snapshot
+   matcher via `ScanCardView::setOwnedNameMatcher`, so the view stays storage-free).
+5. **Search.** On *Search my cards* the view emits `cardResolved(ScannedCard)` carrying
+   the fields **as edited**; `MainWindow` fills the **My Cards** live search with `query`
+   (so the user instantly sees whether they already own it) and switches there.
+6. **Add (optional).** The scan is stashed on `OwnedCardsView`; the next *Add a card*
    consumes it once, pre-filling the add page's form fields **and** driving its finder
    search (`AddCardCopyPage::prefillFrom`). The finder pick still goes through the real
    card catalog, so the saved copy is a trustworthy printing, not the LLM's verbatim
@@ -113,7 +120,7 @@ pokedex_tcg`; `dev.sh` runs that inner path (recognized as the bundle, stdout st
 terminal), `install.sh` installs the whole `.app` plus a `pokedex` symlink into it, and the
 README points at the `.app`.
 
-- **Code side.** `ScanCardDialog::startCamera()` calls `qApp->checkPermission(
+- **Code side.** `ScanCardView::startCamera()` calls `qApp->checkPermission(
   QCameraPermission{})` and, when *Undetermined*, `requestPermission(...)` — which shows
   the native prompt. Every outcome is shown **in the dialog**, not just the log:
   *Undetermined* → "Waiting for camera permission…"; *Denied* → a message telling the

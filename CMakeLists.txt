@@ -196,7 +196,7 @@ qt_add_executable(pokedex_tcg
     src/gui/views/wishlist_view.cpp
     src/gui/views/settings_view.cpp
     src/gui/views/assistant_prompt_dialog.cpp
-    src/gui/views/scan_card_dialog.cpp
+    src/gui/views/scan_card_view.cpp
     src/gui/views/toast.cpp
     src/gui/services/network_log.cpp
     src/gui/services/media_service.cpp

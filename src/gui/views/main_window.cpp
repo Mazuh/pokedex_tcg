@@ -15,7 +15,6 @@
 #include <QWidget>
 
 #include <memory>
-#include <utility>
 #include <vector>
 
 #include "core/app/card_copy_service.h"
@@ -27,7 +26,7 @@
 #include "gui/views/card_copy_labels.h"
 #include "gui/views/owned_cards_view.h"
 #include "gui/views/pokemon_list_view.h"
-#include "gui/views/scan_card_dialog.h"
+#include "gui/views/scan_card_view.h"
 #include "gui/views/settings_view.h"
 #include "gui/views/splitter_style.h"
 #include "gui/views/wishlist_view.h"
@@ -140,6 +139,29 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
     settings_ = new SettingsView;
     const int settingsRow = sections_->addWidget(settings_);
 
+    // The webcam Scan-a-card screen is an extra page in the section stack with no sidebar
+    // row: it's opened on demand from the sidebar footer / Tools menu and returns (Back)
+    // to the section it was opened from. Its signals are wired once here; showScan (below)
+    // refreshes its owned-name matcher and shows it.
+    auto* scanView = new ScanCardView(assistant);
+    const int scanRow = sections_->addWidget(scanView);
+    connect(scanView, &ScanCardView::cardResolved, this,
+            [this, sidebar, ownedView](const ScannedCard& scanned) {
+                // Route the reading into My Cards (fills its search + stashes the scan for
+                // the next "Add a card") and show that section. If the sidebar already
+                // highlights My Cards (scan was opened from there), its row-change signal
+                // won't fire, so switch the page directly.
+                ownedView->applyScannedCard(scanned);
+                if (sidebar->currentRow() == 2) {
+                    currentRow_ = 2;
+                    sections_->setCurrentIndex(2);
+                } else {
+                    sidebar->setCurrentRow(2);
+                }
+            });
+    connect(scanView, &ScanCardView::backRequested, this,
+            [this]() { sections_->setCurrentIndex(currentRow_); });
+
     // The Settings section is the one page with a manually-applied form, so leaving
     // it must not silently drop unsaved edits. Route section switches through a guard
     // that, when leaving Settings with a dirty form, prompts Save/Discard/Cancel — and
@@ -183,12 +205,19 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
                 sidebar->setCurrentRow(2);
             });
 
-    // Opens the webcam Scan-a-card dialog. When it resolves a reading, route the query
-    // into "My Cards" (fills its search so the user sees whether they already own it, and
-    // stashes the scan so the next "Add a card" pre-fills from it) and switch there.
-    const auto showScan = [this, &assistant, &cardCopies, sidebar, ownedView]() {
+    // Opens the webcam Scan-a-card screen: refresh its owned-name match estimate from a
+    // fresh snapshot of the collection, reset it for a new scan, and show the page.
+    const auto showScan = [this, &cardCopies, scanView, scanRow, settingsRow]() {
+        // Opening Scan is a section switch, so honor the Settings dirty-form guard (which
+        // the sidebar routes every switch through): leaving a dirty Settings form prompts
+        // Save/Discard/Cancel, and Cancel aborts opening Scan. This also leaves the form
+        // clean before entering the scan flow, so returning to My Cards on a resolved
+        // reading can't trip a stale prompt.
+        if (currentRow_ == settingsRow && !settings_->confirmLeave(this)) {
+            return;
+        }
         // A fresh snapshot of the live (non-Removed) collection's display names, taken at
-        // open so the dialog can estimate name matches without re-querying per keystroke.
+        // open so the view can estimate name matches without re-querying per keystroke.
         // Collapse duplicate copies of the same printing to one entry (keyed by name +
         // printed identity), so owning three of a card counts as one possible match, not
         // three — the estimate answers "which cards could this be?", not "how many copies".
@@ -212,7 +241,7 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
             seenPrintings.insert(printing);
             ownedNames->push_back(name);
         }
-        ScanCardDialog::OwnedNameMatcher matcher = [ownedNames](const QString& cardName) {
+        scanView->setOwnedNameMatcher([ownedNames](const QString& cardName) {
             const QString needle = cardName.trimmed().toLower();
             if (needle.isEmpty()) {
                 return 0;
@@ -224,15 +253,10 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
                 }
             }
             return count;
-        };
+        });
 
-        ScanCardDialog dialog(assistant, std::move(matcher), this);
-        connect(&dialog, &ScanCardDialog::cardResolved, this,
-                [sidebar, ownedView](const ScannedCard& scanned) {
-                    ownedView->applyScannedCard(scanned);
-                    sidebar->setCurrentRow(2);  // My Cards
-                });
-        dialog.exec();
+        scanView->startScan();  // reset to a fresh scan; showEvent starts the camera
+        sections_->setCurrentIndex(scanRow);
     };
     connect(scanButton, &QPushButton::clicked, this, showScan);
 

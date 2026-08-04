@@ -415,29 +415,47 @@ JSON-response hint — used by the card scanner); both share one send path + the
 The demo `gui/views/AssistantPromptDialog` (a modal prompt/answer box, opened from the Tools menu)
 exercises the text path.
 **Webcam card-scanning (BUILT).** The sidebar footer's **"✦ Scan card"** button (and Tools ▸
-*Scan a card…*) opens `gui/views/ScanCardDialog` — a live `QVideoWidget` preview (QCamera /
-QMediaCaptureSession / QImageCapture) with a *Scan* button. The captured frame is downscaled
-(≤1024px) + JPEG-base64-encoded GUI-side, then sent as a **vision `AiPrompt`**: `AiPrompt` grew an
-`images` field (`std::vector<AiImagePart>` of `{mimeType, base64Data}` — base64 done GUI-side so
-core needs no base64 impl) and a `wantsJsonResponse` flag (→ Gemini's
-`generationConfig.responseMimeType`), and `GeminiAssistant::buildRequest` folds images into
-`inline_data` parts. **The LLM only READS the print, it never "finds" the card** — the card-scan
-intelligence is the Qt-free `core/app/card_scan.{h,cpp}`: a **system instruction** that asks for a
-JSON object, `buildCardScanPrompt(base64)`, and the tolerant `parseScannedCard(reply)` →
+*Scan a card…*) opens `gui/views/ScanCardView` — an **in-window screen** (NOT a modal; it's a page
+in the shell's `sections_` stack with no sidebar row, index after Settings, opened via `showScan`
+and returned from via a **Back** top bar → `backRequested`, which pops to the section it was opened
+from) with a live `QVideoWidget` preview (QCamera / QMediaCaptureSession / QImageCapture) and a
+*Scan* button. Pressing *Scan* **freezes the frame** — the camera stops and the captured still
+replaces the live preview (a `QStackedWidget` page swap), so the user sees exactly what was sent
+while the assistant thinks; a **Retake** button (frozen-only; also an in-flight abort — it
+`cancelPending`s) resumes the live camera. The camera runs **only while the page is shown**:
+`startScan()` resets to a fresh scan and `showEvent` starts the camera (reusing one `QCamera`
+across opens — don't recreate per `showEvent`), `hideEvent` stops it + `cancelPending`s (so leaving
+the section OR minimizing turns the device light off; the reading is kept so restore resumes). The
+captured frame is downscaled (≤1024px) + JPEG-base64-encoded GUI-side, then sent as a **vision
+`AiPrompt`**: `AiPrompt` grew an `images` field (`std::vector<AiImagePart>` of `{mimeType,
+base64Data}` — base64 done GUI-side so core needs no base64 impl) and a `wantsJsonResponse` flag (→
+Gemini's `generationConfig.responseMimeType`), and `GeminiAssistant::buildRequest` folds images
+into `inline_data` parts. **The LLM only READS the print, it never "finds" the card** — the
+card-scan intelligence is the Qt-free `core/app/card_scan.{h,cpp}`: a **system instruction** that
+asks for a JSON object, `buildCardScanPrompt(base64)`, and the tolerant `parseScannedCard(reply)` →
 `ScannedCard { identified, cardName, setName, setCode, collectorNumber, query, note }` (strips
 ```-fences/prose, never throws, synthesizes `query` from set+number when the model omits it, and
 degrades an unreadable card to `identified=false` + a `note`). The `query` is a plain search
 string (a distinctive slice of the English set name — or the set code — plus the collector number,
-e.g. `collection 2021 1/25`) tuned for the existing **flexible My Cards substring search**. On
-*Search my cards* the dialog emits `cardResolved(ScannedCard)`; `MainWindow` fills the My Cards
-live search with `query` (so the user eyeballs whether they already own it — the booster workflow's
-"have I added this?" step) and switches there. The scan is **stashed on `OwnedCardsView`** and the
-NEXT *Add a card* consumes it once (`AddCardCopyPage::prefillFrom` writes the set/number/name onto
-the form as a baseline AND drives the name-mode finder search) — so the deterministic catalog
-search still produces the trustworthy printing, not the LLM's verbatim reading. New GUI dependency:
-`Qt6::Multimedia` + `Qt6::MultimediaWidgets` (Ubuntu CI adds `qt6-multimedia-dev`); core stays
-Qt-free. **macOS camera permission** is handled: `startCamera()` gates on
-`qApp->checkPermission/requestPermission(QCameraPermission{})` and shows every state IN the dialog
+e.g. `collection 2021 1/25`) tuned for the existing **flexible My Cards substring search** (which
+matches a **contiguous** slice of a column-ordered haystack, so the query is NOT regenerated from
+the full set name). The reading is shown as **editable fields** (Card / Set / Set code / Number /
+Search) so the user can fix a misread letter/digit; `cardResolved` carries the fields **as edited**
+(`currentReading()`). Beside the Card field a muted **owned-name match estimate** ("(N possible
+matches in your cards)") gives a quick "have I already added this?" read — MainWindow snapshots the
+live (non-Removed) collection's display names (deduped by printing) and passes a matcher via
+`ScanCardView::setOwnedNameMatcher`, so the view stays storage-free; the count is intentionally
+**name-based** (`owned.contains(scanned)`, per the feature request) and thus complementary to the
+set+number search the button runs. On *Search my cards* the view emits `cardResolved(ScannedCard)`;
+`MainWindow` fills the My Cards live search with `query` (so the user eyeballs whether they already
+own it — the booster workflow's "have I added this?" step) and switches there. The scan is
+**stashed on `OwnedCardsView`** and the NEXT *Add a card* consumes it once
+(`AddCardCopyPage::prefillFrom` writes the set/number/name onto the form as a baseline AND drives
+the name-mode finder search) — so the deterministic catalog search still produces the trustworthy
+printing, not the LLM's verbatim reading. New GUI dependency: `Qt6::Multimedia` +
+`Qt6::MultimediaWidgets` (Ubuntu CI adds `qt6-multimedia-dev`); core stays Qt-free. **macOS camera
+permission** is handled: `startCamera()` gates on
+`qApp->checkPermission/requestPermission(QCameraPermission{})` and shows every state IN the screen
 (waiting / denied-with-a-Settings-hint / no-camera), rather than the silent `qt.permissions` log
 line users can't see. The `if(APPLE)` block does TWO build-side things — BOTH required, missing
 either silently auto-denies (no prompt, no Settings entry, just a log line): (1) the macOS build is
