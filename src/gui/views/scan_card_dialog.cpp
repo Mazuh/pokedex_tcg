@@ -7,8 +7,10 @@
 #include <QCameraDevice>
 #include <QFont>
 #include <QHBoxLayout>
+#include <QFormLayout>
 #include <QImageCapture>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMediaCaptureSession>
 #include <QMediaDevices>
 #include <QPermissions>
@@ -89,10 +91,37 @@ ScanCardDialog::ScanCardDialog(AssistantService& service, QWidget* parent)
     status_ = new QLabel(this);
     status_->setWordWrap(true);
 
-    result_ = new QLabel(this);
-    result_->setWordWrap(true);
-    result_->setTextFormat(Qt::RichText);
-    result_->setVisible(false);
+    // The reading is shown as editable fields, not fixed labels: the reader is usually
+    // right but occasionally off by a letter or a digit, and the user can fix that here
+    // before it drives the search / the add-form prefill instead of rescanning.
+    resultForm_ = new QWidget(this);
+    resultForm_->setVisible(false);
+    cardNameEdit_ = new QLineEdit(resultForm_);
+    setNameEdit_ = new QLineEdit(resultForm_);
+    setCodeEdit_ = new QLineEdit(resultForm_);
+    numberEdit_ = new QLineEdit(resultForm_);
+    queryEdit_ = new QLineEdit(resultForm_);
+    queryEdit_->setToolTip(
+        tr("The search string used to look through your cards — set (or set code) plus "
+           "the collector number."));
+
+    auto* formLayout = new QFormLayout(resultForm_);
+    formLayout->setContentsMargins(0, 0, 0, 0);
+    auto* readHeading = new QLabel(tr("Read from the card (edit to correct):"), resultForm_);
+    readHeading->setEnabled(false);
+    formLayout->addRow(readHeading);
+    formLayout->addRow(tr("Card"), cardNameEdit_);
+    formLayout->addRow(tr("Set"), setNameEdit_);
+    formLayout->addRow(tr("Set code"), setCodeEdit_);
+    formLayout->addRow(tr("Number"), numberEdit_);
+    formLayout->addRow(tr("Search"), queryEdit_);
+
+    // "Search my cards" needs a non-empty query; keep it in step as the user edits it.
+    connect(queryEdit_, &QLineEdit::textChanged, this, [this](const QString& text) {
+        if (resultForm_->isVisible()) {
+            useButton_->setEnabled(!text.trimmed().isEmpty());
+        }
+    });
 
     scanButton_ = new QPushButton(tr("Scan"), this);
     scanButton_->setAutoDefault(true);
@@ -109,8 +138,9 @@ ScanCardDialog::ScanCardDialog(AssistantService& service, QWidget* parent)
     useButton_ = new QPushButton(tr("Search my cards"), this);
     useButton_->setEnabled(false);
     connect(useButton_, &QPushButton::clicked, this, [this]() {
-        if (lastScan_.identified) {
-            Q_EMIT cardResolved(lastScan_);
+        const ScannedCard reading = currentReading();
+        if (!reading.query.empty()) {
+            Q_EMIT cardResolved(reading);
             accept();
         }
     });
@@ -130,7 +160,7 @@ ScanCardDialog::ScanCardDialog(AssistantService& service, QWidget* parent)
     layout->addWidget(subtitle);
     layout->addWidget(viewStack_, 1);
     layout->addWidget(status_);
-    layout->addWidget(result_);
+    layout->addWidget(resultForm_);
     layout->addLayout(buttons);
 
     connect(&service_, &AssistantService::answerReady, this, &ScanCardDialog::onAnswer);
@@ -195,7 +225,7 @@ void ScanCardDialog::startCamera() {
 void ScanCardDialog::showCameraBlocked(const QString& message) {
     hasCamera_ = false;
     scanButton_->setEnabled(false);
-    result_->setVisible(false);
+    resultForm_->setVisible(false);
     status_->setText(message);
 }
 
@@ -241,7 +271,7 @@ void ScanCardDialog::requestScan() {
     }
     setBusy(true);
     status_->setText(tr("Capturing…"));
-    result_->setVisible(false);
+    resultForm_->setVisible(false);
     useButton_->setEnabled(false);
     capture_->capture();  // → imageCaptured → identify()
 }
@@ -264,7 +294,7 @@ void ScanCardDialog::retake() {
     service_.cancelPending();
     viewStack_->setCurrentWidget(preview_);
     retakeButton_->setVisible(false);
-    result_->setVisible(false);
+    resultForm_->setVisible(false);
     useButton_->setEnabled(false);
     frozen_->clear();
     capturedPixmap_ = QPixmap();
@@ -291,11 +321,10 @@ void ScanCardDialog::onAnswer(const QString& text) {
     lastScan_ = parseScannedCard(text.toStdString());
     setBusy(false);
     if (lastScan_.identified) {
-        status_->setText(tr("Read a card — review it below, then search your cards."));
-        useButton_->setEnabled(true);
-        showResult();
+        status_->setText(tr("Read a card — correct any field below, then search your cards."));
+        showResult();  // fills the fields; the query field's change enables "Search my cards"
     } else {
-        result_->setVisible(false);
+        resultForm_->setVisible(false);
         const QString note = lastScan_.note.empty()
                                  ? tr("Couldn't read a card.")
                                  : QString::fromStdString(lastScan_.note);
@@ -305,7 +334,7 @@ void ScanCardDialog::onAnswer(const QString& text) {
 
 void ScanCardDialog::onFailed(const QString& message) {
     setBusy(false);
-    result_->setVisible(false);
+    resultForm_->setVisible(false);
     useButton_->setEnabled(false);
     // The camera is off and a still is frozen at this point, so Scan is greyed —
     // point the user at Retake as the way to try again (it's the only live action).
@@ -314,22 +343,31 @@ void ScanCardDialog::onFailed(const QString& message) {
 }
 
 void ScanCardDialog::showResult() {
-    // A compact summary of what was read; the query is what actually drives the search.
-    QString html = tr("<b>Read from the card</b><br>");
-    const auto row = [&html](const QString& label, const std::string& value) {
-        if (!value.empty()) {
-            html += label + QStringLiteral(": ") + QString::fromStdString(value).toHtmlEscaped() +
-                    QStringLiteral("<br>");
-        }
-    };
-    row(tr("Card"), lastScan_.cardName);
-    row(tr("Set"), lastScan_.setName);
-    row(tr("Set code"), lastScan_.setCode);
-    row(tr("Number"), lastScan_.collectorNumber);
-    html += QStringLiteral("<br>") + tr("Search: <b>%1</b>")
-                                         .arg(QString::fromStdString(lastScan_.query).toHtmlEscaped());
-    result_->setText(html);
-    result_->setVisible(true);
+    // Fill the editable fields from the reading.
+    resultForm_->setVisible(true);
+    cardNameEdit_->setText(QString::fromStdString(lastScan_.cardName));
+    setNameEdit_->setText(QString::fromStdString(lastScan_.setName));
+    setCodeEdit_->setText(QString::fromStdString(lastScan_.setCode));
+    numberEdit_->setText(QString::fromStdString(lastScan_.collectorNumber));
+    queryEdit_->setText(QString::fromStdString(lastScan_.query));
+    // Enable "Search my cards" explicitly rather than leaning on setText's textChanged:
+    // rescanning the same card sets an identical query, which emits no textChanged, and
+    // the button (disabled by requestScan/retake) would otherwise stay greyed on a valid
+    // reading. The textChanged connection still handles later manual edits of the query.
+    useButton_->setEnabled(!queryEdit_->text().trimmed().isEmpty());
+}
+
+ScannedCard ScanCardDialog::currentReading() const {
+    // The reading as it now stands in the fields — the user may have corrected a misread
+    // letter or digit. identified is true because the form is only shown for a read card.
+    ScannedCard reading;
+    reading.identified = true;
+    reading.cardName = cardNameEdit_->text().trimmed().toStdString();
+    reading.setName = setNameEdit_->text().trimmed().toStdString();
+    reading.setCode = setCodeEdit_->text().trimmed().toStdString();
+    reading.collectorNumber = numberEdit_->text().trimmed().toStdString();
+    reading.query = queryEdit_->text().trimmed().toStdString();
+    return reading;
 }
 
 void ScanCardDialog::setBusy(bool busy) {

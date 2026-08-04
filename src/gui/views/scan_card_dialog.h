@@ -9,6 +9,7 @@
 class QCamera;
 class QImageCapture;
 class QLabel;
+class QLineEdit;
 class QMediaCaptureSession;
 class QPushButton;
 class QResizeEvent;
@@ -64,7 +65,10 @@ private:
     void identify(const QImage& frame);  // encode + send the frame to the assistant
     void onAnswer(const QString& text);  // parse the reply → show it
     void onFailed(const QString& message);
-    void showResult();           // render lastScan_ into the result label
+    void showResult();           // fill the editable fields from lastScan_
+    // The current reading as edited in the fields (trimmed) — what cardResolved()
+    // carries, so a fix the user typed (a misread letter, a wrong number) is honored.
+    ScannedCard currentReading() const;
     void setBusy(bool busy);     // disable Scan / show progress while a call is in flight
     bool isFrozen() const;       // true while the captured still (not the camera) is shown
 
@@ -80,7 +84,14 @@ private:
     QPixmap capturedPixmap_;      // the last captured frame, kept so it can be rescaled
                                   // on resize without re-converting from the QImage
     QLabel* status_;        // "Point a card at the camera" / "Identifying…" / errors
-    QLabel* result_;        // the parsed reading (rich text), hidden until there is one
+    // The reading, shown as editable fields (hidden until there is one) so the user can
+    // correct a misread letter/number before searching or adding.
+    QWidget* resultForm_ = nullptr;
+    QLineEdit* cardNameEdit_ = nullptr;
+    QLineEdit* setNameEdit_ = nullptr;
+    QLineEdit* setCodeEdit_ = nullptr;
+    QLineEdit* numberEdit_ = nullptr;
+    QLineEdit* queryEdit_ = nullptr;  // the actual search string driving My Cards
     QPushButton* scanButton_;
     QPushButton* retakeButton_;  // "Retake" — resume the live camera after a capture
     QPushButton* useButton_;  // "Search my cards" — enabled once a card is identified
