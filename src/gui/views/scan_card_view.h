@@ -99,7 +99,9 @@ private:
     void onAnswer(const QString& text);  // parse the reply → show it
     void onFailed(const QString& message);
     void showResult();           // fill the editable fields from lastScan_
-    void updateMatchEstimate();  // recount owned cards matching the Card field, show it
+    // Recompute the right-hand "first impressions" from the Card field: the owned-name
+    // match count and the detected Pokémon (name/dex #/region, cached in detectedDex_).
+    void updateFirstImpressions();
     // The current reading as edited in the fields (trimmed) — what cardResolved()
     // carries, so a fix the user typed (a misread letter, a wrong number) is honored.
     ScannedCard currentReading() const;
@@ -126,7 +128,9 @@ private:
     QLineEdit* setCodeEdit_ = nullptr;
     QLineEdit* numberEdit_ = nullptr;
     QLineEdit* queryEdit_ = nullptr;  // the actual search string driving My Cards
-    QLabel* matchEstimate_ = nullptr;  // "(N possible matches)" beside the Card field
+    // Right-hand "first impressions": owned-name match count + the detected Pokémon line.
+    QLabel* matchEstimate_ = nullptr;
+    QLabel* speciesLabel_ = nullptr;
     OwnedNameMatcher ownedNameMatcher_;  // supplied by the host; empty = no estimate
     QPushButton* scanButton_;
     QPushButton* retakeButton_;  // "Retake" — resume the live camera after a capture

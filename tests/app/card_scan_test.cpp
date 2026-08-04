@@ -10,6 +10,7 @@ namespace {
 
 using pokedex::AiPrompt;
 using pokedex::buildCardScanPrompt;
+using pokedex::detectScannedSpecies;
 using pokedex::parseScannedCard;
 using pokedex::ScannedCard;
 
@@ -83,6 +84,43 @@ TEST(CardScanTest, NonJsonIsMissNotThrow) {
 
     EXPECT_FALSE(s.identified);
     EXPECT_FALSE(s.note.empty());
+}
+
+// A card name that names a species (possibly with a suffix/prefix) resolves to its dex #.
+TEST(CardScanTest, DetectsSpeciesFromCardName) {
+    EXPECT_EQ(detectScannedSpecies("Charizard"), 6);
+    EXPECT_EQ(detectScannedSpecies("Charizard ex"), 6);      // suffix ignored
+    EXPECT_EQ(detectScannedSpecies("Ash's Pikachu"), 25);    // prefix ignored
+    EXPECT_EQ(detectScannedSpecies("pikachu"), 25);          // case-insensitive
+}
+
+// The longest (most specific) species name wins, so "Mewtwo" is Mewtwo, not Mew.
+TEST(CardScanTest, PrefersLongestSpeciesMatch) {
+    EXPECT_EQ(detectScannedSpecies("Mewtwo"), 150);
+    EXPECT_EQ(detectScannedSpecies("Mew"), 151);
+}
+
+// Whole-word matching: a species name embedded in a longer word is NOT a match, so the
+// Trainer card "Parasol Lady" doesn't falsely resolve to Paras (#46).
+TEST(CardScanTest, DoesNotMatchSpeciesInsideAWord) {
+    EXPECT_FALSE(detectScannedSpecies("Parasol Lady").has_value());
+    EXPECT_FALSE(detectScannedSpecies("Boss's Orders").has_value());
+}
+
+// Punctuation / symbols in the catalog name are ignored, so a reader that drops them
+// (or a hyphen-free reading) still matches.
+TEST(CardScanTest, MatchesDespitePunctuationAndSymbols) {
+    EXPECT_EQ(detectScannedSpecies("Farfetch'd"), 83);
+    EXPECT_EQ(detectScannedSpecies("Farfetchd"), 83);
+    EXPECT_EQ(detectScannedSpecies("Mr. Mime"), 122);
+    EXPECT_EQ(detectScannedSpecies("Mr Mime"), 122);
+    EXPECT_TRUE(detectScannedSpecies("Nidoran").has_value());  // ♀/♂ symbol dropped
+}
+
+// A blank or non-species name yields no detection.
+TEST(CardScanTest, NoSpeciesForBlankOrUnknown) {
+    EXPECT_FALSE(detectScannedSpecies("").has_value());
+    EXPECT_FALSE(detectScannedSpecies("Professor's Research").has_value());
 }
 
 }  // namespace

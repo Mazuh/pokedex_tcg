@@ -1,15 +1,104 @@
 #include "core/app/card_scan.h"
 
+#include <cstddef>
+#include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <nlohmann/json.hpp>
+
+#include "core/domain/pokemon.h"
+#include "core/domain/pokemon_catalog.h"
 
 namespace pokedex {
 
 namespace {
 
 using nlohmann::json;
+
+// Split `s` into lowercased word tokens. Words break on WHITESPACE only; within a word,
+// non-ASCII-alphanumeric bytes (punctuation like ' . : -, and non-ASCII UTF-8 bytes such as
+// the ♀/♂ symbols) are dropped, NOT treated as breaks — so a reader that omits the symbol
+// still matches. So "Ash's Pikachu" → ["ashs","pikachu"], "Mr. Mime" → ["mr","mime"],
+// "Farfetch'd" and "Farfetchd" both → ["farfetchd"], "Nidoran♀" → ["nidoran"]. Splitting on
+// whitespace (not on every non-alnum) is what keeps whole-word matching: "Parasol Lady"
+// stays ["parasol","lady"], so the bare species "Paras" doesn't match. Locale-free.
+std::vector<std::string> tokenize(const std::string& s) {
+    std::vector<std::string> tokens;
+    std::string cur;
+    for (const char ch : s) {
+        const unsigned char c = static_cast<unsigned char>(ch);
+        const bool isSpace = c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' ||
+                             c == '\v';
+        if (isSpace) {
+            if (!cur.empty()) {
+                tokens.push_back(cur);
+                cur.clear();
+            }
+            continue;
+        }
+        const bool isDigit = c >= '0' && c <= '9';
+        const bool isUpper = c >= 'A' && c <= 'Z';
+        const bool isLower = c >= 'a' && c <= 'z';
+        if (isDigit || isLower) {
+            cur.push_back(static_cast<char>(c));
+        } else if (isUpper) {
+            cur.push_back(static_cast<char>(c | 0x20));
+        }
+        // else: intra-word punctuation / symbol → dropped, without breaking the word.
+    }
+    if (!cur.empty()) {
+        tokens.push_back(cur);
+    }
+    return tokens;
+}
+
+// True if `needle` appears as a contiguous run of tokens within `hay` (whole-word match).
+bool containsTokenRun(const std::vector<std::string>& hay,
+                      const std::vector<std::string>& needle) {
+    if (needle.empty() || needle.size() > hay.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i + needle.size() <= hay.size(); ++i) {
+        bool all = true;
+        for (std::size_t j = 0; j < needle.size(); ++j) {
+            if (hay[i + j] != needle[j]) {
+                all = false;
+                break;
+            }
+        }
+        if (all) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// One catalog species reduced to its match key: its dex number, tokenized name, and total
+// token length (the tie-break). Built once (the catalog is compile-time constant) so a
+// per-keystroke detect only tokenizes the card name, not all ~1025 species.
+struct SpeciesTokens {
+    PokemonDexNum dex;
+    std::vector<std::string> tokens;
+    std::size_t chars;
+};
+
+const std::vector<SpeciesTokens>& speciesIndex() {
+    static const std::vector<SpeciesTokens> index = [] {
+        std::vector<SpeciesTokens> out;
+        for (const Pokemon& species : pokemonCatalog()) {
+            std::vector<std::string> tokens = tokenize(species.name);
+            std::size_t chars = 0;
+            for (const std::string& t : tokens) {
+                chars += t.size();
+            }
+            out.push_back(SpeciesTokens{species.dexNumber, std::move(tokens), chars});
+        }
+        return out;
+    }();
+    return index;
+}
 
 // Read a string field, tolerating a missing key or a non-string value (→ "").
 std::string strField(const json& obj, const char* key) {
@@ -143,6 +232,28 @@ ScannedCard parseScannedCard(const std::string& assistantText) {
         scanned.note = "Couldn't read a card in the photo.";
     }
     return scanned;
+}
+
+std::optional<PokemonDexNum> detectScannedSpecies(const std::string& cardName) {
+    const std::vector<std::string> hay = tokenize(cardName);
+    if (hay.empty()) {
+        return std::nullopt;
+    }
+    std::optional<PokemonDexNum> best;
+    std::size_t bestTokens = 0;
+    std::size_t bestChars = 0;
+    for (const SpeciesTokens& species : speciesIndex()) {
+        // Prefer the most specific match: more tokens, then more characters. Only bother
+        // running the (more expensive) token-run check when it could beat the current best.
+        const bool couldBeBetter = species.tokens.size() > bestTokens ||
+                                   (species.tokens.size() == bestTokens && species.chars > bestChars);
+        if (couldBeBetter && containsTokenRun(hay, species.tokens)) {
+            best = species.dex;
+            bestTokens = species.tokens.size();
+            bestChars = species.chars;
+        }
+    }
+    return best;
 }
 
 }  // namespace pokedex

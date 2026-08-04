@@ -1,8 +1,10 @@
 #pragma once
 
+#include <optional>
 #include <string>
 
 #include "core/app/ai_assistant.h"
+#include "core/domain/types.h"
 
 namespace pokedex {
 
@@ -49,5 +51,18 @@ AiPrompt buildCardScanPrompt(std::string base64Jpeg, std::string mimeType = "ima
 // reports a card but omits the query, one is synthesized from the components so the
 // caller always gets something searchable.
 ScannedCard parseScannedCard(const std::string& assistantText);
+
+// A best-guess dex number of the species a scanned card name depicts, matched against the
+// National Pokédex catalog. Matching is by normalized whole *word* (token), not raw
+// substring: each name is split on whitespace/punctuation and lowercased ASCII-wise (so
+// non-alphanumerics — apostrophes, periods, the ♀/♂ symbols — are ignored), and a species
+// matches when its token sequence appears contiguously among the card name's tokens. The
+// longest (most tokens, then most characters) match wins. So "Mewtwo" resolves to Mewtwo
+// (not Mew), "Ash's Pikachu" and "Charizard ex" to their species, "Farfetch'd"/"Mr Mime"/
+// "Nidoran" match despite punctuation, and "Parasol Lady" matches nothing (no bare "Paras"
+// false positive). Returns nullopt for a name that depicts no known species (a Trainer/
+// Energy card, or an unrecognized name). A first impression, not an authority — the add
+// flow's finder still confirms the actual printing. Pure, catalog-only; unit-tested.
+std::optional<PokemonDexNum> detectScannedSpecies(const std::string& cardName);
 
 }  // namespace pokedex

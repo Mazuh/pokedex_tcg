@@ -25,12 +25,16 @@
 #include <QVBoxLayout>
 #include <QVideoWidget>
 
+#include <optional>
 #include <string>
 #include <utility>
 
 #include "core/app/card_scan.h"
+#include "core/domain/pokemon.h"
 #include "gui/services/assistant_service.h"
+#include "gui/views/card_copy_labels.h"
 #include "gui/views/primary_button.h"
+#include "gui/views/region_labels.h"
 #include "gui/views/scaled_pixmap.h"
 
 namespace pokedex {
@@ -102,41 +106,57 @@ ScanCardView::ScanCardView(AssistantService& service, OwnedNameMatcher ownedName
     status_ = new QLabel(this);
     status_->setWordWrap(true);
 
-    // The reading is shown as editable fields, not fixed labels: the reader is usually
-    // right but occasionally off by a letter or a digit, and the user can fix that here
-    // before it drives the search / the add-form prefill instead of rescanning.
+    // The reading section is split in half: on the LEFT the editable fields (the reader
+    // is usually right but occasionally off by a letter or digit, so the user can fix it
+    // here rather than rescanning), on the RIGHT the "first impressions" — how many owned
+    // cards match the name, and which Pokémon (if any) it depicts (name, dex #, region).
     resultForm_ = new QWidget(this);
     resultForm_->setVisible(false);
-    cardNameEdit_ = new QLineEdit(resultForm_);
-    setNameEdit_ = new QLineEdit(resultForm_);
-    setCodeEdit_ = new QLineEdit(resultForm_);
-    numberEdit_ = new QLineEdit(resultForm_);
-    queryEdit_ = new QLineEdit(resultForm_);
+
+    // --- Left: the editable printed-identity fields ---
+    auto* leftPanel = new QWidget(resultForm_);
+    cardNameEdit_ = new QLineEdit(leftPanel);
+    setNameEdit_ = new QLineEdit(leftPanel);
+    setCodeEdit_ = new QLineEdit(leftPanel);
+    numberEdit_ = new QLineEdit(leftPanel);
+    queryEdit_ = new QLineEdit(leftPanel);
     queryEdit_->setToolTip(
         tr("The search string used to look through your cards — set (or set code) plus "
            "the collector number."));
 
-    // The Card row pairs the name field with a muted match estimate ("(3 possible
-    // matches)") — a quick "have I already added this?" read of how many owned cards
-    // share this name, updated as the reader fills it in or the user corrects it.
-    matchEstimate_ = new QLabel(resultForm_);
-    matchEstimate_->setEnabled(false);
-    auto* cardRow = new QWidget(resultForm_);
-    auto* cardRowLayout = new QHBoxLayout(cardRow);
-    cardRowLayout->setContentsMargins(0, 0, 0, 0);
-    cardRowLayout->addWidget(cardNameEdit_, 1);
-    cardRowLayout->addWidget(matchEstimate_);
-
-    auto* formLayout = new QFormLayout(resultForm_);
+    auto* formLayout = new QFormLayout(leftPanel);
     formLayout->setContentsMargins(0, 0, 0, 0);
-    auto* readHeading = new QLabel(tr("Read from the card (edit to correct):"), resultForm_);
+    auto* readHeading = new QLabel(tr("Read from the card (edit to correct):"), leftPanel);
     readHeading->setEnabled(false);
     formLayout->addRow(readHeading);
-    formLayout->addRow(tr("Card"), cardRow);
+    formLayout->addRow(tr("Card"), cardNameEdit_);
     formLayout->addRow(tr("Set"), setNameEdit_);
     formLayout->addRow(tr("Set code"), setCodeEdit_);
     formLayout->addRow(tr("Number"), numberEdit_);
     formLayout->addRow(tr("Search"), queryEdit_);
+
+    // --- Right: first impressions (owned-name matches + detected Pokémon) ---
+    auto* rightPanel = new QWidget(resultForm_);
+    auto* impressionsHeading = new QLabel(tr("First impressions"), rightPanel);
+    QFont impressionsFont = impressionsHeading->font();
+    impressionsFont.setBold(true);
+    impressionsHeading->setFont(impressionsFont);
+    matchEstimate_ = new QLabel(rightPanel);   // "N of your cards may match this name."
+    matchEstimate_->setEnabled(false);         // muted — a secondary "first impression" hint
+    matchEstimate_->setWordWrap(true);
+    speciesLabel_ = new QLabel(rightPanel);    // "Pokémon: Charizard · #6 · Kanto"
+    speciesLabel_->setWordWrap(true);
+    auto* rightLayout = new QVBoxLayout(rightPanel);
+    rightLayout->setContentsMargins(16, 0, 0, 0);
+    rightLayout->addWidget(impressionsHeading);
+    rightLayout->addWidget(matchEstimate_);
+    rightLayout->addWidget(speciesLabel_);
+    rightLayout->addStretch(1);
+
+    auto* resultLayout = new QHBoxLayout(resultForm_);
+    resultLayout->setContentsMargins(0, 0, 0, 0);
+    resultLayout->addWidget(leftPanel, 1);
+    resultLayout->addWidget(rightPanel, 1);
 
     // "Search my cards" needs a non-empty query; keep it in step as the user edits it.
     connect(queryEdit_, &QLineEdit::textChanged, this, [this](const QString& text) {
@@ -144,9 +164,10 @@ ScanCardView::ScanCardView(AssistantService& service, OwnedNameMatcher ownedName
             useButton_->setEnabled(!text.trimmed().isEmpty());
         }
     });
-    // Recount the estimate whenever the card name changes (reader fill-in or a correction).
+    // Recompute the first impressions whenever the card name changes (reader fill-in or a
+    // correction) — both the owned-name count and the detected species depend on it.
     connect(cardNameEdit_, &QLineEdit::textChanged, this,
-            [this](const QString&) { updateMatchEstimate(); });
+            [this](const QString&) { updateFirstImpressions(); });
 
     scanButton_ = new QPushButton(tr("Scan"), this);
     scanButton_->setAutoDefault(true);
@@ -433,23 +454,36 @@ void ScanCardView::showResult() {
         queryEdit_->setText(QString::fromStdString(lastScan_.query));
     }
     useButton_->setEnabled(!queryEdit_->text().trimmed().isEmpty());
-    updateMatchEstimate();
+    updateFirstImpressions();
 }
 
-void ScanCardView::updateMatchEstimate() {
-    if (!ownedNameMatcher_) {
-        matchEstimate_->clear();  // host gave no matcher — no estimate to show
-        return;
-    }
+void ScanCardView::updateFirstImpressions() {
     const QString name = cardNameEdit_->text().trimmed();
-    if (name.isEmpty()) {
+
+    // How many owned cards could be this one (by name) — the "have I already added this?"
+    // read. The matcher is a name-substring estimate, so the wording hedges ("may match")
+    // rather than asserting an exact duplicate count. Blank with no matcher / no name.
+    if (!ownedNameMatcher_ || name.isEmpty()) {
         matchEstimate_->clear();
-        return;
+    } else {
+        const int matches = ownedNameMatcher_(name);
+        matchEstimate_->setText(matches <= 0
+                                    ? tr("No cards of yours seem to match this name yet.")
+                                    : tr("%n of your cards may match this name.", "", matches));
     }
-    const int matches = ownedNameMatcher_(name);
-    matchEstimate_->setText(matches <= 0
-                                ? tr("none in your cards yet")
-                                : tr("%n possible match(es) in your cards", "", matches));
+
+    // Which Pokémon (if any) the card depicts — name, dex number, and region.
+    const std::optional<PokemonDexNum> dex = detectScannedSpecies(name.toStdString());
+    if (dex) {
+        const Pokemon* entry = catalogEntry(*dex);
+        const QString species = entry ? QString::fromStdString(entry->name) : QString();
+        const QString region = entry ? regionLabel(entry->region) : QString();
+        speciesLabel_->setText(tr("Pokémon: %1 · #%2 · %3").arg(species).arg(*dex).arg(region));
+    } else if (name.isEmpty()) {
+        speciesLabel_->clear();
+    } else {
+        speciesLabel_->setText(tr("No matching Pokémon (a Trainer/Energy card, or unrecognized)."));
+    }
 }
 
 ScannedCard ScanCardView::currentReading() const {
