@@ -146,6 +146,8 @@ ScanCardView::ScanCardView(AssistantService& service, OwnedNameMatcher ownedName
     matchEstimate_->setWordWrap(true);
     speciesLabel_ = new QLabel(rightPanel);    // "Pokémon: Charizard · #6 · Kanto"
     speciesLabel_->setWordWrap(true);
+    setLabel_ = new QLabel(rightPanel);        // "Set recognized: Base Set (BS)" (if loaded)
+    setLabel_->setWordWrap(true);
 
     // Skip "Search my cards" and go straight to creation, two ways (both plain buttons —
     // "Scan" is the view's one accent). (1) Find in catalog: seed the finder search (by
@@ -173,6 +175,7 @@ ScanCardView::ScanCardView(AssistantService& service, OwnedNameMatcher ownedName
     rightLayout->addWidget(impressionsHeading);
     rightLayout->addWidget(matchEstimate_);
     rightLayout->addWidget(speciesLabel_);
+    rightLayout->addWidget(setLabel_);
     rightLayout->addSpacing(8);
     rightLayout->addWidget(findButton_, 0, Qt::AlignLeft);
     rightLayout->addWidget(copyButton_, 0, Qt::AlignLeft);
@@ -189,10 +192,12 @@ ScanCardView::ScanCardView(AssistantService& service, OwnedNameMatcher ownedName
             useButton_->setEnabled(!text.trimmed().isEmpty());
         }
     });
-    // Recompute the first impressions whenever the card name changes (reader fill-in or a
-    // correction) — both the owned-name count and the detected species depend on it.
-    connect(cardNameEdit_, &QLineEdit::textChanged, this,
-            [this](const QString&) { updateFirstImpressions(); });
+    // Recompute the first impressions whenever a field they derive from changes: the card
+    // name (owned-name count + detected species) or the set fields (set recognition).
+    const auto refreshImpressions = [this](const QString&) { updateFirstImpressions(); };
+    connect(cardNameEdit_, &QLineEdit::textChanged, this, refreshImpressions);
+    connect(setNameEdit_, &QLineEdit::textChanged, this, refreshImpressions);
+    connect(setCodeEdit_, &QLineEdit::textChanged, this, refreshImpressions);
 
     scanButton_ = new QPushButton(tr("Scan"), this);
     scanButton_->setAutoDefault(true);
@@ -243,6 +248,10 @@ ScanCardView::~ScanCardView() { stopCamera(); }
 
 void ScanCardView::setOwnedNameMatcher(OwnedNameMatcher matcher) {
     ownedNameMatcher_ = std::move(matcher);
+}
+
+void ScanCardView::setSetMatcher(SetMatcher matcher) {
+    setMatcher_ = std::move(matcher);
 }
 
 void ScanCardView::startScan() {
@@ -470,7 +479,11 @@ void ScanCardView::showResult() {
     // fire for later manual edits.
     resultForm_->setVisible(true);
     {
+        // Block every field that drives an update, so population fires nothing; the
+        // explicit useButton_/first-impressions updates below do the work once.
         const QSignalBlocker blockName(cardNameEdit_);
+        const QSignalBlocker blockSetName(setNameEdit_);
+        const QSignalBlocker blockSetCode(setCodeEdit_);
         const QSignalBlocker blockQuery(queryEdit_);
         cardNameEdit_->setText(QString::fromStdString(lastScan_.cardName));
         setNameEdit_->setText(QString::fromStdString(lastScan_.setName));
@@ -517,6 +530,24 @@ void ScanCardView::updateFirstImpressions() {
     }
     // A species is added by searching its set; a species-free card by searching its name.
     findButton_->setText(detectedDex_ > 0 ? tr("Create by set") : tr("Create by name"));
+
+    // Whether the read set is one the catalog knows — but only when the set table is
+    // already loaded in memory (this never triggers a fetch). Silent otherwise, so an
+    // unloaded table doesn't read as "unrecognized".
+    const QString setCode = setCodeEdit_->text().trimmed();
+    const QString setName = setNameEdit_->text().trimmed();
+    if (!setMatcher_ || (setCode.isEmpty() && setName.isEmpty())) {
+        setLabel_->clear();
+    } else {
+        const SetLookup lookup = setMatcher_(setCode, setName);
+        if (!lookup.loaded) {
+            setLabel_->clear();  // set table not in memory — say nothing about the set
+        } else if (lookup.matched) {
+            setLabel_->setText(tr("Set recognized: %1").arg(lookup.canonicalLabel));
+        } else {
+            setLabel_->setText(tr("Set not recognized in the catalog — double-check it."));
+        }
+    }
 }
 
 ScannedCard ScanCardView::currentReading() const {

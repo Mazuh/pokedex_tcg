@@ -52,6 +52,20 @@ public:
     // An empty function means "no estimate" (the label stays blank).
     using OwnedNameMatcher = std::function<int(const QString& cardName)>;
 
+    // Whether the read set matches one already loaded in the catalog's set table. `loaded`
+    // is false when the set table isn't in memory yet (the scan then says nothing about the
+    // set — it never triggers a fetch); when loaded, `matched` says whether the read set was
+    // recognized, and `canonicalLabel` names it ("Base Set (BS)").
+    struct SetLookup {
+        bool loaded = false;
+        bool matched = false;
+        QString canonicalLabel;
+    };
+    // Look up the read set (code, name) against the in-memory set table. The host supplies
+    // this querying the shared catalog service live (so a set table that loads later is
+    // reflected). Empty function → the set-recognition line stays blank.
+    using SetMatcher = std::function<SetLookup(const QString& setCode, const QString& setName)>;
+
     // `service` must outlive the view (it is app-owned, like the window). It is the
     // shared assistant transport. `ownedNameMatcher` is captured by value (may be empty).
     explicit ScanCardView(AssistantService& service, OwnedNameMatcher ownedNameMatcher = {},
@@ -62,6 +76,10 @@ public:
     // the estimate needs a fresh snapshot of the collection per open, so the host sets it
     // right before startScan(); passing {} disables the estimate.
     void setOwnedNameMatcher(OwnedNameMatcher matcher);
+
+    // Set the set-table matcher (see SetMatcher). Queries the shared catalog service live,
+    // so it can be set once at construction; passing {} disables the set-recognition line.
+    void setSetMatcher(SetMatcher matcher);
 
     // Reset to a fresh scan (clear the last reading, return to the live view) and start
     // the camera. Call this each time the page is (re)opened from the sidebar/menu so a
@@ -140,10 +158,12 @@ private:
     // then the two direct-add actions.
     QLabel* matchEstimate_ = nullptr;
     QLabel* speciesLabel_ = nullptr;
+    QLabel* setLabel_ = nullptr;  // "Set recognized: Base Set (BS)" / not-recognized / blank
     QPushButton* findButton_ = nullptr;  // "Create by set/name" — seed the catalog finder
     QPushButton* copyButton_ = nullptr;  // "Copy to creation form" — paste fields, no search
     int detectedDex_ = 0;  // dex # the card name matches (0 = none); drives findButton_ label + routing
     OwnedNameMatcher ownedNameMatcher_;  // supplied by the host; empty = no estimate
+    SetMatcher setMatcher_;  // supplied by the host; empty = no set-recognition line
     QPushButton* scanButton_;
     QPushButton* retakeButton_;  // "Retake" — resume the live camera after a capture
     QPushButton* useButton_;  // "Search my cards" — enabled once a card is identified

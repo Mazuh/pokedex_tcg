@@ -453,7 +453,16 @@ longest match wins ("Mewtwo"≠Mew), and the catalog is tokenized once into a st
 per-keystroke rescan). MainWindow snapshots the live (non-Removed) collection's display names
 (deduped by printing) and passes the owned-name matcher via `ScanCardView::setOwnedNameMatcher`, so
 the view stays storage-free; the count is intentionally **name-based** (`owned.contains(scanned)`,
-per the feature request) and thus complementary to the set+number search. The panel has a
+per the feature request) and thus complementary to the set+number search. The panel also shows a
+**set-recognition** line ("Set recognized: Base Set (BS)" / "not recognized") — but ONLY when the
+catalog's set table is **already loaded in memory**: `ScanCardView::setSetMatcher` takes a `SetMatcher`
+that MainWindow wires to query `CardSearchService::sets()` **live** (set once — the service outlives
+the view — and it **never triggers a fetch**; an unloaded table stays silent rather than reading as
+"unrecognized"), resolving the read code/name to a set **precisely** via a file-local `matchReadSet`
+(exact printed code → exact set name → a *uniquely* matching name-substring; ambiguous/absent → "not
+recognized", never an arbitrary pick — deliberately unlike the search-narrowing `resolveSetFilterToIds`)
+and labelling it with the shared `setLabel` formatter. It recomputes on any set-field or card-name
+edit. The panel has a
 *Search my cards* action (emits `cardResolved` → `MainWindow` fills the My Cards live search with
 `query` and switches there; the scan is **stashed on `OwnedCardsView`** and the NEXT *Add a card*
 consumes it via `AddCardCopyPage::prefillFrom`) plus **two direct-add buttons** that **skip the

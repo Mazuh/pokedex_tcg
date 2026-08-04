@@ -17,9 +17,12 @@
 #include <memory>
 #include <vector>
 
+#include "core/app/card_catalog_dto.h"
 #include "core/app/card_copy_service.h"
 #include "core/domain/card_copy.h"
 #include "core/domain/card_ownership.h"
+#include "core/domain/card_reference.h"
+#include "gui/services/card_search_service.h"
 #include "gui/views/about_dialog.h"
 #include "gui/views/assistant_prompt_dialog.h"
 #include "gui/views/binders_page.h"
@@ -32,6 +35,54 @@
 #include "gui/views/wishlist_view.h"
 
 namespace pokedex {
+
+namespace {
+
+// The single set in the loaded set table that the read code/name unambiguously names, or
+// null. Exact printed code (unique per set) wins; then an exact set name; then, only if the
+// read name substring-matches EXACTLY ONE set (either direction, 3+ chars), that set. An
+// ambiguous or absent match returns null, so the scan panel says "not recognized" rather
+// than confidently naming an arbitrary printing (unlike the search-narrowing
+// resolveSetFilterToIds, which is deliberately many-matching). Precise by design: a misread
+// set reads as unrecognized instead of matching an unrelated one by substring.
+const CardSetInfo* matchReadSet(const std::vector<CardSetInfo>& sets, const QString& code,
+                                const QString& name) {
+    if (!code.isEmpty()) {
+        for (const CardSetInfo& s : sets) {
+            if (!s.ptcgoCode.empty() &&
+                QString::fromStdString(s.ptcgoCode).compare(code, Qt::CaseInsensitive) == 0) {
+                return &s;
+            }
+        }
+    }
+    if (name.isEmpty()) {
+        return nullptr;
+    }
+    for (const CardSetInfo& s : sets) {
+        if (QString::fromStdString(s.name).compare(name, Qt::CaseInsensitive) == 0) {
+            return &s;
+        }
+    }
+    // No exact hit — accept a substring match only when it identifies exactly one set, so a
+    // near-miss reading still resolves but an ambiguous fragment (e.g. "Base") does not.
+    if (name.size() < 3) {
+        return nullptr;
+    }
+    const QString needle = name.toLower();
+    const CardSetInfo* only = nullptr;
+    for (const CardSetInfo& s : sets) {
+        const QString candidate = QString::fromStdString(s.name).toLower();
+        if (candidate.contains(needle) || needle.contains(candidate)) {
+            if (only != nullptr) {
+                return nullptr;  // ambiguous — more than one set matches
+            }
+            only = &s;
+        }
+    }
+    return only;
+}
+
+}  // namespace
 
 MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
                        PokemonBrowseService& browse, WishlistService& wishlist,
@@ -144,6 +195,28 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
     // to the section it was opened from. Its signals are wired once here; showScan (below)
     // refreshes its owned-name matcher and shows it.
     auto* scanView = new ScanCardView(assistant);
+    // Tell the scan panel whether the read set is one the catalog knows — but only from the
+    // set table ALREADY loaded in memory (querying the shared search service live, never
+    // triggering a fetch). Set once: the service outlives the view.
+    scanView->setSetMatcher([&cardSearch](const QString& setCode, const QString& setName) {
+        ScanCardView::SetLookup lookup;
+        const std::vector<CardSetInfo>& sets = cardSearch.sets();
+        if (sets.empty()) {
+            return lookup;  // set table not loaded yet — loaded=false, no fetch
+        }
+        lookup.loaded = true;
+        const CardSetInfo* found = matchReadSet(sets, setCode.trimmed(), setName.trimmed());
+        lookup.matched = found != nullptr;
+        if (found != nullptr) {
+            // Reuse the shared "Base Set (BS)" formatter so the panel and the card tables'
+            // Set column never render the same set differently.
+            CardReference ref;
+            ref.setName = found->name;
+            ref.expansionCode = found->ptcgoCode;
+            lookup.canonicalLabel = setLabel(ref);
+        }
+        return lookup;
+    });
     const int scanRow = sections_->addWidget(scanView);
     // Make section `row` the visible one, coming FROM the scan page. Normally this is a
     // sidebar row change; but when the sidebar already highlights `row` (the scan was

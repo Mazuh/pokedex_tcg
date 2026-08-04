@@ -68,10 +68,12 @@ the wrong card, it just yields a search the user reviews.
    before they're used; on the **right**, **"first impressions"** — a muted owned-name
    match count ("N of your cards may match this name") as a "have I already added this?"
    read (MainWindow supplies a snapshot matcher via `ScanCardView::setOwnedNameMatcher`, so
-   the view stays storage-free), and the **detected Pokémon** (species name, dex #, region)
+   the view stays storage-free), the **detected Pokémon** (species name, dex #, region)
    via `detectScannedSpecies` (core, Qt-free: whole-word token match of the card name
    against the National Pokédex catalog — "Ash's Pikachu"→Pikachu, "Mewtwo"≠Mew, "Parasol
-   Lady"→nothing).
+   Lady"→nothing), and a **set-recognition** line — but only when the catalog's set table is
+   *already in memory* (`ScanCardView::setSetMatcher` querying `CardSearchService::sets()`
+   live, never fetching), so a set the LLM misread shows as "not recognized".
 5. **Search (optional).** On *Search my cards* the view emits `cardResolved(ScannedCard)`
    carrying the fields **as edited**; `MainWindow` fills the **My Cards** live search with
    `query` (so the user sees whether they already own it) and switches there. From there
