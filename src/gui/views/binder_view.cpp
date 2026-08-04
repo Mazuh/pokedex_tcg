@@ -48,10 +48,21 @@
 #include "gui/views/sortable_table.h"
 #include "gui/views/splitter_style.h"
 #include "gui/views/status_labels.h"
+#include "gui/views/table_bulk_update.h"
 #include "gui/views/table_cell.h"
 #include "gui/views/wishlist_edit_page.h"
 
 namespace pokedex {
+
+namespace {
+// The guide's auto-fit columns: every column that sizes to its content
+// (ResizeToContents) — all but the Stretch Set column (2). The single source of truth
+// for both the ctor's initial resize-mode setup and repopulate()'s BulkTablePopulate
+// guard, so the two can't silently drift when a column is added, removed, or reordered
+// (a mismatch would either reintroduce the O(rows^2) reopen freeze or convert the Set
+// slack column). Mirrors OwnedCardsView's kAutoFitColumns.
+constexpr int kAutoFitColumns[] = {0, 1, 3, 4, 5, 6, 7, 8};
+}  // namespace
 
 BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
                        WishlistService& wishlist, MediaService& media,
@@ -149,7 +160,7 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     // Pokémon (col 1) and the short metadata columns size to content; Set (col 2) is the
     // flexible slack absorber that grows when there's room and elides when space is tight —
     // mirroring OwnedCardsView. Prices (col 8) sizes to its "$… · €…" content.
-    for (const int col : {0, 1, 3, 4, 5, 6, 7, 8}) {  // all but the Set slack column
+    for (const int col : kAutoFitColumns) {  // all but the Set slack column
         header->setSectionResizeMode(col, QHeaderView::ResizeToContents);
     }
     header->setSectionResizeMode(2, QHeaderView::Stretch);  // Set — flexible slack absorber
@@ -414,43 +425,55 @@ void BinderView::repopulate() {
     // Rebuild every row from the freshly computed entries; entries_ and table rows
     // stay 1:1 and aligned. Statuses are fixed until the next refresh, so filtering
     // then just toggles row visibility — no per-keystroke allocation.
-    table_->setRowCount(static_cast<int>(entries_.size()));
-    std::vector<CardPrice> priceScratch;  // reused across rows (visiblePricesForCopy's contract):
-                                          // fills only for a suppressed-vendor card, so a whole
-                                          // rebuild allocates for those rows, not every priced row
-    for (int i = 0; i < static_cast<int>(entries_.size()); ++i) {
-        const CardBinderEntry& entry = entries_[i];
-        auto* number = cell(QString::number(entry.pokemon.dexNumber));
-        number->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        table_->setItem(i, 0, number);
-        table_->setItem(i, 1, cell(QString::fromStdString(entry.pokemon.name)));
-        // A representative owned copy filed here fills the printed-identity columns; a
-        // species with none leaves them blank (rendered as an em-dash by cell()).
-        const CardCopy* rep = representativeCopy(entry.pokemon.dexNumber);
-        // Set is the eliding Stretch column ("Base Set (BS)"); carry the full value as a
-        // tooltip so a long name stays readable when the column truncates it ("…").
-        const QString setText = rep ? setLabel(rep->cardRef) : QString();
-        auto* setCell = cell(setText);
-        setCell->setToolTip(setText);
-        table_->setItem(i, 2, setCell);
-        table_->setItem(i, 3, cell(rep ? QString::fromStdString(rep->cardRef.collectorNumber)
-                                       : QString()));
-        table_->setItem(i, 4, cell(rep && rep->condition ? conditionAbbrev(*rep->condition)
-                                                         : QString()));
-        table_->setItem(i, 5, cell(rep && rep->rarity ? rarityLabel(*rep->rarity) : QString()));
-        table_->setItem(i, 6, cell(rep && rep->foil ? foilLabel(*rep->foil) : QString()));
-        table_->setItem(i, 7, cell(statusLabel(entry.status)));
-        // The representative copy's cached market prices, inline ("$… · €…"); blank when the
-        // copy is unlinked or its prices were never fetched. Cache-only (pricesByExternalId_),
-        // so this stays a pure in-memory rebuild — no network, no re-query.
-        table_->setItem(
-            i, 8,
-            cell(rep ? priceAmountsInline(
-                           visiblePricesForCopy(pricesByExternalId_, suppressedByExternalId_, *rep,
-                                                priceScratch),
-                           finishForFoil(rep->foil))
-                     : QString()));
-    }
+    //
+    // Wrap the fill in BulkTablePopulate: the content-sized columns re-scan every row on
+    // each setItem, so replacing ~9000 cells in an already-populated, visible ~1000-row
+    // guide (the tab-return path) would otherwise freeze the UI for many seconds — the
+    // guard turns that O(rows^2) refill into a single trailing re-measure. The columns
+    // here are kAutoFitColumns — the same ResizeToContents set configured in the ctor (all
+    // but the Stretch Set column, col 2). Scoped to the fill loop only; the later
+    // applyFilter/panel work wants the normal resize modes back.
+    {
+        BulkTablePopulate populateGuard(table_, kAutoFitColumns);
+        table_->setRowCount(static_cast<int>(entries_.size()));
+        std::vector<CardPrice> priceScratch;  // reused across rows (visiblePricesForCopy's
+                                              // contract): fills only for a suppressed-vendor card,
+                                              // so a whole rebuild allocates for those rows, not
+                                              // every priced row
+        for (int i = 0; i < static_cast<int>(entries_.size()); ++i) {
+            const CardBinderEntry& entry = entries_[i];
+            auto* number = cell(QString::number(entry.pokemon.dexNumber));
+            number->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+            table_->setItem(i, 0, number);
+            table_->setItem(i, 1, cell(QString::fromStdString(entry.pokemon.name)));
+            // A representative owned copy filed here fills the printed-identity columns; a
+            // species with none leaves them blank (rendered as an em-dash by cell()).
+            const CardCopy* rep = representativeCopy(entry.pokemon.dexNumber);
+            // Set is the eliding Stretch column ("Base Set (BS)"); carry the full value as a
+            // tooltip so a long name stays readable when the column truncates it ("…").
+            const QString setText = rep ? setLabel(rep->cardRef) : QString();
+            auto* setCell = cell(setText);
+            setCell->setToolTip(setText);
+            table_->setItem(i, 2, setCell);
+            table_->setItem(i, 3, cell(rep ? QString::fromStdString(rep->cardRef.collectorNumber)
+                                           : QString()));
+            table_->setItem(i, 4, cell(rep && rep->condition ? conditionAbbrev(*rep->condition)
+                                                             : QString()));
+            table_->setItem(i, 5, cell(rep && rep->rarity ? rarityLabel(*rep->rarity) : QString()));
+            table_->setItem(i, 6, cell(rep && rep->foil ? foilLabel(*rep->foil) : QString()));
+            table_->setItem(i, 7, cell(statusLabel(entry.status)));
+            // The representative copy's cached market prices, inline ("$… · €…"); blank when the
+            // copy is unlinked or its prices were never fetched. Cache-only (pricesByExternalId_),
+            // so this stays a pure in-memory rebuild — no network, no re-query.
+            table_->setItem(
+                i, 8,
+                cell(rep ? priceAmountsInline(
+                               visiblePricesForCopy(pricesByExternalId_, suppressedByExternalId_,
+                                                    *rep, priceScratch),
+                               finishForFoil(rep->foil))
+                         : QString()));
+        }
+    }  // BulkTablePopulate re-measures the content columns once here
 
     // Move the highlight to the row the selected species landed on after the sort, so
     // the selection follows the record rather than the row index. Block signals so

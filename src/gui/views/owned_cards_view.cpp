@@ -45,6 +45,7 @@
 #include "gui/views/select_all_line_edit.h"
 #include "gui/views/sortable_table.h"
 #include "gui/views/splitter_style.h"
+#include "gui/views/table_bulk_update.h"
 #include "gui/views/table_cell.h"
 #include "gui/views/toast.h"
 
@@ -465,37 +466,15 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
 
     // Building a large My Cards is dominated by a Qt footgun: while a column is in
     // ResizeToContents mode, EVERY setItem re-measures the column across all rows, so a
-    // full populate is ~O(rows²). Freeze painting and drop the auto-fit columns to
-    // Interactive for the loop, then restore ResizeToContents once at the end so the
-    // auto-fit runs in a single measurement pass instead of once per setItem. (Column 1
-    // is Stretch and column 8 is the manually-capped Interactive Binder column — neither
-    // re-measures per row, so both are left as-is.)
-    auto* header = table_->horizontalHeader();
-    table_->setUpdatesEnabled(false);
-    for (const int col : kAutoFitColumns) {
-        header->setSectionResizeMode(col, QHeaderView::Interactive);
-    }
-    // Restore auto-fit + repaint exactly once, and guarantee it runs even if the populate
-    // loop throws (e.g. std::bad_alloc on a huge collection) — otherwise the table would
-    // stay frozen with painting disabled until the next reload(). On the happy path run()
-    // is called explicitly below (before the filter/selection pass, so the widths measure
-    // over all rows, as they did before this guard existed); the destructor is only the
-    // exception backstop.
-    struct AutoFitRestore {
-        QTableWidget* table;
-        QHeaderView* header;
-        bool armed = true;
-        void run() {
-            for (const int col : kAutoFitColumns) {
-                header->setSectionResizeMode(col, QHeaderView::ResizeToContents);
-            }
-            table->setUpdatesEnabled(true);
-            armed = false;
-        }
-        ~AutoFitRestore() {
-            if (armed) run();
-        }
-    } autoFitRestore{table_, header};
+    // full populate is ~O(rows²). BulkTablePopulate freezes painting and drops the auto-fit
+    // columns to Interactive for the loop, then restore() runs the auto-fit in a single
+    // measurement pass instead of once per setItem. (Column 1 is Stretch and column 8 is
+    // the manually-capped Interactive Binder column — neither re-measures per row, so both
+    // are left out of kAutoFitColumns.) restore() is called explicitly below (before the
+    // filter/selection pass, so the widths measure over all rows), and the destructor is
+    // the exception backstop that guarantees the table never stays frozen if the loop
+    // throws (e.g. std::bad_alloc on a huge collection).
+    BulkTablePopulate autoFitRestore(table_, kAutoFitColumns);
 
     table_->setRowCount(static_cast<int>(loaded_.size()));
     haystacks_.assign(loaded_.size(), QString());
@@ -591,7 +570,7 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
     }
     // Restore auto-fit now that every cell is in place: one measurement pass over the
     // finished table, not one per setItem. Then let the view repaint.
-    autoFitRestore.run();
+    autoFitRestore.restore();
     // Empty state: swap the table + search + row actions (and the card-image panel)
     // for a friendly hint when nothing is stored — otherwise the "select a card"
     // panel sits beside a "no cards yet" hint with nothing to select.
