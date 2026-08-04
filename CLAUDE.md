@@ -718,6 +718,23 @@ the data (Wishlist: one row per source within a per-species entry), flatten to a
 one-record-per-row vector first so every column — including the per-row one — is
 sortable.
 
+**A large table's row rebuild wraps the fill in `BulkTablePopulate`.** With a
+column in `QHeaderView::ResizeToContents`, EVERY `setItem` re-measures that column
+across all rows, so refilling an already-populated, visible table is O(rows²) — a
+multi-second UI freeze on a big list (the binder guide's ~1000 rows was the symptom:
+first open cheap because the scans grow from empty, but a tab-return `repopulate()`
+over the full table hung for seconds). Wrap the `setRowCount` + `setItem` loop in a
+`BulkTablePopulate` guard (`gui/views/table_bulk_update.h`): it saves each content
+column's resize mode, drops them to `Interactive` and freezes repaints during the
+fill, then replays the saved modes for a single trailing measurement pass — turning
+tens of seconds into milliseconds. Name the content-sized column set once as a
+`kAutoFitColumns` constant shared between the ctor's resize-mode setup and the guard
+so the two can't drift (a `Stretch`/manually-`Interactive` column is left out — it
+doesn't rescan). `restore()` is idempotent: call it explicitly when the auto-fit must
+run before a later same-method pass (e.g. `OwnedCardsView` measures widths before its
+filter/selection pass), with the destructor as the exception backstop. `BinderView`
+and `OwnedCardsView` use it; do the same for any new table that can grow large.
+
 Two rules keep a header-click cheap and correct. **A sort is a pure in-memory
 reorder — it must not re-hit storage.** Split each view's "load data" from its
 "sort + rebuild rows": the data load (`reload()`/`refresh()`) queries and then
