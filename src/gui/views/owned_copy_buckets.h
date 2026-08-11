@@ -19,13 +19,15 @@
 namespace pokedex {
 
 // GUI — bucket owned, species-tied copies by dex number: the single definition of
-// "which copies drive the detail panel's copy mode". Both the binder guide
-// (BinderView, over one binder's copies) and the Pokémon browser (PokemonListView,
-// over every binder's copies) feed their copy list through here so the two views
-// can never drift on the predicate — only Owned copies that depict a species
-// (pokemonDexNum set) qualify, mirroring the "Completed" status and the Owned
-// column's count. Species-free copies (Trainer/Energy) never appear in a
-// species-oriented projection.
+// "which copies drive the detail panel's copy mode" for a SPECIES-INDEXED surface.
+// The Pokémon browser (PokemonListView, over every binder's copies) feeds its copy
+// list through here — only Owned copies that depict a species (pokemonDexNum set)
+// qualify, mirroring the "Completed" status and the Owned column's count.
+//
+// The bucketing is species-keyed, so a species-free copy (Trainer/Energy) has no
+// bucket at all. That is a property of THIS helper, not of the app: a surface that
+// must show such a card — My Cards, and the binder guide, whose rows are cards
+// rather than species — reads the flat copy list instead.
 inline std::unordered_map<PokemonDexNum, std::vector<CardCopy>> bucketOwnedCopiesByDex(
     const std::vector<CardCopy>& copies) {
     std::unordered_map<PokemonDexNum, std::vector<CardCopy>> byDex;
@@ -39,9 +41,9 @@ inline std::unordered_map<PokemonDexNum, std::vector<CardCopy>> bucketOwnedCopie
 
 // GUI — locate the copy the detail panel is showing within a bucketed-by-dex map:
 // the copy with id `copyId` filed under species `dex`, or nullptr if the species has
-// no bucket or no copy with that id. Both copy-mode hosts (the Pokémon browser over
-// `owned_`, a binder guide over `ownedHere_`) run this identical guard before opening
-// the edit page, so it lives here rather than duplicated in each openEditCopy. The
+// no bucket or no copy with that id. The guard a SPECIES-INDEXED host runs before opening
+// the edit page — today the Pokémon browser over `owned_`. (The binder guide used to share
+// it; its rows are cards now, so it looks a copy up by id in a flat list instead.) The
 // returned pointer is valid only until the map is next rebuilt.
 inline const CardCopy* findOwnedCopy(
     const std::unordered_map<PokemonDexNum, std::vector<CardCopy>>& byDex, int dex,
@@ -77,8 +79,9 @@ inline bool applyLinkedCardToVector(std::vector<CardCopy>& copies, const QString
 
 // GUI — the bucketed-by-dex twin: write the linked id into whichever bucket holds the copy,
 // delegating each bucket to applyLinkedCardToVector so the find-by-id write is defined once.
-// No-op when the id isn't in the map. Both copy-mode hosts (the browser over `owned_`, a
-// binder guide over `ownedHere_`) call this from the panel's cardLinked signal.
+// No-op when the id isn't in the map. Called from the panel's cardLinked signal by a host
+// that keeps its copies bucketed — today the Pokémon browser over `owned_`; a host holding
+// a flat list (My Cards, the binder guide) calls applyLinkedCardToVector directly.
 inline void applyLinkedCardToBuckets(
     std::unordered_map<PokemonDexNum, std::vector<CardCopy>>& byDex, const QString& copyId,
     const QString& externalCardId) {
@@ -91,10 +94,10 @@ inline void applyLinkedCardToBuckets(
 
 // GUI — drive the detail panel for species `dex` from a bucketed-by-dex copy map:
 // copy mode (showing `preferCopyId`, else a random copy) when the species owns copies
-// on this surface, plain artwork otherwise. This owned_-lookup → showPokemon dispatch
-// was identical in both copy-mode hosts — the Pokémon browser over `owned_`, a binder
-// guide over `ownedHere_` — so it lives here rather than duplicated in each view's
-// showSpeciesInPanel, keeping the two from drifting on the copy-mode entry condition.
+// on this surface, plain artwork otherwise. The dispatch a SPECIES row needs, since it
+// names a species rather than one card and so has to pick which copy to show — today the
+// Pokémon browser over `owned_`. (A surface whose row IS a card, like the binder guide,
+// has nothing to pick and calls showSingleCopy instead.)
 // (bucketOwnedCopiesByDex never stores an empty vector, so a present bucket always has
 // a copy; the emptiness check is belt-and-suspenders.)
 inline void showSpeciesCopiesInPanel(

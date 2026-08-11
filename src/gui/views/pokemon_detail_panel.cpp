@@ -235,10 +235,26 @@ void PokemonDetailPanel::showPokemon(int dexNumber, const QString& name,
 }
 
 void PokemonDetailPanel::showSingleCopy(const CardCopy& copy, int sameSpeciesTotal) {
-    // My Cards' exact-copy entry: the species (if any) drives only the artwork fallback
-    // and the copy count; the wishlist button is hidden on this surface.
+    // The exact-copy entry: the species (if any) drives the artwork fallback, the copy
+    // count and the wishlist button.
     currentDex_ = copy.pokemonDexNum ? *copy.pokemonDexNum : -1;
     speciesName_ = copy.pokemonDexNum ? speciesName(*copy.pokemonDexNum) : QString();
+    // Refresh the wishlist count for this copy's species, as showPokemon() does —
+    // otherwise the button keeps whatever species was shown before (a stale "Wishlist
+    // (N)"). Skipped entirely when the button is hidden (My Cards) so that surface doesn't
+    // pay a WishlistService read on every selection. A species-free card has no wishlist
+    // to count, so the button is reset rather than left showing the PREVIOUS species'
+    // count — it would otherwise read as a live, clickable affordance while the click
+    // handler's dex guard silently does nothing. (A host that shows species-free cards
+    // normally also hides the button; this keeps the widget honest if one doesn't.)
+    if (wishlistVisible_) {
+        if (copy.pokemonDexNum) {
+            updateWishlistButton(*copy.pokemonDexNum);
+        } else {
+            wishlistButton_->setText(tr("Wishlist"));
+            wishlistButton_->setEnabled(false);
+        }
+    }
     renderCopy(copy, sameSpeciesTotal);
 }
 

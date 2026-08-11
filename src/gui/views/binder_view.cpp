@@ -1,10 +1,12 @@
 #include "gui/views/binder_view.h"
 
+#include <QBrush>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QPalette>
 #include <QPushButton>
 #include <QShowEvent>
 #include <QSplitter>
@@ -15,11 +17,13 @@
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
 
+#include <cstddef>
 #include <exception>
 #include <map>
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "core/app/binder_guide_service.h"
@@ -60,8 +64,44 @@ namespace {
 // for both the ctor's initial resize-mode setup and repopulate()'s BulkTablePopulate
 // guard, so the two can't silently drift when a column is added, removed, or reordered
 // (a mismatch would either reintroduce the O(rows^2) reopen freeze or convert the Set
-// slack column). Mirrors OwnedCardsView's kAutoFitColumns.
+// slack column). Note column 1 carries a Pokémon name OR a card name (a species-free
+// row has no species to name it). Mirrors OwnedCardsView's kAutoFitColumns.
 constexpr int kAutoFitColumns[] = {0, 1, 3, 4, 5, 6, 7, 8};
+
+// The Prices column alone — the subset updatePricesFor() rewrites in place. It needs the
+// same BulkTablePopulate treatment as a full rebuild (col 8 is content-sized), but must
+// not disturb the other columns' modes, since nothing else on that path changes.
+constexpr int kPriceColumnOnly[] = {8};
+
+bool isRemoved(const CardCopy& copy) { return copy.ownership == CardOwnership::Removed; }
+
+// What column 1 says for a row, and the string both the sort key and the search
+// filter use — one helper so the three can't drift. A species row is named by its
+// species (so a Pokémon's several copies read as one clean block, disambiguated by
+// the Set/Collector columns); a species-free row falls back to the printed card
+// name, exactly as My Cards' first column does.
+QString rowLabel(const CardBinderEntry& entry, const CardCopy* copy) {
+    if (entry.pokemon) {
+        return QString::fromStdString(entry.pokemon->name);
+    }
+    return copy ? speciesOrCardName(*copy) : QString();
+}
+
+// Whether a row survives the search box. It matches the label the row SHOWS, plus the
+// filed card's own printed name — a species row is labelled by its species, so without
+// the second test a search for "Dark Charizard" would find nothing even with that exact
+// card filed here and its row on screen, which is not what the placeholder promises.
+bool rowMatchesFilter(const CardBinderEntry& entry, const CardCopy* copy,
+                      const QString& filter) {
+    if (filter.isEmpty()) {
+        return true;
+    }
+    if (rowLabel(entry, copy).contains(filter, Qt::CaseInsensitive)) {
+        return true;
+    }
+    return copy != nullptr &&
+           QString::fromStdString(copy->cardRef.name).contains(filter, Qt::CaseInsensitive);
+}
 }  // namespace
 
 BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
@@ -83,14 +123,21 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
 
     connect(backButton, &QPushButton::clicked, this, &BinderView::backRequested);
 
-    // "Edit binder" (right of the top bar, beside Refresh prices) opens the binder's
-    // edit screen in place — a dedicated page, not a modal (see the screens-over-modals
-    // convention). "Refresh prices" bulk re-fetches every Owned, linked card filed here —
-    // a manual keep-updated action, paced so it never bursts the API. A muted progress
-    // label sits beside it while it runs.
+    // "Add a card" opens the species-free add page locked to this binder. It sits in the
+    // chrome rather than on a row because a Trainer/Energy card depicts no species, so
+    // there is no row to start from — the panel's Add covers the species flow, which is
+    // left untouched. "Edit binder" opens the binder's edit screen in place — a dedicated
+    // page, not a modal (see the screens-over-modals convention). "Refresh prices" bulk
+    // re-fetches every linked card filed here — a manual keep-updated action, paced so it
+    // never bursts the API. A muted progress label sits beside it while it runs.
     bulkStatus_ = new QLabel(this);
     bulkStatus_->setStyleSheet(QStringLiteral("color: gray;"));
     bulkStatus_->hide();
+    auto* addCardButton = new QPushButton(tr("Add a card"), this);
+    addCardButton->setToolTip(
+        tr("Record a card that depicts no Pokémon — a Trainer, Energy or promo card — and "
+           "file it in this binder."));
+    connect(addCardButton, &QPushButton::clicked, this, &BinderView::openAddCard);
     auto* editBinderButton = new QPushButton(tr("Edit binder"), this);
     editBinderButton->setToolTip(tr("Change this binder's name or region."));
     connect(editBinderButton, &QPushButton::clicked, this, &BinderView::openEditBinder);
@@ -98,27 +145,27 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     refreshPricesButton_->setToolTip(
         tr("Re-fetch market prices for every linked card filed in this binder."));
 
-    // A top bar: Back on the left, the binder's name beside it, Edit + bulk refresh on
-    // the right.
+    // A top bar: Back on the left, the binder's name beside it, Add + Edit + bulk refresh
+    // on the right.
     auto* topBar = new QHBoxLayout;
     topBar->addWidget(backButton);
     topBar->addWidget(heading_);
     topBar->addStretch();
     topBar->addWidget(bulkStatus_);
+    topBar->addWidget(addCardButton);
     topBar->addWidget(editBinderButton);
     topBar->addWidget(refreshPricesButton_);
 
     // The bulk refresh runs on the shared price service (global cap, one bulk at a time). The
-    // controller wires the button + label to it: it gathers the Owned, linked ids and, on finish,
-    // folds the results into this view with ONE rebuild.
+    // controller wires the button + label to it: it gathers every non-Removed linked id (the
+    // same set loadCachedPrices reads, so every row that can show a price can also refresh
+    // it) and, on finish, folds the results into this view with ONE rebuild.
     // Parented to this view (last arg), so it lives and dies with it — no member to hold.
     new BulkRefreshController(
         priceLookup_, refreshPricesButton_, bulkStatus_,
         [this]() {
-            const auto ownedHere = [](const CardCopy& c) {
-                return c.ownership == CardOwnership::Owned;
-            };
-            return distinctExternalIds(filedCopies_, ownedHere);
+            const auto notRemoved = [](const CardCopy& c) { return !isRemoved(c); };
+            return distinctExternalIds(filedCopies_, notRemoved);
         },
         [this]() {
             loadCachedPrices();
@@ -127,26 +174,56 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
         },
         this);
 
-    // A muted subtitle line under the top bar carrying the binder's stats:
-    // how many species are listed, how many captured (+%), and the market $ value
-    // of the captured cards. Filled by updateStats() on every refresh().
-    stats_ = new QLabel(this);
-    stats_->setStyleSheet(QStringLiteral("color: gray;"));
+    // A muted subtitle line under the top bar carrying the binder's stats: how many
+    // species are listed, how many captured (+%), how many physical cards are filed here,
+    // and their market $ value. One QLabel PER FIGURE rather than a single line, because
+    // each needs its own hover tooltip and Qt has no per-span tooltip inside a rich-text
+    // label. The muted colour is declared once on the container and cascades to the
+    // children; each label carries its own leading " · " so hiding one takes its
+    // separator with it (no dangling middot to bookkeep). Filled by updateStats().
+    auto* statsRow = new QWidget(this);
+    statsRow->setStyleSheet(QStringLiteral("QLabel { color: gray; }"));
+    auto* statsLayout = new QHBoxLayout(statsRow);
+    statsLayout->setContentsMargins(0, 0, 0, 0);
+    statsLayout->setSpacing(0);
+    listedStat_ = new QLabel(statsRow);
+    listedStat_->setToolTip(tr("Pokémon species this binder lists: every species in its "
+                               "regions, plus any other species with a card filed here."));
+    capturedStat_ = new QLabel(statsRow);
+    capturedStat_->setToolTip(tr("How many of those species have at least one owned card "
+                                 "filed in this binder, and what share of the listed "
+                                 "species that is."));
+    cardsStat_ = new QLabel(statsRow);
+    cardsStat_->setToolTip(tr("Card copies physically filed in this binder right now. "
+                              "Duplicates count separately and Trainer/Energy cards are "
+                              "included; incoming and removed cards are not."));
+    valueStat_ = new QLabel(statsRow);
+    valueStat_->setToolTip(tr("Market value of the owned cards filed here, from locally "
+                              "cached prices — a lower bound, since a card whose price was "
+                              "never fetched adds nothing. USD and EUR are totalled "
+                              "separately (no currency conversion)."));
+    statsLayout->addWidget(listedStat_);
+    statsLayout->addWidget(capturedStat_);
+    statsLayout->addWidget(cardsStat_);
+    statsLayout->addWidget(valueStat_);
+    statsLayout->addStretch();
 
     search_ = new SelectAllLineEdit(this);
-    search_->setPlaceholderText(tr("Search Pokémon…"));
+    search_->setPlaceholderText(tr("Search by Pokémon or card name…"));
     search_->setClearButtonEnabled(true);
 
     // A read-only table: dex number, name, then the printed-identity columns mirroring
-    // My Cards (set, collector, condition, rarity, foil) for a representative owned copy
-    // filed here, the capture Status, and finally that copy's cached market Prices ("$… ·
-    // €…", cache-only — never a network read). Whole-row selection, no editing. The Set
-    // column takes the slack (as in My Cards); the Pokémon column sizes to content so the
-    // species name is never truncated. The copy columns are blank for a species with no
-    // copy filed here (most rows in a fresh binder).
+    // My Cards (set, collector, condition, rarity, foil) for the row's own filed copy,
+    // its Status, and finally that copy's cached market Prices ("$… · €…", cache-only —
+    // never a network read). Whole-row selection, no editing. The Set column takes the
+    // slack (as in My Cards); the name column sizes to content so it is never truncated.
+    // A placeholder row (a listed species with nothing filed here — most rows in a fresh
+    // binder) leaves the copy columns blank; a species-free card's row leaves "#" blank,
+    // since it has no Pokédex number.
     table_ = new QTableWidget(this);
     table_->setColumnCount(9);
-    table_->setHorizontalHeaderLabels({tr("#"), tr("Pokémon"), tr("Set name / expansion code"),
+    table_->setHorizontalHeaderLabels({tr("#"), tr("Pokémon / Card"),
+                                       tr("Set name / expansion code"),
                                        tr("Collector"), tr("Cond."), tr("Rarity"), tr("Foil"),
                                        tr("Status"), tr("Prices")});
     table_->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
@@ -157,7 +234,7 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
     table_->verticalHeader()->setVisible(false);
     auto* header = table_->horizontalHeader();
-    // Pokémon (col 1) and the short metadata columns size to content; Set (col 2) is the
+    // The name column (col 1) and the short metadata columns size to content; Set (col 2) is the
     // flexible slack absorber that grows when there's room and elides when space is tight —
     // mirroring OwnedCardsView. Prices (col 8) sizes to its "$… · €…" content.
     for (const int col : kAutoFitColumns) {  // all but the Set slack column
@@ -171,7 +248,7 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
         new PokemonDetailPanel(media, wishlist, &cardImages_, &priceLookup_, &cardCopies_, this);
 
     connect(search_, &QLineEdit::textChanged, this, &BinderView::applyFilter);
-    // Show the current row's Pokémon in the detail panel. currentCellChanged
+    // Show the current row in the detail panel. currentCellChanged
     // covers both a mouse click (which moves the current cell) and keyboard arrow
     // navigation, so one connection suffices — connecting cellClicked too would
     // just fire showRow twice per click. (cellActivated would be double-click/Enter
@@ -191,27 +268,29 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
         sortOrder_ = order;
         repopulate();
     });
-    // The detail panel's "Add copy" relays up to an in-place page push.
+    // The detail panel's "Add copy" relays up to an in-place page push. Which of the two
+    // it emits depends on the shown row: a species row keeps the species flow, a
+    // species-free card's row switches the button to the "add a card" flow so it is never
+    // a dead affordance (see showEntryInPanel).
     connect(detail_, &PokemonDetailPanel::addCopyRequested, this, &BinderView::openAddCopy);
+    connect(detail_, &PokemonDetailPanel::addCardRequested, this, &BinderView::openAddCard);
     // In copy mode, "Edit card" relays up to an in-place edit-page push.
     connect(detail_, &PokemonDetailPanel::editCopyRequested, this, &BinderView::openEditCopy);
     // The "Wishlist (N)" button relays up to an in-place wishlist-page push.
     connect(detail_, &PokemonDetailPanel::editWishlistRequested, this, &BinderView::openWishlist);
     // The summary's "Manage prices" button relays up to an in-place prices-page push.
     connect(detail_, &PokemonDetailPanel::managePricesRequested, this, &BinderView::openPrices);
-    // An inline fetch that auto-links a copy: write the id back into both cached copy stores so a
+    // An inline fetch that auto-links a copy: write the id back into the cached copy store so a
     // re-selection shows it linked and the header value can count it once its prices land.
     connect(detail_, &PokemonDetailPanel::copyLinked, this,
             [this](const QString& copyId, const QString& externalCardId) {
-                applyLinkedCardToBuckets(ownedHere_, copyId, externalCardId);
                 applyLinkedCardToVector(filedCopies_, copyId, externalCardId);
             });
     // A background auto-fetch (from adding a copy filed here) resolved that copy's link after
-    // refresh() had already rebuilt the guide — write the id into both stores so the auto-fetch's
+    // refresh() had already rebuilt the guide — write the id in so the auto-fetch's
     // pricesReady (below) isn't dropped by the anyCopyLinkedTo guard and its row/value fill in.
     connect(&priceLookup_, &CardPriceLookupService::copyAutoLinked, this,
             [this](const QString& copyId, const QString& externalCardId) {
-                applyLinkedCardToBuckets(ownedHere_, copyId, externalCardId);
                 applyLinkedCardToVector(filedCopies_, copyId, externalCardId);
             });
     // A price fetch (from the detail panel, for a card filed here) can raise the binder's
@@ -247,7 +326,7 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     auto* listLayout = new QVBoxLayout(listPane);
     listLayout->setContentsMargins(16, 12, 16, 12);  // match the other sections' padding
     listLayout->addLayout(topBar);
-    listLayout->addWidget(stats_);
+    listLayout->addWidget(statsRow);
     listLayout->addWidget(search_);
     listLayout->addWidget(table_);
 
@@ -285,26 +364,54 @@ void BinderView::refresh() {
                                   .arg(QString::fromUtf8(e.what())));
     }
 
-    // Bucket the binder's owned copies by species so showRow() can hand the detail
-    // panel the copies to display (copy mode). bucketOwnedCopiesByDex applies the shared
-    // "owned + species-tied" predicate (mirroring the "Completed" status). Scoped read
-    // (listByBinder), not a whole-inventory scan — unlike the Pokémon browser's listAll.
-    // The full filed list is kept to also drive the header value stat (which includes
-    // species-free owned copies, so it reads the list rather than the bucketed map).
-    ownedHere_.clear();
+    // The flat list of every copy filed here (species-free ones included) is this view's
+    // backing store: each copy row reads its cells through it, and it drives the header
+    // stats. A scoped read (listByBinder), not a whole-inventory scan — unlike the Pokémon
+    // browser's listAll.
     std::vector<CardCopy> filed;
     try {
         filed = cardCopies_.listByBinder(binder_.id);
-        ownedHere_ = bucketOwnedCopiesByDex(filed);
     } catch (const std::exception&) {
+        // Now that a row IS a card, entries_ without the copies behind them is not a
+        // degraded view but a lying one — rows would read "Completed" with every printed
+        // column blank, and activating one would offer to add a card the binder already
+        // holds. Drop the rows too, so a storage failure shows an empty guide.
         filed.clear();
-        ownedHere_.clear();  // best-effort: fall back to artwork-only if the read fails
+        entries_.clear();
+    }
+    filedCopies_ = std::move(filed);
+
+    // Index by id (for copyFor) and count the Owned copies per species (for the Captured
+    // stat and the panel's "N copies" line) in one pass over the fresh list. The count is
+    // bounded to the catalog exactly as buildEntries bounds its species rows — otherwise a
+    // copy carrying a dex number with no species (which buildEntries routes to the
+    // species-free tail) would raise "Captured" above "Listed" and print >100%.
+    copyIndexById_.clear();
+    copyIndexById_.reserve(filedCopies_.size());
+    ownedCountsByDex_.clear();
+    for (std::size_t i = 0; i < filedCopies_.size(); ++i) {
+        const CardCopy& copy = filedCopies_[i];
+        copyIndexById_[copy.id] = i;
+        if (copy.pokemonDexNum && copy.ownership == CardOwnership::Owned &&
+            catalogEntry(*copy.pokemonDexNum) != nullptr) {
+            ++ownedCountsByDex_[*copy.pokemonDexNum];
+        }
     }
 
-    filedCopies_ = std::move(filed);
     loadCachedPrices();  // one batched cache read feeding both the header total and the rows
     updateStats(filedCopies_);
     repopulate();
+}
+
+const CardCopy* BinderView::copyFor(const CardBinderEntry& entry) const {
+    if (!entry.cardCopyId) {
+        return nullptr;  // a placeholder row stands for no card
+    }
+    const auto it = copyIndexById_.find(*entry.cardCopyId);
+    if (it == copyIndexById_.end() || it->second >= filedCopies_.size()) {
+        return nullptr;
+    }
+    return &filedCopies_[it->second];
 }
 
 void BinderView::showEvent(QShowEvent* event) {
@@ -319,8 +426,8 @@ void BinderView::showEvent(QShowEvent* event) {
 
 void BinderView::updatePricesFor(const QString& externalCardId) {
     // The in-place update used DURING a bulk only (single events take the full-rebuild path):
-    // refresh this card's cache entry and rewrite the Prices cell of any row whose representative
-    // copy carries it. No repopulate → no re-sort, no panel re-show; and NOT updateStats — the
+    // refresh this card's cache entry and rewrite the Prices cell of any row whose copy
+    // carries it. No repopulate → no re-sort, no panel re-show; and NOT updateStats — the
     // value total (an O(copies) pass) is recomputed once by the full rebuild at bulkFinished
     // rather than on every arriving price. The sort is reconciled there too.
     const std::string id = externalCardId.toStdString();
@@ -336,49 +443,76 @@ void BinderView::updatePricesFor(const QString& externalCardId) {
     }
     pricesByExternalId_[id] = std::move(prices);
     suppressedByExternalId_[id] = std::move(suppressed);
+    // Prices (col 8) is a ResizeToContents column, so every setItem re-measures it across
+    // ALL rows — the O(rows^2) footgun table_bulk_update.h documents. This is the bulk
+    // refresh's hot path (one call per arriving price) over a row set no longer bounded by
+    // the catalog, and a duplicate-heavy binder writes one cell per copy rather than per
+    // species, so the guard matters here even though only a few cells change: it drops the
+    // column to Interactive for the writes and re-measures once at the end.
+    BulkTablePopulate populateGuard(table_, kPriceColumnOnly);
     std::vector<CardPrice> scratch;
     for (int i = 0; i < static_cast<int>(entries_.size()); ++i) {
-        const CardCopy* rep = representativeCopy(entries_[i].pokemon.dexNumber);
-        if (rep == nullptr || rep->externalCardId != id) {
+        const CardCopy* copy = copyFor(entries_[i]);
+        // A Removed copy's Prices cell stays blank (frozen history), so skip it rather
+        // than writing a figure the full rebuild would then wipe.
+        if (copy == nullptr || isRemoved(*copy) || copy->externalCardId != id) {
             continue;
         }
         table_->setItem(
             i, 8,
             cell(priceAmountsInline(
-                visiblePricesForCopy(pricesByExternalId_, suppressedByExternalId_, *rep, scratch),
-                finishForFoil(rep->foil))));
+                visiblePricesForCopy(pricesByExternalId_, suppressedByExternalId_, *copy, scratch),
+                finishForFoil(copy->foil))));
     }
 }
 
 void BinderView::loadCachedPrices() {
-    // Only Owned copies filed here count toward the value; read them all in ONE batched cache
-    // query (loadCachedPricesFor). This is the only price read — both updateStats and
-    // repopulate() consult the resulting map, so a header-sort reorder never re-queries.
-    const auto ownedHere = [](const CardCopy& c) { return c.ownership == CardOwnership::Owned; };
-    pricesByExternalId_ = loadCachedPricesFor(priceLookup_, filedCopies_, ownedHere);
-    suppressedByExternalId_ = loadSuppressedVendorsFor(priceLookup_, filedCopies_, ownedHere);
+    // Every non-Removed copy filed here can show a price, so all of them are read in ONE
+    // batched cache query (loadCachedPricesFor) — a Removed copy is frozen history and its
+    // cell stays blank, matching the inspector and My Cards. The value stat narrows this to
+    // Owned itself. This is the only price read — both updateStats and repopulate() consult
+    // the resulting map, so a header-sort reorder never re-queries.
+    const auto notRemoved = [](const CardCopy& c) { return !isRemoved(c); };
+    pricesByExternalId_ = loadCachedPricesFor(priceLookup_, filedCopies_, notRemoved);
+    suppressedByExternalId_ = loadSuppressedVendorsFor(priceLookup_, filedCopies_, notRemoved);
 }
 
 void BinderView::updateStats(const std::vector<CardCopy>& filedCopies) {
-    // Listed = every species the guide lists. Captured = species with at least one Owned
-    // copy filed here; ownedHere_ is exactly that set (bucketOwnedCopiesByDex keeps only
-    // Owned, species-tied copies), so its size is the count directly. Counting
-    // CollectionStatus::Completed would undercount: a species that ALSO has an Incoming
-    // copy filed here resolves to Incoming (higher precedence) yet is genuinely owned here.
-    const int listed = static_cast<int>(entries_.size());
-    const int captured = static_cast<int>(ownedHere_.size());
+    // Listed = every SPECIES the guide lists — no longer entries_.size(), since a species
+    // with several copies filed here now contributes several rows. Captured = species with
+    // at least one Owned copy filed here, which is exactly ownedCountsByDex_'s key set.
+    // Counting CollectionStatus::Completed rows would miscount now that a species can carry
+    // Completed, Incoming and Removed rows at once.
+    std::unordered_set<int> listedSpecies;
+    listedSpecies.reserve(entries_.size());
+    for (const CardBinderEntry& entry : entries_) {
+        if (entry.pokemon) {
+            listedSpecies.insert(entry.pokemon->dexNumber);
+        }
+    }
+    const int listed = static_cast<int>(listedSpecies.size());
+    const int captured = static_cast<int>(ownedCountsByDex_.size());
 
-    // Market value of the Owned cards filed in this binder (species-free ones too — they
-    // are cards in the binder), totalled per currency; no FX conversion, so USD (TCGplayer)
-    // and EUR (Cardmarket) stay separate. Read from the pricesByExternalId_ snapshot
-    // loadCachedPrices() built (network-free, no re-query), so a copy contributes only once
-    // its prices were fetched (and it is linked); the figure is a lower bound over what has
-    // been priced. Every copy still counts (three of a card is worth 3×), by looking its id
-    // up in the map.
+    // Cards = physical copies in the sleeves right now: every Owned copy filed here,
+    // duplicates counted separately and species-free cards included. Deliberately NOT a
+    // species figure — that is what "Captured" is for — so it can be eyeballed against a
+    // binder's capacity. Incoming (not here yet) and Removed (gone) are excluded.
+    //
+    // Market value of those same cards, totalled per currency; no FX conversion, so USD
+    // (TCGplayer) and EUR (Cardmarket) stay separate. Read from the pricesByExternalId_
+    // snapshot loadCachedPrices() built (network-free, no re-query), so a copy contributes
+    // only once its prices were fetched (and it is linked); the figure is a lower bound
+    // over what has been priced. Every copy still counts (three of a card is worth 3×), by
+    // looking its id up in the map. One pass does both, since they share a predicate.
+    int cardsHere = 0;
     std::map<std::string, long long> totals;
     std::vector<CardPrice> scratch;  // reused across copies; filled only for suppressed cards
     for (const CardCopy& copy : filedCopies) {
-        if (copy.ownership != CardOwnership::Owned || copy.externalCardId.empty()) {
+        if (copy.ownership != CardOwnership::Owned) {
+            continue;
+        }
+        ++cardsHere;
+        if (copy.externalCardId.empty()) {
             continue;
         }
         accumulateBestPrices(
@@ -387,7 +521,7 @@ void BinderView::updateStats(const std::vector<CardCopy>& filedCopies) {
             finishForFoil(copy.foil));
     }
 
-    QString text = tr("Listed %1").arg(listed);
+    listedStat_->setText(tr("Listed %1").arg(listed));
     if (listed > 0) {
         const int percent = qRound(100.0 * captured / listed);
         // Guard both rounding extremes so the figure never contradicts the count: a tiny
@@ -401,24 +535,31 @@ void BinderView::updateStats(const std::vector<CardCopy>& filedCopies) {
         } else {
             pct = tr("%1%").arg(percent);
         }
-        text += tr(" · Captured %1 (%2)").arg(captured).arg(pct);
+        capturedStat_->setText(tr(" · Captured %1 (%2)").arg(captured).arg(pct));
     }
+    // A regionless binder holding only Trainer cards lists no species — hide the ratio
+    // rather than divide by zero, and let "Cards" lead instead.
+    capturedStat_->setVisible(listed > 0);
+    cardsStat_->setText(listed > 0 ? tr(" · Cards %1").arg(cardsHere)
+                                   : tr("Cards %1").arg(cardsHere));
+    // Cards is the first visible stat when nothing is listed, so it drops its separator
+    // there; Listed hides with it for the same reason.
+    listedStat_->setVisible(listed > 0);
     const QString value = formatMoneyTotals(totals);
-    if (!value.isEmpty()) {
-        text += QStringLiteral(" · ") + value;
-    }
-    stats_->setText(text);
+    valueStat_->setText(QStringLiteral(" · ") + value);
+    valueStat_->setVisible(!value.isEmpty());
 }
 
 void BinderView::repopulate() {
-    // Remember which species + copy the detail panel is showing before the rebuild.
-    // A header-sort reorders the rows, so the selection must be restored by IDENTITY
-    // (the species' dex number), not by the old row index — restoring by row index
-    // would leave a different species highlighted and the panel + "Edit card…"
-    // targeting the wrong one. shownDex_ is the shown species; "" / -1 when nothing
-    // is shown (no selection).
+    // Remember which row the detail panel is showing before the rebuild. A header-sort
+    // reorders the rows, so the selection must be restored by IDENTITY — the shown COPY's
+    // id first (a species can hold several rows now, and restoring to merely "the species"
+    // would silently move the highlight, and every row action, to a different physical
+    // card), falling back to the dex number for a placeholder row. Restoring by row index
+    // would be wrong outright. Empty / -1 when nothing is shown.
     const QString shownCopyBefore = detail_->shownCopyId();
-    const int selectedDex = table_->selectedItems().isEmpty() ? -1 : shownDex_;
+    const bool hadSelection = !table_->selectedItems().isEmpty();
+    const int selectedDex = hadSelection ? shownDex_ : -1;
 
     sortEntries();
 
@@ -440,85 +581,106 @@ void BinderView::repopulate() {
                                               // contract): fills only for a suppressed-vendor card,
                                               // so a whole rebuild allocates for those rows, not
                                               // every priced row
+        // Removed rows render grayed out (the palette's disabled text color), as in My
+        // Cards, so frozen history reads as inactive rather than as a card still in the
+        // sleeves.
+        const QBrush removedForeground =
+            table_->palette().brush(QPalette::Disabled, QPalette::Text);
         for (int i = 0; i < static_cast<int>(entries_.size()); ++i) {
             const CardBinderEntry& entry = entries_[i];
-            auto* number = cell(QString::number(entry.pokemon.dexNumber));
+            // "#" is blank for a species-free card — it has no Pokédex number.
+            auto* number =
+                cell(entry.pokemon ? QString::number(entry.pokemon->dexNumber) : QString());
             number->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
             table_->setItem(i, 0, number);
-            table_->setItem(i, 1, cell(QString::fromStdString(entry.pokemon.name)));
-            // A representative owned copy filed here fills the printed-identity columns; a
-            // species with none leaves them blank (rendered as an em-dash by cell()).
-            const CardCopy* rep = representativeCopy(entry.pokemon.dexNumber);
+            const CardCopy* copy = copyFor(entry);
+            table_->setItem(i, 1, cell(rowLabel(entry, copy)));
+            // The row's OWN filed copy fills the printed-identity columns; a placeholder
+            // row leaves them blank (rendered as an em-dash by cell()).
             // Set is the eliding Stretch column ("Base Set (BS)"); carry the full value as a
             // tooltip so a long name stays readable when the column truncates it ("…").
-            const QString setText = rep ? setLabel(rep->cardRef) : QString();
+            const QString setText = copy ? setLabel(copy->cardRef) : QString();
             auto* setCell = cell(setText);
             setCell->setToolTip(setText);
             table_->setItem(i, 2, setCell);
-            table_->setItem(i, 3, cell(rep ? QString::fromStdString(rep->cardRef.collectorNumber)
-                                           : QString()));
-            table_->setItem(i, 4, cell(rep && rep->condition ? conditionAbbrev(*rep->condition)
-                                                             : QString()));
-            table_->setItem(i, 5, cell(rep && rep->rarity ? rarityLabel(*rep->rarity) : QString()));
-            table_->setItem(i, 6, cell(rep && rep->foil ? foilLabel(*rep->foil) : QString()));
+            table_->setItem(i, 3, cell(copy ? QString::fromStdString(copy->cardRef.collectorNumber)
+                                            : QString()));
+            table_->setItem(i, 4, cell(copy && copy->condition ? conditionAbbrev(*copy->condition)
+                                                               : QString()));
+            table_->setItem(i, 5,
+                            cell(copy && copy->rarity ? rarityLabel(*copy->rarity) : QString()));
+            table_->setItem(i, 6, cell(copy && copy->foil ? foilLabel(*copy->foil) : QString()));
             table_->setItem(i, 7, cell(statusLabel(entry.status)));
-            // The representative copy's cached market prices, inline ("$… · €…"); blank when the
-            // copy is unlinked or its prices were never fetched. Cache-only (pricesByExternalId_),
-            // so this stays a pure in-memory rebuild — no network, no re-query.
+            // The copy's cached market prices, inline ("$… · €…"); blank when the copy is
+            // unlinked, its prices were never fetched, or it is Removed (frozen history —
+            // matches the inspector). Cache-only (pricesByExternalId_), so this stays a pure
+            // in-memory rebuild — no network, no re-query.
             table_->setItem(
                 i, 8,
-                cell(rep ? priceAmountsInline(
+                cell(copy && !isRemoved(*copy)
+                         ? priceAmountsInline(
                                visiblePricesForCopy(pricesByExternalId_, suppressedByExternalId_,
-                                                    *rep, priceScratch),
-                               finishForFoil(rep->foil))
+                                                    *copy, priceScratch),
+                               finishForFoil(copy->foil))
                          : QString()));
+            if (copy && isRemoved(*copy)) {
+                for (int col = 0; col < table_->columnCount(); ++col) {
+                    table_->item(i, col)->setForeground(removedForeground);
+                }
+            }
         }
     }  // BulkTablePopulate re-measures the content columns once here
 
-    // Move the highlight to the row the selected species landed on after the sort, so
-    // the selection follows the record rather than the row index. Block signals so
-    // setCurrentCell doesn't re-fire showRow (which re-rolls a random copy); the panel
-    // is re-driven explicitly below with the SAME copy that was on screen.
-    if (selectedDex >= 0) {
-        for (int i = 0; i < static_cast<int>(entries_.size()); ++i) {
-            if (entries_[i].pokemon.dexNumber == selectedDex) {
-                table_->blockSignals(true);
-                table_->setCurrentCell(i, 1);
-                table_->blockSignals(false);
-                break;
-            }
+    // Move the highlight to the row the shown record landed on after the sort, so the
+    // selection follows the record rather than the row index. Block signals so
+    // setCurrentCell doesn't re-fire showRow; the panel is re-driven explicitly below.
+    if (hadSelection) {
+        const int restored = rowOf(shownCopyBefore, selectedDex);
+        table_->blockSignals(true);
+        if (restored >= 0) {
+            table_->setCurrentCell(restored, 1);
+        } else {
+            // The record left the guide entirely (its copy was deleted or moved to another
+            // binder, and its species isn't in one of this binder's regions). DROP the
+            // highlight — leaving it put would silently move the selection, the inspector
+            // and every row action onto whatever unrelated record now occupies that row
+            // index. Mirrors reselectRow()'s not-found path.
+            table_->clearSelection();
+            table_->setCurrentCell(-1, -1);
+        }
+        table_->blockSignals(false);
+        if (restored < 0) {
+            clearPanel();
         }
     }
 
     applyFilter(search_->text());  // preserve the current filter across a refresh
 
     // Re-drive the panel from the (identity-restored) current row so the highlight and
-    // panel stay in agreement, mirroring OwnedCardsView. Re-show the SAME copy that was
-    // on screen (shownCopyBefore) rather than calling showRow(), which re-rolls a random
-    // copy of the species. openEditCopy re-selects the just-edited copy after its own
-    // refresh(), which overrides this.
+    // panel stay in agreement, mirroring OwnedCardsView. Every row names exactly one
+    // record, so this is a plain re-show — there is no longer a random copy to avoid
+    // re-rolling. openEditCopy re-selects the just-edited copy after its own refresh(),
+    // which overrides this.
     const int current = table_->currentRow();
     if (current >= 0 && !table_->isRowHidden(current) && !table_->selectedItems().isEmpty()) {
-        QTableWidgetItem* number = table_->item(current, 0);
-        QTableWidgetItem* name = table_->item(current, 1);
-        if (number && name) {
-            shownDex_ = number->text().toInt();
-            showSpeciesInPanel(shownDex_, name->text(), shownCopyBefore);
-        }
+        showEntryInPanel(current);
     }
 }
 
 void BinderView::sortEntries() {
     // Precompute each row's key once (via sortByKeys) rather than rebuilding it for both
     // operands on every comparison — the name and the copy-derived text columns allocate
-    // QStrings, and the copy columns do a representativeCopy() lookup. A sortColumn_ < 0
-    // keeps the guide's natural (dex) order. The copy columns are keyed as std::optional so
-    // a species with no copy filed here sinks to the bottom in either direction (see
-    // compareOptional), not just ascending. Condition/rarity/foil rank by enum value
-    // (best-to-worst condition; declaration order for rarity/foil) so the sort matches My
-    // Cards' semantics rather than the labels' alphabetical order.
+    // QStrings, and the copy columns do a copyFor() lookup. A sortColumn_ < 0 keeps the
+    // guide's NATURAL order, and only there does the "a species' copies are adjacent,
+    // species-free cards last" guarantee hold — any header sort is free to interleave
+    // them, which is the point of sorting. The dex number and the copy columns are keyed
+    // as std::optional so a species-free row (no dex) and a placeholder row (no copy) sink
+    // to the bottom in either direction (see compareOptional), not just ascending.
+    // Condition/rarity/foil rank by enum value (best-to-worst condition; declaration order
+    // for rarity/foil) so the sort matches My Cards' semantics rather than the labels'
+    // alphabetical order.
     struct Key {
-        int dexNumber = 0;
+        std::optional<int> dexNumber;
         QString name;
         std::optional<QString> setText;
         std::optional<QString> collector;
@@ -535,52 +697,53 @@ void BinderView::sortEntries() {
         [this, column](const CardBinderEntry& e) {
             // Build ONLY the clicked column's key (as OwnedCardsView::repopulate does):
             // the comparator reads a single field, so materializing every column on each
-            // header click — five QString allocations plus a representativeCopy() lookup
-            // per row — is pure waste that grows with the guide. Only the copy-derived
-            // columns (2–6, 8) need the representative copy, so the dex/name/status columns
-            // skip that lookup entirely. Unset fields keep their default (0 / empty
-            // QString / nullopt), which the comparator never consults for other columns.
+            // header click — five QString allocations plus a copyFor() lookup per row — is
+            // pure waste that grows with the guide. Only the copy-derived columns (2–6, 8)
+            // need the row's copy, so the dex/status columns skip that lookup entirely.
+            // Unset fields keep their default (empty QString / 0 / nullopt), which the
+            // comparator never consults for other columns.
             Key key;
             switch (column) {
                 case 0:
-                    key.dexNumber = e.pokemon.dexNumber;
+                    if (e.pokemon) {
+                        key.dexNumber = e.pokemon->dexNumber;
+                    }
                     break;
                 case 1:
-                    key.name = QString::fromStdString(e.pokemon.name);
+                    key.name = rowLabel(e, copyFor(e));
                     break;
                 case 2:
-                    if (const CardCopy* rep = representativeCopy(e.pokemon.dexNumber)) {
-                        key.setText = setLabel(rep->cardRef);
+                    if (const CardCopy* copy = copyFor(e)) {
+                        key.setText = setLabel(copy->cardRef);
                     }
                     break;
                 case 3:
-                    if (const CardCopy* rep = representativeCopy(e.pokemon.dexNumber)) {
-                        key.collector = QString::fromStdString(rep->cardRef.collectorNumber);
+                    if (const CardCopy* copy = copyFor(e)) {
+                        key.collector = QString::fromStdString(copy->cardRef.collectorNumber);
                     }
                     break;
                 case 4:
-                    if (const CardCopy* rep = representativeCopy(e.pokemon.dexNumber);
-                        rep && rep->condition) {
-                        key.conditionRank = static_cast<int>(*rep->condition);
+                    if (const CardCopy* copy = copyFor(e); copy && copy->condition) {
+                        key.conditionRank = static_cast<int>(*copy->condition);
                     }
                     break;
                 case 5:
-                    if (const CardCopy* rep = representativeCopy(e.pokemon.dexNumber);
-                        rep && rep->rarity) {
-                        key.rarityRank = static_cast<int>(*rep->rarity);
+                    if (const CardCopy* copy = copyFor(e); copy && copy->rarity) {
+                        key.rarityRank = static_cast<int>(*copy->rarity);
                     }
                     break;
                 case 6:
-                    if (const CardCopy* rep = representativeCopy(e.pokemon.dexNumber);
-                        rep && rep->foil) {
-                        key.foilRank = static_cast<int>(*rep->foil);
+                    if (const CardCopy* copy = copyFor(e); copy && copy->foil) {
+                        key.foilRank = static_cast<int>(*copy->foil);
                     }
                     break;
                 case 7:
                     key.statusRank = static_cast<int>(e.status);
                     break;
                 case 8:
-                    if (const CardCopy* rep = representativeCopy(e.pokemon.dexNumber)) {
+                    // A Removed copy shows no price, so it must not sort as though it had
+                    // one — it stays nullopt and sinks with the unpriced rows.
+                    if (const CardCopy* copy = copyFor(e); copy && !isRemoved(*copy)) {
                         // Sort by the copy's representative value: the sum of its per-vendor
                         // figures in raw cents, USD and EUR added WITHOUT an FX rate (the same
                         // intentional tradeoff as the price table's amount sort — a rough
@@ -591,8 +754,8 @@ void BinderView::sortEntries() {
                         // so both must outlive `best`'s reads below.
                         std::vector<CardPrice> scratch;
                         const std::vector<CardPrice>& visible = visiblePricesForCopy(
-                            pricesByExternalId_, suppressedByExternalId_, *rep, scratch);
-                        const VendorBest best = vendorBest(visible, finishForFoil(rep->foil));
+                            pricesByExternalId_, suppressedByExternalId_, *copy, scratch);
+                        const VendorBest best = vendorBest(visible, finishForFoil(copy->foil));
                         if (best.tcg || best.cm) {
                             key.priceCents = (best.tcg ? best.tcg->amountCents : 0) +
                                              (best.cm ? best.cm->amountCents : 0);
@@ -609,7 +772,7 @@ void BinderView::sortEntries() {
             const auto rank = [](int x, int y) { return compareValues(x, y); };
             switch (column) {
                 case 0:
-                    return compareValues(a.dexNumber, b.dexNumber);
+                    return compareOptional(a.dexNumber, b.dexNumber, ascending, rank);
                 case 1:
                     return a.name.localeAwareCompare(b.name);
                 case 2:
@@ -634,82 +797,152 @@ void BinderView::sortEntries() {
         });
 }
 
-const CardCopy* BinderView::representativeCopy(int dex) const {
-    const auto it = ownedHere_.find(dex);
-    if (it == ownedHere_.end() || it->second.empty()) {
-        return nullptr;
+int BinderView::rowOf(const QString& copyId, int dex) const {
+    if (!copyId.isEmpty()) {
+        const std::string id = copyId.toStdString();
+        for (int i = 0; i < static_cast<int>(entries_.size()); ++i) {
+            if (entries_[i].cardCopyId && *entries_[i].cardCopyId == id) {
+                return i;
+            }
+        }
     }
-    return &it->second.front();
+    // The copy is gone (moved, deleted) or was never named — fall back to the species,
+    // whose placeholder or first remaining copy row is the nearest thing to where the
+    // user was.
+    if (dex >= 0) {
+        for (int i = 0; i < static_cast<int>(entries_.size()); ++i) {
+            if (entries_[i].pokemon && entries_[i].pokemon->dexNumber == dex) {
+                return i;
+            }
+        }
+    }
+    return -1;
 }
 
 void BinderView::applyFilter(const QString& filter) {
+    // Identity, not species: a filter that hides the shown ROW must clear the panel even
+    // when another copy of the same species is still visible.
+    const int shownRow = rowOf(detail_->shownCopyId(), shownDex_);
     bool shownStillVisible = false;
     for (int i = 0; i < static_cast<int>(entries_.size()); ++i) {
-        const QString name = QString::fromStdString(entries_[i].pokemon.name);
-        const bool visible = filter.isEmpty() || name.contains(filter, Qt::CaseInsensitive);
+        const CardBinderEntry& entry = entries_[i];
+        const bool visible = rowMatchesFilter(entry, copyFor(entry), filter);
         table_->setRowHidden(i, !visible);
-        if (visible && entries_[i].pokemon.dexNumber == shownDex_) {
+        if (visible && i == shownRow) {
             shownStillVisible = true;
         }
     }
-    // If the Pokémon shown in the detail panel is now hidden (an empty result, or
-    // a filter that excludes it), clear the panel so it never shows a species with
-    // no visible row.
-    if (!shownStillVisible) {
-        detail_->clear();
-        shownDex_ = -1;
+    if (shownStillVisible) {
+        return;
+    }
+    // The row shown in the detail panel is now hidden (an empty result, or a filter that
+    // excludes it), so clear the panel — it must never show a record with no visible row.
+    clearPanel();
+    // But a filter never moves the HIGHLIGHT, so widening one back out (or clearing the
+    // search) leaves a row still selected with an empty panel — and, because the panel is
+    // where the shown-copy id lives, that row would then be inert: activateRow's
+    // confirm-then-edit needs a copy on screen. Re-drive the panel from the still-selected
+    // row so selection and inspector never diverge.
+    const int current = table_->currentRow();
+    if (current >= 0 && current < static_cast<int>(entries_.size()) &&
+        !table_->isRowHidden(current) && !table_->selectedItems().isEmpty()) {
+        showEntryInPanel(current);
     }
 }
 
-void BinderView::showRow(int row) {
-    if (row < 0) {
+void BinderView::showRow(int row) { showEntryInPanel(row); }
+
+void BinderView::showEntryInPanel(int row) {
+    if (row < 0 || row >= static_cast<int>(entries_.size())) {
         return;
     }
-    QTableWidgetItem* number = table_->item(row, 0);
-    QTableWidgetItem* name = table_->item(row, 1);
-    if (!number || !name) {
+    const CardBinderEntry& entry = entries_[row];
+    const CardCopy* copy = copyFor(entry);
+    if (copy) {
+        // A copy row IS one exact card. Set the panel's sticky per-row state BEFORE
+        // showing, so its button update sees the final mode: a species-free card has no
+        // species to add a copy of and no wishlist, so Add becomes the "add a card" flow
+        // rather than a dead disabled button.
+        detail_->setAddMode(entry.pokemon ? PokemonDetailPanel::AddMode::SpeciesCopy
+                                          : PokemonDetailPanel::AddMode::FreeCard);
+        detail_->setWishlistVisible(entry.pokemon.has_value());
+        shownDex_ = entry.pokemon ? entry.pokemon->dexNumber : -1;
+        // "N copies" counts the species' owned copies filed here; a species-free card has
+        // no such total, so 0 hides the line.
+        int sameSpeciesTotal = 0;
+        if (entry.pokemon) {
+            const auto it = ownedCountsByDex_.find(entry.pokemon->dexNumber);
+            sameSpeciesTotal = it == ownedCountsByDex_.end() ? 0 : it->second;
+        }
+        detail_->showSingleCopy(*copy, sameSpeciesTotal);
         return;
     }
-    shownDex_ = number->text().toInt();
-    showSpeciesInPanel(shownDex_, name->text());
+    // A placeholder row: the species is listed but holds nothing here, so there is only
+    // its artwork to show.
+    if (!entry.pokemon) {
+        clearPanel();  // defensive: an entry naming neither is never produced
+        return;
+    }
+    detail_->setAddMode(PokemonDetailPanel::AddMode::SpeciesCopy);
+    detail_->setWishlistVisible(true);
+    shownDex_ = entry.pokemon->dexNumber;
+    detail_->showPokemon(shownDex_, QString::fromStdString(entry.pokemon->name));
 }
 
-void BinderView::showSpeciesInPanel(int dex, const QString& name, const QString& preferCopyId) {
-    showSpeciesCopiesInPanel(detail_, ownedHere_, dex, name, preferCopyId);
+void BinderView::clearPanel() {
+    // Reset the sticky per-row state too: leaving it in FreeCard mode would keep Add
+    // enabled (that mode is deliberately selection-independent) with nothing shown.
+    detail_->setAddMode(PokemonDetailPanel::AddMode::SpeciesCopy);
+    detail_->setWishlistVisible(true);
+    detail_->clear();
+    shownDex_ = -1;
 }
 
 void BinderView::activateRow(int row) {
-    if (row < 0) {
+    if (row < 0 || row >= static_cast<int>(entries_.size())) {
         return;
     }
-    QTableWidgetItem* number = table_->item(row, 0);
-    QTableWidgetItem* name = table_->item(row, 1);
-    if (!number || !name) {
+    const CardBinderEntry& entry = entries_[row];
+    const CardCopy* copy = copyFor(entry);
+    // A Removed copy is frozen history: it cannot be edited (CardCopyService rejects it)
+    // and it depicts a card that is no longer here, so its row is inert.
+    if (copy && isRemoved(*copy)) {
         return;
     }
-    const int dex = number->text().toInt();
-    const QString species = name->text();
-
-    const auto it = ownedHere_.find(dex);
-    const bool ownedHere = it != ownedHere_.end() && !it->second.empty();
-    const QString copyId = detail_->shownCopyId();
+    // A species-free row whose copy couldn't be resolved (the copy read failed while the
+    // guide's own read succeeded) names neither a card to edit nor a species to add — the
+    // add branch would otherwise open the add page for dex -1.
+    if (copy == nullptr && !entry.pokemon) {
+        return;
+    }
+    const QString label = rowLabel(entry, copy);
+    // The ROW's own copy, not the detail panel's: a row now IS one exact card, so its own
+    // id is the authoritative target. Reading it back out of the panel (which is what a
+    // species row used to have to do, since it held a random copy of the species) would
+    // make the row inert whenever the two are out of step — e.g. right after a filter
+    // cleared the panel while leaving the row highlighted.
+    const QString copyId =
+        entry.cardCopyId ? QString::fromStdString(*entry.cardCopyId) : QString();
+    const int dex = entry.pokemon ? entry.pokemon->dexNumber : -1;
     activateCopyRow(
-        {this, ownedHere,
-         tr("%1 has no cards filed in this binder yet.\nAdd one now?").arg(species),
-         tr("Edit card"), tr("Edit the shown card of %1?").arg(species),
+        {this, copy != nullptr,
+         tr("%1 has no cards filed in this binder yet.\nAdd one now?").arg(label),
+         tr("Edit card"), tr("Edit this card of %1?").arg(label),
          /*ownedNeedsShownCopy=*/true, copyId,
-         [this, dex, species]() { openAddCopy(dex, species); },
+         [this, dex, label]() { openAddCopy(dex, label); },
          [this, copyId]() { openEditCopy(copyId); }});
 }
 
-void BinderView::openAddCopy(int dexNumber, const QString& name) {
-    // Scoped to this binder: the copy is filed here and the picker is locked to it.
+void BinderView::pushAddPage(std::optional<PokemonDexNum> dexNumber, const QString& speciesName) {
+    // Scoped to this binder: the copy is filed here and the picker is locked to it. A dex
+    // number scopes the finder to that species' printings; nullopt puts it in by-name mode
+    // for a card that depicts none.
     auto* page =
         new AddCardCopyPage(cardSearch_, cardCopies_, priceLookup_, binders_, cardImages_,
-                            dexNumber, name, binder_.id);
-    // Adding a copy recomputes the guide: the copy is filed in this binder (so it
-    // becomes "Completed" here) and submit auto-returns, so refresh so the guide
-    // isn't stale on the way back.
+                            dexNumber, speciesName, binder_.id);
+    // Adding a copy recomputes the guide: the new copy is filed in this binder, so it
+    // gains a row of its own, and submit auto-returns — refresh so the guide isn't stale
+    // on the way back.
     connect(page, &AddCardCopyPage::copyAdded, this, &BinderView::refresh);
     connect(page, &AddCardCopyPage::backRequested, this, [this, page]() {
         stack_->setCurrentIndex(0);
@@ -720,37 +953,59 @@ void BinderView::openAddCopy(int dexNumber, const QString& name) {
     stack_->setCurrentWidget(page);
 }
 
+void BinderView::openAddCopy(int dexNumber, const QString& name) {
+    pushAddPage(dexNumber, name);
+}
+
+void BinderView::openAddCard() { pushAddPage(std::nullopt, QString()); }
+
 void BinderView::openEditCopy(const QString& copyId) {
-    openEditCopyFromBuckets(stack_, cardSearch_, priceLookup_, cardImages_, cardCopies_,
-                            ownedHere_, shownDex_,
-                            copyId, binders_.list(), [this, copyId]() {
-                                // Capture the shown species before refresh(), which may
-                                // clear shownDex_. An edit can change the guide (a comment, a
-                                // binder move that removes the copy from here, a new image),
-                                // so recompute, then re-show the SAME copy — not a fresh
-                                // random pick.
-                                const int dex = shownDex_;
-                                refresh();
-                                reselectSpecies(dex, copyId);
-                            });
+    const CardCopy* copy = nullptr;
+    const auto it = copyIndexById_.find(copyId.toStdString());
+    if (it != copyIndexById_.end() && it->second < filedCopies_.size()) {
+        copy = &filedCopies_[it->second];
+    }
+    // Gone from this binder, or frozen history — nothing to edit either way (the panel
+    // hides Edit for a Removed copy and the service rejects editDetails on one).
+    if (copy == nullptr || isRemoved(*copy)) {
+        return;
+    }
+    // Capture the shown species by VALUE before pushing: refresh() may clear shownDex_,
+    // and `copy` points into filedCopies_, which refresh() reassigns wholesale.
+    const int dex = shownDex_;
+    pushEditCopyPage(stack_, cardSearch_, priceLookup_, cardImages_, cardCopies_, *copy,
+                     binders_.list(), [this, copyId, dex]() {
+                         // An edit can change the guide (a comment, a binder move that
+                         // removes the copy from here, a new image), so recompute, then
+                         // re-show the SAME copy.
+                         refresh();
+                         reselectRow(copyId, dex);
+                     });
 }
 
 void BinderView::openPrices(const QString& copyId) {
+    const CardCopy* copy = nullptr;
+    const auto it = copyIndexById_.find(copyId.toStdString());
+    if (it != copyIndexById_.end() && it->second < filedCopies_.size()) {
+        copy = &filedCopies_[it->second];
+    }
+    if (copy == nullptr) {
+        return;
+    }
     // Push the shown copy onto the prices page. On a Fetch there, write the resolved link back
-    // into both cached copy stores so a re-selection shows it linked and the value can count it;
+    // into the cached copy store so a re-selection shows it linked and the value can count it;
     // on Back, refresh (a Clear/hide changes the Prices column + value total) and re-show the
-    // same species/copy. A price fetch on the page also emits pricesReady, which the handler
+    // same row. A price fetch on the page also emits pricesReady, which the handler
     // above already folds into the header + rows live.
     const int dex = shownDex_;
-    openPricesFromBuckets(
-        stack_, priceLookup_, cardCopies_, ownedHere_, dex, copyId,
+    pushPricesPage(
+        stack_, priceLookup_, cardCopies_, *copy,
         [this](const QString& id, const QString& externalCardId) {
-            applyLinkedCardToBuckets(ownedHere_, id, externalCardId);
             applyLinkedCardToVector(filedCopies_, id, externalCardId);
         },
         [this, dex, copyId]() {
             refresh();
-            reselectSpecies(dex, copyId);
+            reselectRow(copyId, dex);
         });
 }
 
@@ -765,7 +1020,7 @@ void BinderView::openWishlist(int dexNumber, const QString& name) {
         stack_->removeWidget(page);
         page->deleteLater();
         refresh();
-        reselectSpecies(dexNumber, copyId);
+        reselectRow(copyId, dexNumber);
     });
     stack_->addWidget(page);
     stack_->setCurrentWidget(page);
@@ -787,22 +1042,20 @@ void BinderView::openEditBinder() {
     pushBackablePage(stack_, page, [this]() { refresh(); });
 }
 
-void BinderView::reselectSpecies(int dex, const QString& copyId) {
-    for (int i = 0; i < static_cast<int>(entries_.size()); ++i) {
-        if (entries_[i].pokemon.dexNumber == dex) {
-            table_->blockSignals(true);  // setCurrentCell would re-fire showRow (random)
-            table_->setCurrentCell(i, 1);
-            table_->blockSignals(false);
-            shownDex_ = dex;
-            // If the copy left the binder (moved/removed), showSpeciesInPanel falls back
-            // to plain artwork.
-            showSpeciesInPanel(dex, QString::fromStdString(entries_[i].pokemon.name), copyId);
-            return;
-        }
+void BinderView::reselectRow(const QString& copyId, int dex) {
+    const int row = rowOf(copyId, dex);
+    if (row < 0) {
+        // The row left the guide entirely (a species-free card moved away, or a species'
+        // last copy did and it wasn't in one of the binder's regions).
+        clearPanel();
+        return;
     }
-    // The species left the guide entirely (its only copy moved away).
-    detail_->clear();
-    shownDex_ = -1;
+    table_->blockSignals(true);  // setCurrentCell would re-fire showRow redundantly
+    table_->setCurrentCell(row, 1);
+    table_->blockSignals(false);
+    // Drive the panel explicitly: if the copy is gone this lands on the species'
+    // placeholder row and falls back to plain artwork.
+    showEntryInPanel(row);
 }
 
 }  // namespace pokedex

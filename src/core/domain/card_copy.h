@@ -24,10 +24,12 @@ namespace pokedex {
 //
 // pokemonDexNum is optional: most cards depict a species, but a TCG collection
 // also holds cards that depict none — Trainer and Energy cards, promos, etc.
-// A species-free copy (nullopt) is a fully supported second-class citizen: it is
-// created, edited, image-searched, and filed in binders like any other, but it
-// carries no dex number and so never appears in a species-oriented projection
-// (the Pokémon browser, a binder guide) — only in the flat "My Cards" inventory.
+// A species-free copy (nullopt) is fully supported: it is created, edited,
+// image-searched, and filed in binders like any other. It shows up in the flat
+// "My Cards" inventory AND in the guide of the binder it is filed in — a binder is
+// a physical object, so its guide must account for every card in it — where, having
+// no dex number to sort among the species, it lands after them. It is absent only
+// from the Pokémon browser, which is indexed by species by construction.
 struct CardCopy {
     CardCopyId id;
     std::optional<PokemonDexNum> pokemonDexNum;  // which species, if any (nullopt

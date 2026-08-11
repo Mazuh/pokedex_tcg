@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -56,8 +57,12 @@ CardBinder makeBinder(std::string id, std::vector<Region> regions) {
     return binder;
 }
 
-CardCopy makeCopy(std::string id, PokemonDexNum dex, CardOwnership ownership,
-                  std::optional<std::string> binderId) {
+// `dex` is optional so a species-free card (Trainer/Energy) can be filed too;
+// `insertedAt` pins the repository's filed ordering (inserted_at, rowid) where a
+// test asserts on it.
+CardCopy makeCopy(std::string id, std::optional<PokemonDexNum> dex, CardOwnership ownership,
+                  std::optional<std::string> binderId,
+                  const char* insertedAt = "2026-07-14T09:00:00Z") {
     CardCopy copy;
     copy.id = std::move(id);
     copy.pokemonDexNum = dex;
@@ -65,8 +70,8 @@ CardCopy makeCopy(std::string id, PokemonDexNum dex, CardOwnership ownership,
     copy.ownership = ownership;
     copy.condition = CardCondition::NearMint;
     copy.binderId = std::move(binderId);
-    copy.insertedAt = at("2026-07-14T09:00:00Z");
-    copy.updatedAt = at("2026-07-14T09:00:00Z");
+    copy.insertedAt = at(insertedAt);
+    copy.updatedAt = at(insertedAt);
     return copy;
 }
 
@@ -89,15 +94,43 @@ struct GuideTest : ::testing::Test {
         wishlist.save(w);
     }
 
-    // The status of a given dex number in the entries, or nullopt if absent.
+    // The status of the FIRST row for a given dex number, or nullopt if the
+    // species has no row at all. A species with several copies filed here now has
+    // several rows, so prefer statusesOf() when that is what is under test.
     static std::optional<CollectionStatus> statusOf(
         const std::vector<CardBinderEntry>& entries, PokemonDexNum dex) {
         for (const CardBinderEntry& e : entries) {
-            if (e.pokemon.dexNumber == dex) {
+            if (e.pokemon && e.pokemon->dexNumber == dex) {
                 return e.status;
             }
         }
         return std::nullopt;
+    }
+
+    // Every row for a given dex number, in row order.
+    static std::vector<CollectionStatus> statusesOf(
+        const std::vector<CardBinderEntry>& entries, PokemonDexNum dex) {
+        std::vector<CollectionStatus> statuses;
+        for (const CardBinderEntry& e : entries) {
+            if (e.pokemon && e.pokemon->dexNumber == dex) {
+                statuses.push_back(e.status);
+            }
+        }
+        return statuses;
+    }
+
+    // The copy ids of every row for a given dex number, in row order. A placeholder
+    // row contributes an empty string, so a stray placeholder is visible in the
+    // assertion rather than silently skipped.
+    static std::vector<std::string> copyIdsOf(const std::vector<CardBinderEntry>& entries,
+                                              PokemonDexNum dex) {
+        std::vector<std::string> ids;
+        for (const CardBinderEntry& e : entries) {
+            if (e.pokemon && e.pokemon->dexNumber == dex) {
+                ids.push_back(e.cardCopyId.value_or(std::string{}));
+            }
+        }
+        return ids;
     }
 };
 
@@ -108,21 +141,31 @@ TEST_F(GuideTest, RegionBinderListsWholeRegionAllIncompleteWhenEmpty) {
     const auto entries = guide.buildEntries(binder);
 
     ASSERT_EQ(entries.size(), 151u);  // Kanto is dex 1..151
-    EXPECT_EQ(entries.front().pokemon.dexNumber, kBulbasaur);
-    EXPECT_EQ(entries.back().pokemon.dexNumber, kMew);
-    // Dex-ordered and every status Incomplete (no copies, no wishlist).
+    ASSERT_TRUE(entries.front().pokemon.has_value());
+    ASSERT_TRUE(entries.back().pokemon.has_value());
+    EXPECT_EQ(entries.front().pokemon->dexNumber, kBulbasaur);
+    EXPECT_EQ(entries.back().pokemon->dexNumber, kMew);
+    // Dex-ordered, every row a placeholder, every status Incomplete (no copies, no
+    // wishlist).
     for (std::size_t i = 0; i < entries.size(); ++i) {
-        EXPECT_EQ(entries[i].pokemon.dexNumber, static_cast<int>(i) + 1);
+        ASSERT_TRUE(entries[i].pokemon.has_value());
+        EXPECT_EQ(entries[i].pokemon->dexNumber, static_cast<int>(i) + 1);
+        EXPECT_FALSE(entries[i].cardCopyId.has_value());
         EXPECT_EQ(entries[i].status, CollectionStatus::Incomplete);
     }
 }
 
+// The next five pin the row set + status of a species with exactly ONE relevant
+// copy, so the row count stays 151: a lone filed copy replaces the placeholder it
+// would otherwise have had, one-for-one.
 TEST_F(GuideTest, IncomingCopyInBinderReadsIncoming) {
     const CardBinder binder = makeBinder("b1", {Region::Kanto});
     binders.add(binder);
     copies.add(makeCopy("c1", kPikachu, CardOwnership::Incoming, "b1"));
 
-    EXPECT_EQ(statusOf(guide.buildEntries(binder), kPikachu), CollectionStatus::Incoming);
+    const auto entries = guide.buildEntries(binder);
+    EXPECT_EQ(entries.size(), 151u);
+    EXPECT_EQ(statusOf(entries, kPikachu), CollectionStatus::Incoming);
 }
 
 TEST_F(GuideTest, OwnedCopyInBinderReadsCompleted) {
@@ -130,7 +173,9 @@ TEST_F(GuideTest, OwnedCopyInBinderReadsCompleted) {
     binders.add(binder);
     copies.add(makeCopy("c1", kPikachu, CardOwnership::Owned, "b1"));
 
-    EXPECT_EQ(statusOf(guide.buildEntries(binder), kPikachu), CollectionStatus::Completed);
+    const auto entries = guide.buildEntries(binder);
+    EXPECT_EQ(entries.size(), 151u);
+    EXPECT_EQ(statusOf(entries, kPikachu), CollectionStatus::Completed);
 }
 
 TEST_F(GuideTest, WishlistSourceReadsWished) {
@@ -150,25 +195,23 @@ TEST_F(GuideTest, OwnedCopyInAnotherBinderReadsElsewhere) {
     EXPECT_EQ(statusOf(guide.buildEntries(binder), kPikachu), CollectionStatus::Elsewhere);
 }
 
+// A Removed copy still carries this binder's id, so it keeps its own row here
+// (frozen history is filed history) — the status no longer comes from a
+// species-level fallback but from that copy itself.
 TEST_F(GuideTest, RemovedCopyInBinderReadsRemoved) {
     const CardBinder binder = makeBinder("b1", {Region::Kanto});
     binders.add(binder);
     copies.add(makeCopy("c1", kPikachu, CardOwnership::Removed, "b1"));
 
-    EXPECT_EQ(statusOf(guide.buildEntries(binder), kPikachu), CollectionStatus::Removed);
+    const auto entries = guide.buildEntries(binder);
+    EXPECT_EQ(entries.size(), 151u);
+    EXPECT_EQ(statusOf(entries, kPikachu), CollectionStatus::Removed);
+    EXPECT_EQ(copyIdsOf(entries, kPikachu), std::vector<std::string>{"c1"});
 }
 
-// Precedence: an arriving card outranks one already owned in the same binder.
-TEST_F(GuideTest, IncomingOutranksOwnedInSameBinder) {
-    const CardBinder binder = makeBinder("b1", {Region::Kanto});
-    binders.add(binder);
-    copies.add(makeCopy("c1", kPikachu, CardOwnership::Owned, "b1"));
-    copies.add(makeCopy("c2", kPikachu, CardOwnership::Incoming, "b1"));
-
-    EXPECT_EQ(statusOf(guide.buildEntries(binder), kPikachu), CollectionStatus::Incoming);
-}
-
-// Precedence: Wished outranks Elsewhere.
+// Precedence: Wished outranks Elsewhere. Both are species-level verdicts, so this
+// is the surviving precedence pin — the order only ever applies to a PLACEHOLDER
+// row (a species with nothing filed here).
 TEST_F(GuideTest, WishedOutranksElsewhere) {
     const CardBinder binder = makeBinder("b1", {Region::Kanto});
     binders.add(binder);
@@ -180,7 +223,7 @@ TEST_F(GuideTest, WishedOutranksElsewhere) {
 }
 
 // A copy filed in the binder for an out-of-region species must still appear —
-// filed cards are never hidden by the region filter.
+// filed cards are never hidden by the region filter. One copy, so one extra row.
 TEST_F(GuideTest, OutOfRegionFiledCopyAppearsInRowSet) {
     const CardBinder binder = makeBinder("b1", {Region::Kanto});
     binders.add(binder);
@@ -200,13 +243,16 @@ TEST_F(GuideTest, MultiRegionBinderListsUnionOfAllRegions) {
     const auto entries = guide.buildEntries(binder);
 
     ASSERT_EQ(entries.size(), 251u);
-    EXPECT_EQ(entries.front().pokemon.dexNumber, kBulbasaur);         // first Kanto
-    EXPECT_EQ(entries.back().pokemon.dexNumber, 251);                 // last Johto (Celebi)
+    ASSERT_TRUE(entries.front().pokemon.has_value());
+    ASSERT_TRUE(entries.back().pokemon.has_value());
+    EXPECT_EQ(entries.front().pokemon->dexNumber, kBulbasaur);        // first Kanto
+    EXPECT_EQ(entries.back().pokemon->dexNumber, 251);                // last Johto (Celebi)
     EXPECT_TRUE(statusOf(entries, kMew).has_value());                // 151, Kanto
     EXPECT_TRUE(statusOf(entries, kMisdreavus).has_value());         // 200, Johto
     // Dex-ordered with no gaps or repeats across the union.
     for (std::size_t i = 0; i < entries.size(); ++i) {
-        EXPECT_EQ(entries[i].pokemon.dexNumber, static_cast<int>(i) + 1);
+        ASSERT_TRUE(entries[i].pokemon.has_value());
+        EXPECT_EQ(entries[i].pokemon->dexNumber, static_cast<int>(i) + 1);
     }
 }
 
@@ -218,8 +264,211 @@ TEST_F(GuideTest, RegionlessBinderShowsOnlyFiledSpecies) {
 
     const auto entries = guide.buildEntries(binder);
     ASSERT_EQ(entries.size(), 1u);
-    EXPECT_EQ(entries[0].pokemon.dexNumber, kBulbasaur);
+    ASSERT_TRUE(entries[0].pokemon.has_value());
+    EXPECT_EQ(entries[0].pokemon->dexNumber, kBulbasaur);
+    EXPECT_EQ(entries[0].cardCopyId, "c1");  // a copy row, not a placeholder
     EXPECT_EQ(entries[0].status, CollectionStatus::Completed);
+}
+
+// A listed species holding nothing gets exactly one placeholder row — the Pokédex
+// checklist the guide has always been.
+TEST_F(GuideTest, SpeciesWithNothingFiledGetsOnePlaceholderRow) {
+    const CardBinder binder = makeBinder("b1", {Region::Kanto});
+    binders.add(binder);
+    copies.add(makeCopy("c1", kPikachu, CardOwnership::Owned, "b1"));
+
+    const auto entries = guide.buildEntries(binder);
+    const auto bulbasaurIds = copyIdsOf(entries, kBulbasaur);
+    ASSERT_EQ(bulbasaurIds.size(), 1u);
+    EXPECT_EQ(bulbasaurIds[0], "");  // placeholder: no copy behind it
+    EXPECT_EQ(statusOf(entries, kBulbasaur), CollectionStatus::Incomplete);
+}
+
+// A row is a slot, not a species: three physical Pikachus are three rows, adjacent
+// (same dex) and in filed order, with no placeholder row left over for Pikachu.
+TEST_F(GuideTest, EachFiledCopyGetsItsOwnRowAdjacentAndInFiledOrder) {
+    const CardBinder binder = makeBinder("b1", {Region::Kanto});
+    binders.add(binder);
+    // Added in an order that DISAGREES with insertedAt (and with the ids' lexical order),
+    // so the expected result can only come from the repository's documented
+    // "ORDER BY inserted_at" — under a rowid or id ordering this reads {c3, c1, c2}.
+    copies.add(makeCopy("c3", kPikachu, CardOwnership::Owned, "b1", "2026-07-14T11:00:00Z"));
+    copies.add(makeCopy("c1", kPikachu, CardOwnership::Owned, "b1", "2026-07-14T09:00:00Z"));
+    copies.add(makeCopy("c2", kPikachu, CardOwnership::Owned, "b1", "2026-07-14T10:00:00Z"));
+
+    const auto entries = guide.buildEntries(binder);
+    ASSERT_EQ(entries.size(), 153u);  // 151 Kanto species, Pikachu contributing 3 rows
+    EXPECT_EQ(copyIdsOf(entries, kPikachu), (std::vector<std::string>{"c1", "c2", "c3"}));
+
+    // Adjacent: the three Pikachu rows are consecutive.
+    std::size_t first = entries.size();
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        if (entries[i].pokemon && entries[i].pokemon->dexNumber == kPikachu) {
+            first = i;
+            break;
+        }
+    }
+    ASSERT_LT(first + 2, entries.size());
+    for (std::size_t i = first; i < first + 3; ++i) {
+        ASSERT_TRUE(entries[i].pokemon.has_value());
+        EXPECT_EQ(entries[i].pokemon->dexNumber, kPikachu);
+    }
+}
+
+// Each copy row carries its OWN copy's ownership — no precedence runs between the
+// copies of one species (this is what replaced the old "Incoming outranks Owned in
+// the same binder" fold).
+TEST_F(GuideTest, CopyRowStatusFollowsThatCopysOwnership) {
+    const CardBinder binder = makeBinder("b1", {Region::Kanto});
+    binders.add(binder);
+    copies.add(makeCopy("c1", kPikachu, CardOwnership::Owned, "b1", "2026-07-14T09:00:00Z"));
+    copies.add(makeCopy("c2", kPikachu, CardOwnership::Incoming, "b1", "2026-07-14T10:00:00Z"));
+    copies.add(makeCopy("c3", kPikachu, CardOwnership::Removed, "b1", "2026-07-14T11:00:00Z"));
+
+    const auto entries = guide.buildEntries(binder);
+    EXPECT_EQ(statusesOf(entries, kPikachu),
+              (std::vector<CollectionStatus>{CollectionStatus::Completed,
+                                             CollectionStatus::Incoming,
+                                             CollectionStatus::Removed}));
+}
+
+// Species-free cards (Trainer/Energy/promo) are filed in binders like any other
+// card, and land after every species row — they carry no dex number to sort among
+// them.
+TEST_F(GuideTest, SpeciesFreeCopiesAppearLastInFiledOrder) {
+    const CardBinder binder = makeBinder("b1", {Region::Kanto});
+    binders.add(binder);
+    // Added newest-first, so the asserted order can only come from insertedAt.
+    copies.add(
+        makeCopy("t2", std::nullopt, CardOwnership::Owned, "b1", "2026-07-14T10:00:00Z"));
+    copies.add(
+        makeCopy("t1", std::nullopt, CardOwnership::Owned, "b1", "2026-07-14T09:00:00Z"));
+
+    const auto entries = guide.buildEntries(binder);
+    ASSERT_EQ(entries.size(), 153u);  // 151 Kanto placeholders + 2 species-free cards
+    // Every species row comes first.
+    for (std::size_t i = 0; i < 151; ++i) {
+        EXPECT_TRUE(entries[i].pokemon.has_value());
+    }
+    EXPECT_FALSE(entries[151].pokemon.has_value());
+    EXPECT_FALSE(entries[152].pokemon.has_value());
+    EXPECT_EQ(entries[151].cardCopyId, "t1");
+    EXPECT_EQ(entries[152].cardCopyId, "t2");
+    EXPECT_EQ(entries[151].status, CollectionStatus::Completed);
+}
+
+// The sharp version of the rule: species-free cards come after every SPECIES COPY row,
+// not merely after the placeholders. An implementation that emitted rows in plain filed
+// order (species-free ones inline, as listByBinder hands them over) would put the Trainer
+// card first here — which no other test would catch, since none files both kinds.
+TEST_F(GuideTest, SpeciesFreeCopiesFollowSpeciesCopyRowsEvenWhenFiledFirst) {
+    const CardBinder binder = makeBinder("b1", {Region::Kanto});
+    binders.add(binder);
+    copies.add(
+        makeCopy("t1", std::nullopt, CardOwnership::Owned, "b1", "2026-07-14T09:00:00Z"));
+    copies.add(makeCopy("c1", kPikachu, CardOwnership::Owned, "b1", "2026-07-14T10:00:00Z"));
+
+    const auto entries = guide.buildEntries(binder);
+    ASSERT_EQ(entries.size(), 152u);  // 151 Kanto species (Pikachu's row is its copy) + 1 card
+    EXPECT_EQ(copyIdsOf(entries, kPikachu), std::vector<std::string>{"c1"});
+    // The Trainer is last despite being filed FIRST.
+    EXPECT_FALSE(entries.back().pokemon.has_value());
+    EXPECT_EQ(entries.back().cardCopyId, "t1");
+}
+
+// Nothing filed here is invisible — a species-free card has no placeholder row to
+// fall back on, so if it were dropped it would vanish from the guide entirely.
+TEST_F(GuideTest, RemovedSpeciesFreeCopyStillGetsARow) {
+    const CardBinder binder = makeBinder("b1", {});
+    binders.add(binder);
+    copies.add(makeCopy("t1", std::nullopt, CardOwnership::Removed, "b1"));
+
+    const auto entries = guide.buildEntries(binder);
+    ASSERT_EQ(entries.size(), 1u);
+    EXPECT_FALSE(entries[0].pokemon.has_value());
+    EXPECT_EQ(entries[0].cardCopyId, "t1");
+    EXPECT_EQ(entries[0].status, CollectionStatus::Removed);
+}
+
+// A wish is a species-level want; once a card is actually filed here the row
+// speaks for that card, so the Wished placeholder is gone.
+TEST_F(GuideTest, WishedSpeciesWithACopyFiledHereShowsTheCopyNotTheWish) {
+    const CardBinder binder = makeBinder("b1", {Region::Kanto});
+    binders.add(binder);
+    addWish(kPikachu);
+    copies.add(makeCopy("c1", kPikachu, CardOwnership::Owned, "b1"));
+
+    const auto entries = guide.buildEntries(binder);
+    EXPECT_EQ(statusesOf(entries, kPikachu),
+              std::vector<CollectionStatus>{CollectionStatus::Completed});
+    EXPECT_EQ(copyIdsOf(entries, kPikachu), std::vector<std::string>{"c1"});
+}
+
+// CONTRACT, not a regression: a species with any copy filed here shows only its
+// copy rows, so the "you own one in another binder" (Elsewhere) hint no longer
+// surfaces for it — including when the copy filed here is Removed. That signal was
+// a property of the old one-row-per-species fold; a per-copy row set has no place
+// to put it.
+TEST_F(GuideTest, SpeciesOwnedElsewhereWithACopyFiledHereShowsOnlyTheCopyRow) {
+    const CardBinder binder = makeBinder("b1", {Region::Kanto});
+    binders.add(binder);
+    binders.add(makeBinder("b2", {}));
+    copies.add(makeCopy("c1", kPikachu, CardOwnership::Owned, "b2"));    // elsewhere
+    copies.add(makeCopy("c2", kPikachu, CardOwnership::Removed, "b1"));  // filed here
+
+    const auto entries = guide.buildEntries(binder);
+    EXPECT_EQ(statusesOf(entries, kPikachu),
+              std::vector<CollectionStatus>{CollectionStatus::Removed});
+    EXPECT_EQ(copyIdsOf(entries, kPikachu), std::vector<std::string>{"c2"});
+}
+
+// CONTRACT, not a regression — the sharpest instance of the rule above, and the one most
+// likely to be reported as a bug: a species you still WANT, whose only copy filed here was
+// removed, shows just that Removed copy row. The Wished placeholder is gone because the
+// species does have something filed here; the want itself is still recorded, and the
+// wishlist surfaces it.
+TEST_F(GuideTest, WishedSpeciesWithOnlyARemovedCopyFiledHereShowsOnlyTheRemovedRow) {
+    const CardBinder binder = makeBinder("b1", {Region::Kanto});
+    binders.add(binder);
+    addWish(kPikachu);
+    copies.add(makeCopy("c1", kPikachu, CardOwnership::Removed, "b1"));
+
+    const auto entries = guide.buildEntries(binder);
+    EXPECT_EQ(statusesOf(entries, kPikachu),
+              std::vector<CollectionStatus>{CollectionStatus::Removed});
+    EXPECT_EQ(copyIdsOf(entries, kPikachu), std::vector<std::string>{"c1"});
+}
+
+// A dex number with no species in the catalog (a hand-edited row) has no species
+// row to join, so the copy falls to the species-free tail rather than being
+// dropped — again, nothing filed here is invisible.
+TEST_F(GuideTest, CopyWithUnresolvableDexNumberFallsToTheTail) {
+    const CardBinder binder = makeBinder("b1", {});
+    binders.add(binder);
+    copies.add(makeCopy("c1", 99999, CardOwnership::Owned, "b1"));
+
+    const auto entries = guide.buildEntries(binder);
+    ASSERT_EQ(entries.size(), 1u);
+    EXPECT_FALSE(entries[0].pokemon.has_value());
+    EXPECT_EQ(entries[0].cardCopyId, "c1");
+}
+
+// A regionless binder holding only Trainer/Energy cards — the "misc binder" case —
+// lists them rather than reading as empty.
+TEST_F(GuideTest, RegionlessBinderWithOnlySpeciesFreeCopiesListsThem) {
+    const CardBinder binder = makeBinder("b1", {});
+    binders.add(binder);
+    copies.add(
+        makeCopy("t1", std::nullopt, CardOwnership::Owned, "b1", "2026-07-14T09:00:00Z"));
+    copies.add(
+        makeCopy("t2", std::nullopt, CardOwnership::Incoming, "b1", "2026-07-14T10:00:00Z"));
+
+    const auto entries = guide.buildEntries(binder);
+    ASSERT_EQ(entries.size(), 2u);
+    EXPECT_EQ(entries[0].cardCopyId, "t1");
+    EXPECT_EQ(entries[0].status, CollectionStatus::Completed);
+    EXPECT_EQ(entries[1].cardCopyId, "t2");
+    EXPECT_EQ(entries[1].status, CollectionStatus::Incoming);
 }
 
 }  // namespace

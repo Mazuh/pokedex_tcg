@@ -691,8 +691,8 @@ int OwnedCardsView::sameSpeciesCount(const CardCopy& copy) const {
     int count = 0;
     for (const CardCopy& c : loaded_) {
         // Count the live copies of the species; a soft-Removed copy is frozen history and
-        // isn't part of the collection you hold (the binder guide's copy buckets are
-        // Owned-only for the same reason), so it must not inflate the count.
+        // isn't part of the collection you hold (the binder guide's own "N copies" figure
+        // counts only Owned copies for the same reason), so it must not inflate the count.
         if (c.pokemonDexNum == copy.pokemonDexNum && !isRemoved(c)) {
             ++count;
         }

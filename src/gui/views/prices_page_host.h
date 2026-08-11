@@ -50,10 +50,13 @@ inline void pushPricesPage(QStackedWidget* stack, CardPriceLookupService& lookup
     stack->setCurrentWidget(page);
 }
 
-// GUI — the guarded prices-page open the two species hosts share: locate the shown copy
+// GUI — the guarded prices-page open for a SPECIES-INDEXED host: locate the shown copy
 // (`copyId` under species `dex`) in the host's bucketed-by-dex map and, if it's still there,
-// push its prices page. A no-op when the copy is gone. Mirrors openEditCopyFromBuckets; My Cards
-// (a flat vector, not buckets) finds its copy and calls pushPricesPage directly instead.
+// push its prices page. A no-op when the copy is gone. Mirrors openEditCopyFromBuckets, and
+// like it has one caller today, the Pokémon browser. A host whose row IS a card (My Cards,
+// the binder guide) finds its copy in a flat list and calls pushPricesPage directly — which
+// it MUST, since these buckets are species-keyed and Owned-only and would drop precisely the
+// species-free and Incoming rows such a surface exists to show.
 inline void openPricesFromBuckets(
     QStackedWidget* stack, CardPriceLookupService& lookup, CardCopyService& copies,
     const std::unordered_map<PokemonDexNum, std::vector<CardCopy>>& byDex, int dex,

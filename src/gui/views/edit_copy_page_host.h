@@ -52,13 +52,13 @@ inline void pushEditCopyPage(QStackedWidget* stack, CardSearchService& search,
     stack->setCurrentWidget(page);
 }
 
-// GUI — the guarded edit-page open both copy-mode hosts share: locate the shown copy
+// GUI — the guarded edit-page open for a SPECIES-INDEXED host: locate the shown copy
 // (`copyId` under species `dex`) in the host's bucketed-by-dex map and, if it's still
 // there, push its edit page (running `onReturn` on Back). A no-op when the copy is gone
-// (moved/removed under us). Both PokemonListView::openEditCopy and
-// BinderView::openEditCopy did exactly this find-guard-push; they differ only in which
-// map (owned_ vs ownedHere_) and in the per-host `onReturn` (how each re-reads its data
-// and restores the selection), which stay with the caller.
+// (moved/removed under us). Today's only caller is PokemonListView::openEditCopy; the
+// per-host `onReturn` (how it re-reads its data and restores the selection) stays with the
+// caller. A host whose row IS a card (My Cards, the binder guide) has the copy id in hand,
+// so it looks the copy up in its flat list and calls pushEditCopyPage above directly.
 inline void openEditCopyFromBuckets(
     QStackedWidget* stack, CardSearchService& search, CardPriceLookupService& priceLookup,
     CardImageStore& images, CardCopyService& copies,

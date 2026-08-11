@@ -37,14 +37,17 @@ class WishlistService;
 // It depends on MediaService for artwork and WishlistService only to read the sources
 // count for the wishlist button's label, never on the external API's specifics.
 //
-// Copy mode is opt-in and needs a CardImageStore (for the copy's scan). The two
-// species hosts enter it via showPokemon() with the species' owned copies (one is
-// shown, chosen at random or by preferCopyId); My Cards enters it via showSingleCopy()
-// with the exact selected copy. Passing a species with no copies (or constructing
-// without an image store) shows the plain artwork-only state. The wishlist button and
-// the species-scoped "Add copy" are for the species hosts; My Cards switches the Add
-// button to the species-free "Add a card" flow (setAddMode) and hides the wishlist
-// (setWishlistVisible), since it also holds Trainer/Energy cards that depict no species.
+// Copy mode is opt-in and needs a CardImageStore (for the copy's scan). The Pokémon
+// browser enters it via showPokemon() with the species' owned copies (one is shown,
+// chosen at random or by preferCopyId); the surfaces whose row IS a card — My Cards and
+// the binder guide — enter it via showSingleCopy() with the exact selected copy. Passing
+// a species with no copies (or constructing without an image store) shows the plain
+// artwork-only state. The wishlist button and the species-scoped "Add copy" suit a
+// species row; a surface showing a species-free card switches the Add button to the
+// "Add a card" flow (setAddMode) and hides the wishlist (setWishlistVisible), since a
+// Trainer/Energy card depicts no species. Both are STICKY panel state, not per-show
+// arguments: a host that mixes species and species-free rows must set them on every
+// selection, and reset them when it clears the panel.
 //
 // showPokemon() displays the name immediately and asks MediaService for the artwork
 // asynchronously, showing a loading placeholder meanwhile. Because results arrive out
@@ -80,9 +83,11 @@ public:
     void showPokemon(int dexNumber, const QString& name,
                      const std::vector<CardCopy>& ownedCopiesHere,
                      const QString& preferCopyId = QString());
-    // Show one exact copy (My Cards' selection model, where the user picks a specific
-    // copy rather than a species). `sameSpeciesTotal` is how many copies of the same
-    // species back the "N copies" line (0 hides it — e.g. a species-free card).
+    // Show one exact copy — the selection model of every surface whose row IS a copy
+    // rather than a species (My Cards, and the binder guide). `sameSpeciesTotal` is how
+    // many copies of the same species back the "N copies" line (0 hides it — e.g. a
+    // species-free card). Refreshes the wishlist button from the copy's species when the
+    // button is visible.
     void showSingleCopy(const CardCopy& copy, int sameSpeciesTotal);
     // Empty state: no selection.
     void clear();

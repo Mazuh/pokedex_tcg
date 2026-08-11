@@ -103,7 +103,10 @@ the full CRUD surface: `save` (upsert parent + replace its source set), `find`,
 service), `BinderService` (binder CRUD verbs — `create`/`update` both take a
 `std::vector<Region>` for the multivalued region set; `update` replaced the old
 name-only `rename`), `BinderGuideService`
-(the `buildBinderEntries` the inferred zone refers to), `PokemonBrowseService`
+(the `buildBinderEntries` the inferred zone refers to — one row per card FILED in the
+binder [a species' duplicates adjacent in filed order; species-free cards last, since they
+carry no dex number] plus one placeholder row per listed species holding nothing; a row is a
+slot, not a species), `PokemonBrowseService`
 (`listAll` → every catalog species paired with its owned-copy count, the unscoped
 Pokédex browser's data), `CardCopyService` (the copy verbs —
 `create`/`editDetails`/`assignToBinder`/`remove`[soft, with an optional
@@ -179,9 +182,12 @@ a bounded-concurrency queue (`pumpBulk`/`advanceBulk`, cap `kBulkMaxConcurrent`)
 a time" guard are **global** across views, and the queue advances only from
 `finishSucceeded`/`finishFailed` (real fetch completions) so a `suppressVendor`/`clearPrices`
 that also emits `pricesReady` can't miscount it. It backs the **"Refresh prices"** button on the
-binder guide (`BinderView`, its Owned filed copies) and My Cards (`OwnedCardsView`, all
-non-Removed copies) — a manual "update now" that re-fetches every linked card **regardless of
-TTL** (intentional, see the price-cache-tradeoffs memory); each view skips its per-card
+binder guide (`BinderView`) and My Cards (`OwnedCardsView`) — both over their **non-Removed**
+copies, so every row that can display a price can also refresh it (a Removed copy is frozen
+history: blank cell, never fetched). Note the binder's header **value** total is narrower still,
+Owned-only — a card on its way to you isn't yet worth anything to the binder — so the two
+predicates deliberately differ. It is a manual "update now" that re-fetches every linked card
+**regardless of TTL** (intentional, see the price-cache-tradeoffs memory); each view skips its per-card
 `pricesReady` rebuild while `bulkRunning()` and does ONE rebuild on `bulkFinished`. **Pricing is
 split into a read-only-ish summary and a management page — the same move the wishlist made off
 the crowded inspector.** Every owned-copy surface (the Edit page, the My Cards detail
@@ -223,9 +229,12 @@ the full per-metric spread is deliberately left to the marketplace links, so the
 a compact headline + Fetch/Refresh + hide + ⓘ. The push is wired through two host helpers:
 `pushPricesPage` (page push + teardown + Back→`onReturn`, forwarding the panel's `cardLinked`
 to `onLinked`) and `openPricesFromBuckets` (its bucketed-by-dex guard, mirroring
-`edit_copy_page_host.h`); the two species hosts (`BinderView`, `PokemonListView`) use the
-buckets variant over `ownedHere_`/`owned_`, My Cards (a flat `loaded_` vector) calls
-`pushPricesPage` directly, and the **Edit page pushes it onto its own inner `QStackedWidget`**
+`edit_copy_page_host.h`); the **Pokémon browser** (`PokemonListView`, whose row is a species) uses
+the buckets variant over `owned_`, while the two surfaces whose row is a CARD — My Cards (a flat
+`loaded_` vector) and the binder guide (`BinderView`, over `filedCopies_`) — call
+`pushPricesPage` directly. Do NOT reintroduce a bucketed lookup in the guide: the buckets are
+keyed by species AND Owned-only, so it would silently drop exactly the rows the per-copy row
+model exists to show — species-free cards (no bucket) and Incoming ones. The **Edit page pushes it onto its own inner `QStackedWidget`**
 (page 0 = the edit content) so managing prices stays in-window without a second Back fighting
 the page's own. On Back the host re-shows the copy (and `BinderView`/`OwnedCardsView` reload,
 since a Clear/hide changes their Prices column / value total). The shared headline renderer
@@ -279,7 +288,8 @@ user may not own. Money→string display (currency symbols, the headline pick) i
 GUI-side in `gui/views/price_labels.h`, shared by the finder hint and the panel so they
 never diverge. `priceAmountsInline` (labels-free "$… · €…", the currency symbol as the
 only context) backs the **Prices column** both card tables carry (My Cards, the binder
-guide): each row shows its representative copy's cached figures, read from a single batched
+guide): each row shows ITS OWN copy's cached figures (a binder-guide row is one card, and a
+placeholder row has none), read from a single batched
 `cachedMany` snapshot per reload (`loadCachedPrices` — no network, so a header-sort never
 re-queries), blank for an unlinked/unfetched/Removed copy, and sortable by summed
 per-vendor value (USD+EUR added without an FX rate — the same intentional rough-magnitude
@@ -292,7 +302,22 @@ A `CardSearchQuery` is scoped EITHER by species
 `QStackedWidget`: Binders, Pokémon, My Cards, Wishlist, Settings), the first-run setup dialog,
 the binders section (`BindersPage`, a table with its own list ⇄ binder-guide/edit
 stack), the `BinderEditPage` (the create/edit-binder screen — see "GUI navigation"
-below), the reusable `BinderPickerDialog`, the binder guide view, the
+below), the reusable `BinderPickerDialog`, the binder guide view (`BinderView` — **a row is a
+card, not a species**: it renders `BinderGuideService`'s per-copy rows, so a Pokémon's several
+copies sit side by side and a Trainer/Energy card gets a row of its own after the species rows
+[blank "#"], while a species holding nothing keeps its placeholder row. Row identity is
+therefore the COPY ID with the dex as fallback [`rowOf`], not the dex — restoring a selection
+by species alone would silently retarget Edit/Prices at a different physical card. Because
+each row names one exact copy, the panel is driven with `showSingleCopy`, and the panel's
+sticky `setAddMode`/`setWishlistVisible` are set PER ROW [a species-free row switches Add to the
+"add a card" flow and hides the wishlist] and reset by `clearPanel()`. A Removed copy's row is
+grayed, has a blank Prices cell, and is inert on double-click. Its top bar carries a **"Add a
+card"** button — the species-free add page locked to this binder, always available since a
+Trainer card has no row to start from; the species add flow is unchanged. Header stats are four
+tooltipped labels: `Listed` [distinct species — NOT `entries_.size()` any more] · `Captured`
+[species with ≥1 Owned copy filed here] · `Cards` [Owned copies filed here; duplicates and
+non-Pokémon cards each count — the figure to eyeball against a future binder capacity] ·
+market value), the
 Pokémon browser (`PokemonListView`, which hosts an inner stack for the add-copy
 page), and two card-copy pages built from the same two shared blocks — the reusable
 `CardCopyForm` (the details pane: printed-identity/condition/ownership fields + binder
@@ -376,11 +401,14 @@ back to the Pokémon artwork when there's a species), a condition + foil line, a
 soft-Removed copies excluded), the copy's comments, the read-only `CardPricesSummary` (figures
 + links + ⓘ + a "Manage prices" button; see the pricing note above), an **Add + Edit** button
 row (side by side), and an optional "Wishlist (N)" button. Copy mode is opt-in (needs a
-`CardImageStore*`): the two species hosts enter it via `showPokemon(dex, name, copies,
-prefer)` (one copy shown — `preferCopyId`, else a random pick), My Cards via
+`CardImageStore*`): the **Pokémon browser** (whose row is a species) enters it via
+`showPokemon(dex, name, copies, prefer)` (one copy shown — `preferCopyId`, else a random pick),
+while the surfaces whose row is a CARD — My Cards and the binder guide — enter it via
 `showSingleCopy(copy, sameSpeciesTotal)` (the exact selected copy; dex is optional, for
 species-free cards). `setAddMode` picks the Add flow (SpeciesCopy → `addCopyRequested`;
-FreeCard → `addCardRequested`); `setWishlistVisible(false)` hides the wishlist on My Cards;
+FreeCard → `addCardRequested`); `setWishlistVisible(false)` hides the wishlist on My Cards.
+Both are **sticky** state, not per-show arguments, so a host mixing species and species-free
+rows (the guide) must set them on every selection and reset them when it clears the panel;
 Edit is hidden for a soft-Removed copy. Passing no copies (the Pokémon browser on an
 unowned species) is the artwork-only path. The shared `scaled_pixmap.h` helper
 (DPR-aware fit-scale) backs every image panel. Copy-label helpers (`speciesName`,
@@ -570,8 +598,11 @@ Conventions that hold across the model:
   `std::optional<PokemonDexNum>`: most cards depict a species, but a TCG
   collection also holds cards that depict none — Trainer/Energy cards, promos.
   A species-free copy (nullopt) is fully supported (create/edit/image-search/
-  file-in-binder) but appears only in the flat "My Cards" inventory, never in a
-  species-oriented projection (the Pokémon browser, a binder guide). Storage
+  file-in-binder) and appears both in the flat "My Cards" inventory and in the guide
+  of the binder it is filed in — a binder is a physical object, so its guide accounts
+  for every card in it — where, having no dex number to sort among the species, it
+  lands after them. It is absent only from the Pokémon browser, which is indexed by
+  species by construction. Storage
   encodes nullopt as `0` in the `NOT NULL pokemon_dex_num` column (real dex
   numbers are ≥1) — the same sentinel convention as condition's `"" ↔ nullopt`,
   avoiding a nullable-column table rebuild. `CardReference` carries a `name` (the
@@ -672,6 +703,21 @@ deliberate so the hash tracks HEAD across commits without a reconfigure — dev.
 only reconfigures when `build.ninja` is absent. Display
 strings stay out of Qt-free core: a GUI-side helper maps enums to labels
 (`region_labels.h`, `status_labels.h`), kept separate from the storage tokens.
+
+**A multi-figure status line that needs per-figure tooltips is several small
+`QLabel`s, not one rich-text label.** Qt has no per-span tooltip inside a label, and
+faking one with `<a>` + `linkHovered` + `QToolTip::showText` turns statistics into
+fake links (wrong affordance) while an `event()` override mapping cursor-x through
+`QFontMetrics` is fragile under translation and DPI. So put one `QLabel` per figure in
+a zero-margin, zero-spacing `QHBoxLayout` with a trailing `addStretch()`, declare the
+muted colour ONCE as a `QLabel { color: gray; }` stylesheet on the container (it
+cascades to the children), set each `setToolTip` in the ctor (the text is static), and
+bake the `" · "` separator into the **leading** edge of every label but the first — so
+hiding a *trailing* stat takes its separator with it. That trick is free only for trailing
+labels: hiding a LEADING one still needs an explicit fixup, since the label that becomes
+first must drop its separator (`BinderView`'s Listed / Captured / Cards / value line is the
+reference — it hides Listed and Captured together when the binder lists no species, and
+switches Cards to a separator-less variant for exactly that case).
 
 **A form's primary/submit button gets the shared accent affordance.** Every
 in-window CRUD form's commit button — "Add copy" (`AddCardCopyPage`), "Save
