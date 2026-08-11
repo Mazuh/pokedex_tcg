@@ -1,11 +1,14 @@
 #include "core/app/card_catalog_parse.h"
 
+#include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cmath>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -318,6 +321,27 @@ std::vector<CardPrice> extractTcgdexPrices(const json& card, Timestamp fallbackO
 
 std::string trimLowerAscii(const std::string& s) { return toLowerAscii(trim(s)); }
 
+// The meaningful words of a set filter: its whitespace-separated tokens, minus any
+// that carries no alphanumeric character at all. Dropping those is what lets the
+// finder's own completer entry be searched verbatim — its label is "CODE — Name", and
+// the bare "—" names no set (matching the label as ONE substring never could, since
+// the decoration is not part of any set's name; that dead-ended a search whose entry
+// the user had highlighted without pressing Enter).
+std::vector<std::string> filterWords(const std::string& lowered) {
+    std::vector<std::string> words;
+    std::istringstream tokens(lowered);
+    std::string token;
+    while (tokens >> token) {
+        const bool hasAlnum = std::any_of(token.begin(), token.end(), [](const char c) {
+            return std::isalnum(static_cast<unsigned char>(c)) != 0;
+        });
+        if (hasAlnum) {
+            words.push_back(token);
+        }
+    }
+    return words;
+}
+
 }  // namespace
 
 std::vector<CardSetInfo> parseSetsResponse(const std::string& jsonText) {
@@ -540,19 +564,33 @@ std::vector<std::string> resolveSetFilterToIds(const std::string& typed,
     if (want.empty()) {
         return ids;
     }
+    const std::vector<std::string> words = filterWords(want);
+    if (words.empty()) {
+        return ids;  // punctuation only ("—") — it names no set
+    }
     // Substring name matching only kicks in at 3+ chars: a 1-2 char fragment ("e",
     // "ma") would match a large fraction of the ~150 sets, which is both useless as
     // a narrow and risks an over-long OR query. Exact-code matching has no minimum
-    // (codes are short, e.g. "BS").
+    // (codes are short, e.g. "BS"). The minimum is on the WHOLE filter, not per word,
+    // so a short trailing word in a longer filter ("Base Set 2") still participates —
+    // it is only ever an additional constraint, never a broadening one.
     const bool allowNameMatch = want.size() >= 3;
     for (const CardSetInfo& s : sets) {
-        // Match an exact printed code (e.g. "OBF"), OR a substring of the set name
-        // (e.g. "mcdonald" → every McDonald's Collection year) — the latter is the
-        // only way to narrow to a code-less set.
-        const bool codeMatch = !s.ptcgoCode.empty() && toLowerAscii(s.ptcgoCode) == want;
-        const bool nameMatch =
-            allowNameMatch && toLowerAscii(s.name).find(want) != std::string::npos;
-        if (codeMatch || nameMatch) {
+        const std::string code = toLowerAscii(s.ptcgoCode);
+        const std::string name = toLowerAscii(s.name);
+        // Every word must land, each either ON the exact printed code (e.g. "OBF") or
+        // as a substring of the set name (e.g. "mcdonald" → every McDonald's
+        // Collection year — the only way to narrow to a code-less set).
+        bool everyWord = true;
+        for (const std::string& word : words) {
+            const bool codeMatch = !code.empty() && code == word;
+            const bool nameMatch = allowNameMatch && name.find(word) != std::string::npos;
+            if (!codeMatch && !nameMatch) {
+                everyWord = false;
+                break;
+            }
+        }
+        if (everyWord) {
             ids.push_back(s.id);
         }
     }

@@ -113,11 +113,26 @@ struct SetNumberFilter {
 SetNumberFilter parseSetAndNumberFilter(const std::string& typed);
 
 // Resolve a user-typed set filter to the set ids it matches, for reliable
-// set.id-based search narrowing. Matches an exact printed code (e.g. "OBF") OR a
-// case-insensitive substring of the set name (e.g. "mcdonald" → every McDonald's
-// Collection year — the only way to narrow to a code-less set). Returns every match
-// (a code can map to two sets; a name substring to many); empty when nothing
-// matches or the input is blank.
+// set.id-based search narrowing. The filter is read WORD BY WORD (whitespace-
+// separated, ignoring any word with no alphanumeric character): a set matches when
+// EVERY word lands on it, each either as its exact printed code (e.g. "OBF") or as a
+// case-insensitive substring of its name (e.g. "mcdonald" → every McDonald's
+// Collection year — the only way to narrow to a code-less set). Name matching needs
+// the whole filter to be 3+ chars; a 1-2 char fragment would match a large fraction
+// of the ~150 sets. Returns every match (a code can map to two sets; a name
+// substring to many); empty when nothing matches or the input is blank.
+//
+// Matching per word rather than as one substring is deliberately FORGIVING, and is
+// strictly more permissive than a whole-string substring (if the filter is a
+// substring of the name, so is each of its words). It buys three things: the finder's
+// own "CODE — Name" completer entry resolves verbatim (the decoration is in no set's
+// name, so as one substring it matched nothing and silently dead-ended the search);
+// words may be given in any order or with the code first ("cri chaos rising"); and
+// "POP 9" now pins POP Series 9 instead of matching nothing and falling back to all
+// nine. The cost is that a filter whose trailing number is a COLLECTOR number can
+// now be absorbed by a set whose name happens to contain those digits ("mcdonald 25"
+// → the 2025 set, rather than card 25 across every year) — consistent with the
+// caller's documented rule that the whole filter is tried as a set name first.
 std::vector<std::string> resolveSetFilterToIds(const std::string& typed,
                                                const std::vector<CardSetInfo>& sets);
 

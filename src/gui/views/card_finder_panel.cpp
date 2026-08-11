@@ -4,10 +4,12 @@
 #include <QCompleter>
 #include <QEvent>
 #include <QFontMetrics>
+#include <QHBoxLayout>
 #include <QIcon>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QPushButton>
 #include <QScrollBar>
 #include <QSize>
 #include <QSplitter>
@@ -83,6 +85,17 @@ void CardFinderPanel::init(const QString& initialQuery) {
     status_->setEnabled(false);  // muted status/hint text
     status_->setWordWrap(true);
 
+    // Shown only while the last search FAILED — the one state the user can act on, and
+    // the reason failure is worth telling apart from an empty result: re-running the
+    // exact same query is very often all it takes (the catalog 500s intermittently).
+    retryButton_ = new QPushButton(tr("Retry"), listPane);
+    retryButton_->hide();
+    connect(retryButton_, &QPushButton::clicked, this, [this]() {
+        if (lastQuery_.trimmed().size() >= 3) {
+            searchWith(lastQuery_);
+        }
+    });
+
     printings_ = new QListWidget(listPane);
     printings_->setIconSize(QSize(kThumbW, kThumbH));
     printings_->setUniformItemSizes(true);
@@ -104,10 +117,17 @@ void CardFinderPanel::init(const QString& initialQuery) {
     });
     printings_->viewport()->installEventFilter(this);
 
+    // Status text and its Retry action share one row, the button trailing so the wrapped
+    // status text keeps the left edge it has in every other state.
+    auto* statusRow = new QHBoxLayout;
+    statusRow->setContentsMargins(0, 0, 0, 0);
+    statusRow->addWidget(status_, /*stretch=*/1);
+    statusRow->addWidget(retryButton_);
+
     auto* listLayout = new QVBoxLayout(listPane);
     listLayout->setContentsMargins(0, 0, 0, 0);
     listLayout->addWidget(searchField_);
-    listLayout->addWidget(status_);
+    listLayout->addLayout(statusRow);
     listLayout->addWidget(printings_);
 
     // --- Preview (right): the selected card, larger ------------------------
@@ -192,6 +212,7 @@ void CardFinderPanel::onSearchTextChanged(const QString& text) {
 void CardFinderPanel::clearResults() {
     pendingRequestId_ = 0;  // ignore any in-flight reply for a now-abandoned query
     loading_ = false;
+    failed_ = false;  // the failed query is abandoned; there is nothing left to retry
     candidates_.clear();
     loadedCount_ = 0;
     itemById_.clear();
@@ -206,6 +227,7 @@ void CardFinderPanel::onPrintingsReady(std::uint64_t requestId, int dexNumber,
         return;  // not this panel's latest search (another live finder, or superseded)
     }
     loading_ = false;
+    failed_ = false;
     candidates_ = cards;
     loadedCount_ = 0;
     itemById_.clear();
@@ -221,6 +243,10 @@ void CardFinderPanel::onPrintingsFailed(std::uint64_t requestId, int dexNumber) 
         return;
     }
     loading_ = false;
+    // Remember that the request FAILED, so updateStatus() can say so instead of
+    // reporting the empty list below as "no printings found" — the catalog exhausting
+    // its retry ladder is not a statement about what the set contains.
+    failed_ = true;
     candidates_.clear();
     loadedCount_ = 0;
     itemById_.clear();
@@ -379,6 +405,8 @@ void CardFinderPanel::setPreviewPlaceholder(const QPixmap& pixmap) {
 
 void CardFinderPanel::searchWith(const QString& query) {
     loading_ = true;
+    failed_ = false;
+    lastQuery_ = query;  // what Retry re-runs, verbatim
     updateStatus();
     // In name mode the field text is the card-name query; in species mode it is a
     // set-code/name filter narrowing the species. The service tags the reply so
@@ -450,13 +478,36 @@ void CardFinderPanel::onSetsReady() {
 }
 
 void CardFinderPanel::updateStatus() {
+    // A failed request and an empty result look identical on screen — both leave the
+    // list empty — but they mean opposite things, so they must never share a message.
+    // Saying "no printings found" after the catalog refused to answer is a claim about
+    // the set that we have no basis for, and it sends the user off to hand-fill a form
+    // for a card the catalog knows perfectly well.
+    // A third thing that is not an empty set: with no set table there is nothing to
+    // narrow by, so EVERY set filter resolves to nothing and the search never even
+    // leaves the app. Only reachable when the set-list fetch failed with no cache to
+    // fall back on (it is warmed at startup and cached across launches).
+    const bool noSetTable = candidates_.empty() && !nameMode_ && search_.sets().empty() &&
+                            searchField_->text().trimmed().size() >= 3;
+    retryButton_->setVisible(!loading_ && (failed_ || noSetTable));
     if (loading_) {
         status_->setText(tr("Searching…"));
+    } else if (failed_) {
+        status_->setText(tr("The card catalog didn’t answer — the request failed, so this "
+                            "is not “nothing found”. It flakes often; retrying usually works."));
     } else if (searchField_->text().trimmed().size() < 3) {
         status_->setText(nameMode_
                              ? tr("Find a card by name — type its name (3+ characters).")
                              : tr("Find %1's cards by set — type a code or name (3+ characters).")
                                    .arg(speciesName_));
+    } else if (noSetTable) {
+        // Deliberately does not promise that Retry re-fetches the list: after a
+        // degraded answer (an empty or malformed 200) the service marks the table
+        // loaded on purpose, so as not to re-fire /v2/sets on every search. Retry is
+        // still offered — it does re-fetch after a plain network failure — but the
+        // message only claims what is always true.
+        status_->setText(tr("The set list couldn’t be loaded, so no set can be looked up "
+                            "right now — this says nothing about what that set holds."));
     } else if (candidates_.empty()) {
         status_->setText(nameMode_
                              ? tr("No cards found by that name — %1").arg(noResultsHint_)

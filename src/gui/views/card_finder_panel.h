@@ -15,6 +15,7 @@ class QLabel;
 class QLineEdit;
 class QListWidget;
 class QListWidgetItem;
+class QPushButton;
 class QVBoxLayout;
 
 namespace pokedex {
@@ -68,7 +69,9 @@ public:
     // Override the actionable tail of the "no printings found" status, so each host
     // can point the user at its own fallback (typing the form by hand when adding,
     // uploading a photo when editing). The shared "No printings found for that set —"
-    // lead-in stays fixed.
+    // lead-in stays fixed. This is the GENUINELY-EMPTY status only: a search whose
+    // request failed gets its own message and a Retry button, so a hint here should
+    // not hedge about the catalog flaking.
     void setNoResultsHint(const QString& hint);
 
     // Place `widget` centered directly beneath the preview image (e.g. an "apply this
@@ -141,11 +144,14 @@ private:
     bool nameMode_ = false;  // search the field text as a card name, not a set filter
     QString speciesName_;
     // The host-specific tail of the "no printings found" status (see setNoResultsHint).
-    QString noResultsHint_ = tr("the catalog may not list it, or it may be flaking (retry).");
+    // It no longer hedges about the API flaking: a failed request is its own state now
+    // (failed_), so reaching this text really does mean the catalog answered with nothing.
+    QString noResultsHint_ = tr("the catalog lists no such printing.");
 
     // Finder (search field + printings list)
     QLineEdit* searchField_;
     QLabel* status_;
+    QPushButton* retryButton_;  // shown only in the failed / no-set-table states
     QListWidget* printings_;
     std::vector<CardCandidate> candidates_;  // the full result set; the list chunks it
     // The id of this panel's most recent search; replies for other ids (another live
@@ -155,6 +161,11 @@ private:
     int loadedCount_ = 0;
     bool filling_ = false;   // guards fillViewport() re-entry (as in PokemonListView)
     bool loading_ = false;   // a search is in flight
+    // The last search FAILED (the transport exhausted its retry ladder) rather than
+    // coming back empty. Held apart from an empty candidates_ because the two are
+    // indistinguishable on screen yet mean opposite things — see updateStatus().
+    bool failed_ = false;
+    QString lastQuery_;  // the query searchWith() last ran; what Retry re-runs
     QHash<QString, QListWidgetItem*> itemById_;  // card id → row, for late-arriving thumbnails
 
     // Preview of the currently-selected card.

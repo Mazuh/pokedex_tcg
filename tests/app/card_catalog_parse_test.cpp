@@ -177,6 +177,62 @@ TEST(ResolveSetFilterToIdsTest, ShortFragmentDoesNotNameMatchButExactCodeStillDo
               (std::vector<std::string>{"cel25", "cel25c"}));
 }
 
+// The bug this word-wise matching exists for: the finder's set completer offers
+// entries labelled "CODE — Name", and that whole label lands in the search field
+// whenever the user highlights an entry without pressing Enter. As ONE substring it
+// matches nothing (the decoration is in no set's name), so the search silently
+// resolved to zero sets and reported "no printings found" for a set that has them.
+TEST(ResolveSetFilterToIdsTest, MatchesACodeAndNameGivenTogether) {
+    const std::vector<CardSetInfo> sets = sampleSets();
+    EXPECT_EQ(resolveSetFilterToIds("OBF — Obsidian Flames", sets),
+              std::vector<std::string>{"sv3"});
+    // Same for a set whose NAME is digits, and with the plain-hyphen decoration too.
+    EXPECT_EQ(resolveSetFilterToIds("MEW — 151", sets), std::vector<std::string>{"sv3pt5"});
+    EXPECT_EQ(resolveSetFilterToIds("mew - 151", sets), std::vector<std::string>{"sv3pt5"});
+}
+
+// Each word is an independent constraint, so word ORDER carries no meaning — unlike
+// the whole-string substring match, which demanded the words be adjacent and in the
+// set name's own order.
+TEST(ResolveSetFilterToIdsTest, WordsMayBeGivenInAnyOrder) {
+    const std::vector<CardSetInfo> sets = sampleSets();
+    EXPECT_EQ(resolveSetFilterToIds("flames obsidian", sets), std::vector<std::string>{"sv3"});
+}
+
+// EVERY word must land on the same set: words narrow, they never accumulate matches.
+TEST(ResolveSetFilterToIdsTest, AWordThatMatchesNoSetRejectsIt) {
+    const std::vector<CardSetInfo> sets = sampleSets();
+    // Each word alone matches a set; no single set carries both.
+    EXPECT_TRUE(resolveSetFilterToIds("obsidian celebrations", sets).empty());
+    // Narrowing within one code's two sets: "classic" only appears in one of them.
+    EXPECT_EQ(resolveSetFilterToIds("CEL classic", sets), std::vector<std::string>{"cel25c"});
+}
+
+// A word with no alphanumeric character names nothing, so it is ignored rather than
+// failing every set (which is what would happen if the "—" had to match). A filter
+// made only of such words matches nothing — never everything.
+TEST(ResolveSetFilterToIdsTest, PunctuationOnlyWordsAreIgnoredAndAloneMatchNothing) {
+    const std::vector<CardSetInfo> sets = sampleSets();
+    EXPECT_EQ(resolveSetFilterToIds("— Obsidian —", sets), std::vector<std::string>{"sv3"});
+    EXPECT_TRUE(resolveSetFilterToIds("—", sets).empty());
+    EXPECT_TRUE(resolveSetFilterToIds("— — —", sets).empty());
+}
+
+// The interplay with parseSetAndNumberFilter, which the caller only reaches when the
+// WHOLE filter names no set. A collector number that appears in no set's name still
+// leaves the filter unresolved here, so the caller goes on to peel it off; but a
+// number that IS part of a set's name is absorbed as part of that name — the
+// documented cost of matching word-wise, and consistent with the caller's rule of
+// trying the whole filter as a set name first.
+TEST(ResolveSetFilterToIdsTest, ATrailingNumberResolvesOnlyWhenItIsPartOfTheSetName) {
+    const std::vector<CardSetInfo> sets = sampleSets();
+    // "125" is nowhere in "Obsidian Flames" → unresolved, so the caller peels it.
+    EXPECT_TRUE(resolveSetFilterToIds("OBF 125", sets).empty());
+    // "1" IS in "POP Series 1" → resolves here, pinning that one year of the series
+    // (rather than peeling "1" and matching every POP Series).
+    EXPECT_EQ(resolveSetFilterToIds("POP 1", sets), std::vector<std::string>{"pop1"});
+}
+
 // A /v2/cards payload exercising the mapping edge cases:
 //  - a card whose set is in the table AND whose embedded ptcgoCode is null:
 //    the code must come from the table (OBF), not the embedded null;

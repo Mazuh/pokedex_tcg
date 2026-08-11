@@ -124,8 +124,7 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
                   ? new CardFinderPanel(search, *dexNumber_, speciesName, this)
                   : new CardFinderPanel(search, CardFinderPanel::NameSearchMode{}, QString(), this);
     // When a search has no printings, remind the user the form on the left still works.
-    finder_->setNoResultsHint(
-        tr("you can still fill the form by hand, or the catalog may be flaking (retry)."));
+    finder_->setNoResultsHint(tr("you can still fill the form by hand."));
     // A picked card autofills the form's card reference; a picked set fills the set
     // fields (so a coded set keeps its code even when the copy is filed by set only).
     connect(finder_, &CardFinderPanel::cardSelected, this, &AddCardCopyPage::autofillFrom);
