@@ -168,6 +168,21 @@ private:
     // filedCopies_ is next rebuilt (refresh()), so never capture it in a page-return
     // lambda — capture the copy id and look it up again.
     const CardCopy* copyFor(const CardBinderEntry& entry) const;
+    // The one row-scoped action: insert a blank pocket before the selected row, or —
+    // when the selected row IS a blank — take it back out. One contextual button rather
+    // than two, since the two are never both applicable.
+    void toggleBlankAtSelection();
+    // The anchor a blank inserted before entries_[row] should carry: the row's SPECIES
+    // when it has one (durable — it survives that card being deleted and re-added), else
+    // the exact copy (a species-free card has no dex number to name it). nullopt for a
+    // row that can't anchor one. The single definition of that choice.
+    std::optional<CardBinderBlank> blankAnchorForRow(int row) const;
+    // Re-label/enable the blank button for the current selection and guide state. Called
+    // wherever either can change: selection, filter, rebuild.
+    void updateBlankButtonState();
+    // Re-set the Page column's tooltip for the binder's current grid (it changes under
+    // Edit binder, and says something different when no grid is recorded).
+    void updatePocketHeaderTooltips();
 
     BinderGuideService& guide_;
     CardBinder binder_;
@@ -192,6 +207,8 @@ private:
     PokemonDetailPanel* detail_;
     QPushButton* refreshPricesButton_;  // "Refresh prices" — bulk re-fetch all filed cards
     QLabel* bulkStatus_;                 // "Refreshing… n/m" progress beside it (hidden when idle)
+    // "Insert blank" / "Remove blank" under the table — the selection-scoped action.
+    QPushButton* blankButton_;
     // The guide's rows, strictly 1:1 with the table's rows (see the class docstring).
     std::vector<CardBinderEntry> entries_;
     // Header-driven sort state, re-applied on every refresh so it survives a

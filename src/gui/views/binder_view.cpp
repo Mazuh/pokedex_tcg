@@ -1,13 +1,19 @@
 #include "gui/views/binder_view.h"
 
 #include <QBrush>
+#include <QColor>
+#include <QCoreApplication>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QModelIndex>
+#include <QPainter>
 #include <QPalette>
+#include <QPen>
 #include <QPushButton>
+#include <QStyledItemDelegate>
 #include <QShowEvent>
 #include <QSplitter>
 #include <QStackedWidget>
@@ -37,6 +43,7 @@
 #include "gui/views/backable_page_host.h"
 #include "gui/views/binder_combo.h"
 #include "gui/views/binder_edit_page.h"
+#include "gui/views/binder_layout_labels.h"
 #include "gui/views/bulk_refresh_controller.h"
 #include "gui/views/card_copy_labels.h"
 #include "gui/views/condition_labels.h"
@@ -54,33 +61,104 @@
 #include "gui/views/status_labels.h"
 #include "gui/views/table_bulk_update.h"
 #include "gui/views/table_cell.h"
+#include "gui/views/toast.h"
 #include "gui/views/wishlist_edit_page.h"
 
 namespace pokedex {
 
 namespace {
 // The guide's auto-fit columns: every column that sizes to its content
-// (ResizeToContents) — all but the Stretch Set column (2). The single source of truth
+// (ResizeToContents) — all but the Stretch Set column (4). The single source of truth
 // for both the ctor's initial resize-mode setup and repopulate()'s BulkTablePopulate
 // guard, so the two can't silently drift when a column is added, removed, or reordered
 // (a mismatch would either reintroduce the O(rows^2) reopen freeze or convert the Set
-// slack column). Note column 1 carries a Pokémon name OR a card name (a species-free
+// slack column). Note column 3 carries a Pokémon name OR a card name (a species-free
 // row has no species to name it). Mirrors OwnedCardsView's kAutoFitColumns.
-constexpr int kAutoFitColumns[] = {0, 1, 3, 4, 5, 6, 7, 8};
+constexpr int kAutoFitColumns[] = {0, 1, 2, 3, 5, 6, 7, 8, 9, 10};
 
 // The Prices column alone — the subset updatePricesFor() rewrites in place. It needs the
-// same BulkTablePopulate treatment as a full rebuild (col 8 is content-sized), but must
+// same BulkTablePopulate treatment as a full rebuild (col 10 is content-sized), but must
 // not disturb the other columns' modes, since nothing else on that path changes.
-constexpr int kPriceColumnOnly[] = {8};
+constexpr int kPriceColumnOnly[] = {10};
+
+// The guide's first two columns say where a row physically sits in the album — which Page,
+// and which Pocket within it as "row×column" counting from the page's top-left ("2×3" =
+// second row, third pocket across) — and a separator is drawn under the row that closes a
+// page, so the list reads as the stack of pages it maps to. All of it comes from the
+// binder's own recorded pocket grid (CardBinderPocketGrid); a binder that doesn't record
+// one shows nothing here rather than being assumed to be 3×3.
+//
+// Both are keyed to the row's position in the FILED order (entries_), never to its position
+// among the visible rows. That is the whole point of the page number: searching for a
+// species hides most rows, and the surviving row must still name the page it is physically
+// on. A visible-position number would renumber itself per search and send the user to the
+// wrong sleeve. The tradeoff is that the separator lines look arbitrary while a filter is
+// active (they mark filed-order boundaries, and the rows between them are hidden) — the
+// page column is the part that stays meaningful there.
+//
+// A pocket is counted for every row EXCEPT a Removed copy's: that row stays listed and
+// grayed as frozen history, but the card is not in the sleeve, so counting it would push
+// every card after it a pocket further along and misreport the page for the whole rest of
+// the binder. So the running count skips it and its own Page/Pocket cells are blank. Two
+// row kinds that hold NO card do still take a pocket, deliberately: a placeholder row (a
+// listed species with nothing filed — that sleeve is reserved for it) and a blank row (a
+// pocket the user chose to leave empty, whose entire purpose is to occupy space).
+
+// Set on the Page cell (column 0) of the row that closes a page; PageBreakDelegate reads it
+// from whichever cell it is painting. Carried as item data rather than recomputed from the
+// row index because the pocket count skips rows (see above), so "closes a page" is no
+// longer a function of the row number alone.
+constexpr int kPageEndRole = Qt::UserRole + 1;
+
+class PageBreakDelegate : public QStyledItemDelegate {
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+
+    void paint(QPainter* painter, const QStyleOptionViewItem& option,
+               const QModelIndex& index) const override {
+        QStyledItemDelegate::paint(painter, option, index);
+        if (!index.sibling(index.row(), 0).data(kPageEndRole).toBool()) {
+            return;
+        }
+        // Follow the palette (so it works in light and dark) but stay muted — this is a
+        // grouping hint, not a grid.
+        QColor line = option.palette.color(QPalette::Text);
+        line.setAlpha(110);
+        painter->save();
+        painter->setPen(QPen(line, 1));
+        const int y = option.rect.bottom();
+        painter->drawLine(option.rect.left(), y, option.rect.right(), y);
+        painter->restore();
+    }
+};
 
 bool isRemoved(const CardCopy& copy) { return copy.ownership == CardOwnership::Removed; }
 
-// What column 1 says for a row, and the string both the sort key and the search
+// A row standing for a pocket the user deliberately left empty: it names neither a
+// species nor a card (see CardBinderEntry).
+bool isBlankSlot(const CardBinderEntry& entry) {
+    return !entry.pokemon && !entry.cardCopyId;
+}
+
+// A cell for a column that does not apply at all — distinct from cell(""), whose
+// em-dash reads as "this record has no data". Used for Page/Pocket when the binder
+// records no pocket grid, or while a header sort has left filed order behind.
+QTableWidgetItem* emptyCell() {
+    auto* item = new QTableWidgetItem;
+    item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+    return item;
+}
+
+// What the name column says for a row, and the string both the sort key and the search
 // filter use — one helper so the three can't drift. A species row is named by its
 // species (so a Pokémon's several copies read as one clean block, disambiguated by
 // the Set/Collector columns); a species-free row falls back to the printed card
-// name, exactly as My Cards' first column does.
+// name, exactly as My Cards' first column does. A blank pocket says so in words rather
+// than leaving an unexplained empty row — which also makes it findable by typing "blank".
 QString rowLabel(const CardBinderEntry& entry, const CardCopy* copy) {
+    if (isBlankSlot(entry)) {
+        return QCoreApplication::translate("pokedex", "(blank pocket)");
+    }
     if (entry.pokemon) {
         return QString::fromStdString(entry.pokemon->name);
     }
@@ -212,7 +290,8 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     search_->setPlaceholderText(tr("Search by Pokémon or card name…"));
     search_->setClearButtonEnabled(true);
 
-    // A read-only table: dex number, name, then the printed-identity columns mirroring
+    // A read-only table: the binder page this slot falls on, dex number, name, then the
+    // printed-identity columns mirroring
     // My Cards (set, collector, condition, rarity, foil) for the row's own filed copy,
     // its Status, and finally that copy's cached market Prices ("$… · €…", cache-only —
     // never a network read). Whole-row selection, no editing. The Set column takes the
@@ -221,28 +300,36 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     // binder) leaves the copy columns blank; a species-free card's row leaves "#" blank,
     // since it has no Pokédex number.
     table_ = new QTableWidget(this);
-    table_->setColumnCount(9);
-    table_->setHorizontalHeaderLabels({tr("#"), tr("Pokémon / Card"),
+    table_->setColumnCount(11);
+    table_->setHorizontalHeaderLabels({tr("Page"), tr("Pocket"), tr("#"), tr("Pokémon / Card"),
                                        tr("Set name / expansion code"),
                                        tr("Collector"), tr("Cond."), tr("Rarity"), tr("Foil"),
                                        tr("Status"), tr("Prices")});
     table_->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    // The "#" header sits over right-aligned dex numbers, so right-align it to match.
+    // "Page" and "#" sit over right-aligned numbers, so right-align them to match.
     table_->horizontalHeaderItem(0)->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    // Both tooltips are re-set per refresh (the grid can change under Edit binder) —
+    // see updatePocketHeaderTooltips.
+    table_->horizontalHeaderItem(1)->setToolTip(
+        tr("Where on the page: row×column, counting from the top-left. \"2×3\" is the "
+           "second row, third pocket across."));
+    table_->horizontalHeaderItem(2)->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
     table_->verticalHeader()->setVisible(false);
     auto* header = table_->horizontalHeader();
-    // The name column (col 1) and the short metadata columns size to content; Set (col 2) is the
+    // The name column (col 3) and the short metadata columns size to content; Set (col 4) is the
     // flexible slack absorber that grows when there's room and elides when space is tight —
-    // mirroring OwnedCardsView. Prices (col 8) sizes to its "$… · €…" content.
+    // mirroring OwnedCardsView. Prices (col 10) sizes to its "$… · €…" content.
     for (const int col : kAutoFitColumns) {  // all but the Set slack column
         header->setSectionResizeMode(col, QHeaderView::ResizeToContents);
     }
-    header->setSectionResizeMode(2, QHeaderView::Stretch);  // Set — flexible slack absorber
+    header->setSectionResizeMode(4, QHeaderView::Stretch);  // Set — flexible slack absorber
     // Cell padding so content clears the edges and the overlay scrollbar.
     table_->setStyleSheet("QTableView::item { padding-left: 8px; padding-right: 16px; }");
+    // EXPERIMENT: mark the 3x3-page boundaries (see PageBreakDelegate).
+    table_->setItemDelegate(new PageBreakDelegate(table_));
 
     detail_ =
         new PokemonDetailPanel(media, wishlist, &cardImages_, &priceLookup_, &cardCopies_, this);
@@ -264,7 +351,11 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     // repopulate from the cached entries_ (re-sorted so they stay 1:1 with the rows).
     // A pure reorder — it never recomputes the guide or re-reads the binder's copies.
     installHeaderSort(table_, [this](int column, Qt::SortOrder order) {
-        sortColumn_ = column;
+        // The Page/Pocket columns aren't fields of the data — they ARE the filed position,
+        // derived from the row order after sorting. So "sort by page" can only mean one
+        // thing: drop back to the natural filed order (sortColumn_ < 0), which is also how
+        // you undo a sort.
+        sortColumn_ = column <= 1 ? -1 : column;
         sortOrder_ = order;
         repopulate();
     });
@@ -322,6 +413,15 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
 
     // The list (top bar + search + table) on the left, the detail panel on the
     // right, in a draggable horizontal split. The list takes the slack.
+    // Row actions go UNDER the table, as on every other list screen (My Cards, Binders,
+    // Wishlist). The split is by scope: an action that needs a selected row lives here;
+    // the binder-wide ones (Add a card, Edit binder, Refresh prices) stay in the top bar.
+    blankButton_ = new QPushButton(this);
+    connect(blankButton_, &QPushButton::clicked, this, &BinderView::toggleBlankAtSelection);
+    auto* rowActions = new QHBoxLayout;
+    rowActions->addWidget(blankButton_);
+    rowActions->addStretch();
+
     auto* listPane = new QWidget(this);
     auto* listLayout = new QVBoxLayout(listPane);
     listLayout->setContentsMargins(16, 12, 16, 12);  // match the other sections' padding
@@ -329,6 +429,7 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     listLayout->addWidget(statsRow);
     listLayout->addWidget(search_);
     listLayout->addWidget(table_);
+    listLayout->addLayout(rowActions);
 
     auto* splitter = new QSplitter(Qt::Horizontal, this);
     splitter->addWidget(listPane);
@@ -400,6 +501,7 @@ void BinderView::refresh() {
 
     loadCachedPrices();  // one batched cache read feeding both the header total and the rows
     updateStats(filedCopies_);
+    updatePocketHeaderTooltips();  // the grid can have changed under Edit binder
     repopulate();
 }
 
@@ -443,7 +545,7 @@ void BinderView::updatePricesFor(const QString& externalCardId) {
     }
     pricesByExternalId_[id] = std::move(prices);
     suppressedByExternalId_[id] = std::move(suppressed);
-    // Prices (col 8) is a ResizeToContents column, so every setItem re-measures it across
+    // Prices (col 10) is a ResizeToContents column, so every setItem re-measures it across
     // ALL rows — the O(rows^2) footgun table_bulk_update.h documents. This is the bulk
     // refresh's hot path (one call per arriving price) over a row set no longer bounded by
     // the catalog, and a duplicate-heavy binder writes one cell per copy rather than per
@@ -459,7 +561,7 @@ void BinderView::updatePricesFor(const QString& externalCardId) {
             continue;
         }
         table_->setItem(
-            i, 8,
+            i, 10,
             cell(priceAmountsInline(
                 visiblePricesForCopy(pricesByExternalId_, suppressedByExternalId_, *copy, scratch),
                 finishForFoil(copy->foil))));
@@ -523,25 +625,24 @@ void BinderView::updateStats(const std::vector<CardCopy>& filedCopies) {
 
     listedStat_->setText(tr("Listed %1").arg(listed));
     if (listed > 0) {
-        const int percent = qRound(100.0 * captured / listed);
-        // Guard both rounding extremes so the figure never contradicts the count: a tiny
-        // nonzero ratio shows "<1%" rather than "0%", and a nearly-complete-but-not one
-        // (e.g. 997/1000 → qRound(99.7) == 100) shows ">99%" rather than a false "100%".
-        QString pct;
-        if (percent == 0 && captured > 0) {
-            pct = tr("<1%");
-        } else if (percent == 100 && captured < listed) {
-            pct = tr(">99%");
-        } else {
-            pct = tr("%1%").arg(percent);
-        }
-        capturedStat_->setText(tr(" · Captured %1 (%2)").arg(captured).arg(pct));
+        // percentLabel guards both rounding extremes so the figure never contradicts the
+        // count beside it (see binder_layout_labels.h).
+        capturedStat_->setText(
+            tr(" · Captured %1 (%2)").arg(captured).arg(percentLabel(captured, listed)));
     }
     // A regionless binder holding only Trainer cards lists no species — hide the ratio
     // rather than divide by zero, and let "Cards" lead instead.
     capturedStat_->setVisible(listed > 0);
-    cardsStat_->setText(listed > 0 ? tr(" · Cards %1").arg(cardsHere)
-                                   : tr("Cards %1").arg(cardsHere));
+    // With a recorded capacity, say how full the album is. Deliberately unclamped: a
+    // binder stuffed past its rated capacity is a real thing the app never blocks, so
+    // "Cards 400 of 360 (111%)" is the honest reading and exactly what the figure is for.
+    const QString cards =
+        binder_.capacity ? tr("Cards %1 of %2 (%3)")
+                               .arg(cardsHere)
+                               .arg(*binder_.capacity)
+                               .arg(percentLabel(cardsHere, *binder_.capacity))
+                         : tr("Cards %1").arg(cardsHere);
+    cardsStat_->setText(listed > 0 ? QStringLiteral(" · ") + cards : cards);
     // Cards is the first visible stat when nothing is listed, so it drops its separator
     // there; Listed hides with it for the same reason.
     listedStat_->setVisible(listed > 0);
@@ -574,6 +675,15 @@ void BinderView::repopulate() {
     // here are kAutoFitColumns — the same ResizeToContents set configured in the ctor (all
     // but the Stretch Set column, col 2). Scoped to the fill loop only; the later
     // applyFilter/panel work wants the normal resize modes back.
+    //
+    // The Page/Pocket columns are filled only when this binder records a pocket grid AND
+    // the guide is in its natural filed order. Under any header sort the rows no longer
+    // follow the sleeves, so a position would be a lie; the columns stay present but empty
+    // (clicking either header is also the only way back to filed order, so hiding them
+    // would remove the escape hatch).
+    const int perPage = binder_.pocketGrid ? pocketsPerPage(*binder_.pocketGrid) : 0;
+    const int columns = binder_.pocketGrid ? binder_.pocketGrid->columns : 0;
+    const bool showPockets = perPage > 0 && sortColumn_ < 0;
     {
         BulkTablePopulate populateGuard(table_, kAutoFitColumns);
         table_->setRowCount(static_cast<int>(entries_.size()));
@@ -586,15 +696,43 @@ void BinderView::repopulate() {
         // sleeves.
         const QBrush removedForeground =
             table_->palette().brush(QPalette::Disabled, QPalette::Text);
+        int pocket = 0;  // 0-based sleeve position; advances only for rows that hold one
         for (int i = 0; i < static_cast<int>(entries_.size()); ++i) {
             const CardBinderEntry& entry = entries_[i];
+            const CardCopy* copy = copyFor(entry);
+            // The page this slot falls on, so a searched-for row still says where the card
+            // physically lives once the filter has hidden its neighbours.
+            //
+            // Read this predicate carefully: everything holds a pocket EXCEPT a Removed
+            // copy. A blank row has no copy at all and therefore holds one — which is its
+            // entire purpose. Writing it the other way round (`copy != nullptr &&
+            // !isRemoved(*copy)`) would silently make blanks free and break the page-break
+            // feature outright, while every test still passed.
+            const bool holdsPocket = !(copy && isRemoved(*copy));
+            const bool numbered = showPockets && holdsPocket;
+            const int indexInPage = perPage > 0 ? pocket % perPage : 0;
+            // Columns 0/1 are ALWAYS given an item, even when empty: the Removed-graying
+            // pass below walks every column and would dereference a null cell otherwise.
+            // A plain empty item rather than cell(), whose em-dash means "this record has
+            // no data" — wrong when the whole column simply doesn't apply.
+            auto* page =
+                numbered ? cell(QString::number(pocket / perPage + 1)) : emptyCell();
+            page->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+            if (showPockets && holdsPocket) {
+                page->setData(kPageEndRole, indexInPage == perPage - 1);
+            }
+            if (holdsPocket) {
+                ++pocket;
+            }
+            table_->setItem(i, 0, page);
+            table_->setItem(i, 1,
+                            numbered ? cell(pocketLabel(indexInPage, columns)) : emptyCell());
             // "#" is blank for a species-free card — it has no Pokédex number.
             auto* number =
                 cell(entry.pokemon ? QString::number(entry.pokemon->dexNumber) : QString());
             number->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-            table_->setItem(i, 0, number);
-            const CardCopy* copy = copyFor(entry);
-            table_->setItem(i, 1, cell(rowLabel(entry, copy)));
+            table_->setItem(i, 2, number);
+            table_->setItem(i, 3, cell(rowLabel(entry, copy)));
             // The row's OWN filed copy fills the printed-identity columns; a placeholder
             // row leaves them blank (rendered as an em-dash by cell()).
             // Set is the eliding Stretch column ("Base Set (BS)"); carry the full value as a
@@ -602,21 +740,23 @@ void BinderView::repopulate() {
             const QString setText = copy ? setLabel(copy->cardRef) : QString();
             auto* setCell = cell(setText);
             setCell->setToolTip(setText);
-            table_->setItem(i, 2, setCell);
-            table_->setItem(i, 3, cell(copy ? QString::fromStdString(copy->cardRef.collectorNumber)
+            table_->setItem(i, 4, setCell);
+            table_->setItem(i, 5, cell(copy ? QString::fromStdString(copy->cardRef.collectorNumber)
                                             : QString()));
-            table_->setItem(i, 4, cell(copy && copy->condition ? conditionAbbrev(*copy->condition)
+            table_->setItem(i, 6, cell(copy && copy->condition ? conditionAbbrev(*copy->condition)
                                                                : QString()));
-            table_->setItem(i, 5,
+            table_->setItem(i, 7,
                             cell(copy && copy->rarity ? rarityLabel(*copy->rarity) : QString()));
-            table_->setItem(i, 6, cell(copy && copy->foil ? foilLabel(*copy->foil) : QString()));
-            table_->setItem(i, 7, cell(statusLabel(entry.status)));
+            table_->setItem(i, 8, cell(copy && copy->foil ? foilLabel(*copy->foil) : QString()));
+            // A blank pocket stands for no species and no card, so it reports no status.
+            table_->setItem(i, 9,
+                            cell(entry.status ? statusLabel(*entry.status) : QString()));
             // The copy's cached market prices, inline ("$… · €…"); blank when the copy is
             // unlinked, its prices were never fetched, or it is Removed (frozen history —
             // matches the inspector). Cache-only (pricesByExternalId_), so this stays a pure
             // in-memory rebuild — no network, no re-query.
             table_->setItem(
-                i, 8,
+                i, 10,
                 cell(copy && !isRemoved(*copy)
                          ? priceAmountsInline(
                                visiblePricesForCopy(pricesByExternalId_, suppressedByExternalId_,
@@ -638,7 +778,7 @@ void BinderView::repopulate() {
         const int restored = rowOf(shownCopyBefore, selectedDex);
         table_->blockSignals(true);
         if (restored >= 0) {
-            table_->setCurrentCell(restored, 1);
+            table_->setCurrentCell(restored, 3);  // the name column
         } else {
             // The record left the guide entirely (its copy was deleted or moved to another
             // binder, and its species isn't in one of this binder's regions). DROP the
@@ -687,7 +827,7 @@ void BinderView::sortEntries() {
         std::optional<int> conditionRank;
         std::optional<int> rarityRank;
         std::optional<int> foilRank;
-        int statusRank = 0;
+        std::optional<int> statusRank;
         std::optional<long long> priceCents;
     };
     const bool ascending = sortOrder_ == Qt::AscendingOrder;
@@ -698,49 +838,57 @@ void BinderView::sortEntries() {
             // Build ONLY the clicked column's key (as OwnedCardsView::repopulate does):
             // the comparator reads a single field, so materializing every column on each
             // header click — five QString allocations plus a copyFor() lookup per row — is
-            // pure waste that grows with the guide. Only the copy-derived columns (2–6, 8)
+            // pure waste that grows with the guide. Only the copy-derived columns (4–8, 10)
             // need the row's copy, so the dex/status columns skip that lookup entirely.
             // Unset fields keep their default (empty QString / 0 / nullopt), which the
-            // comparator never consults for other columns.
+            // comparator never consults for other columns. There are no cases 0/1: the
+            // Page/Pocket columns are the filed position itself, and clicking one resets
+            // sortColumn_ to -1 (natural order), which sortByKeys returns on before ever
+            // calling this.
             Key key;
             switch (column) {
-                case 0:
+                case 2:
                     if (e.pokemon) {
                         key.dexNumber = e.pokemon->dexNumber;
                     }
                     break;
-                case 1:
+                case 3:
                     key.name = rowLabel(e, copyFor(e));
                     break;
-                case 2:
+                case 4:
                     if (const CardCopy* copy = copyFor(e)) {
                         key.setText = setLabel(copy->cardRef);
                     }
                     break;
-                case 3:
+                case 5:
                     if (const CardCopy* copy = copyFor(e)) {
                         key.collector = QString::fromStdString(copy->cardRef.collectorNumber);
                     }
                     break;
-                case 4:
+                case 6:
                     if (const CardCopy* copy = copyFor(e); copy && copy->condition) {
                         key.conditionRank = static_cast<int>(*copy->condition);
                     }
                     break;
-                case 5:
+                case 7:
                     if (const CardCopy* copy = copyFor(e); copy && copy->rarity) {
                         key.rarityRank = static_cast<int>(*copy->rarity);
                     }
                     break;
-                case 6:
+                case 8:
                     if (const CardCopy* copy = copyFor(e); copy && copy->foil) {
                         key.foilRank = static_cast<int>(*copy->foil);
                     }
                     break;
-                case 7:
-                    key.statusRank = static_cast<int>(e.status);
+                case 9:
+                    // A blank pocket has no status, so it stays nullopt and sinks to the
+                    // bottom in either direction (compareOptional) rather than sorting as
+                    // though it were some particular verdict.
+                    if (e.status) {
+                        key.statusRank = static_cast<int>(*e.status);
+                    }
                     break;
-                case 8:
+                case 10:
                     // A Removed copy shows no price, so it must not sort as though it had
                     // one — it stays nullopt and sinks with the unpriced rows.
                     if (const CardCopy* copy = copyFor(e); copy && !isRemoved(*copy)) {
@@ -771,25 +919,26 @@ void BinderView::sortEntries() {
             };
             const auto rank = [](int x, int y) { return compareValues(x, y); };
             switch (column) {
-                case 0:
-                    return compareOptional(a.dexNumber, b.dexNumber, ascending, rank);
-                case 1:
-                    return a.name.localeAwareCompare(b.name);
                 case 2:
-                    return compareOptional(a.setText, b.setText, ascending, text);
+                    return compareOptional(a.dexNumber, b.dexNumber, ascending, rank);
                 case 3:
-                    return compareOptional(a.collector, b.collector, ascending, text);
+                    return a.name.localeAwareCompare(b.name);
                 case 4:
-                    return compareOptional(a.conditionRank, b.conditionRank, ascending, rank);
+                    return compareOptional(a.setText, b.setText, ascending, text);
                 case 5:
-                    return compareOptional(a.rarityRank, b.rarityRank, ascending, rank);
+                    return compareOptional(a.collector, b.collector, ascending, text);
                 case 6:
-                    return compareOptional(a.foilRank, b.foilRank, ascending, rank);
+                    return compareOptional(a.conditionRank, b.conditionRank, ascending, rank);
                 case 7:
+                    return compareOptional(a.rarityRank, b.rarityRank, ascending, rank);
+                case 8:
+                    return compareOptional(a.foilRank, b.foilRank, ascending, rank);
+                case 9:
                     // CollectionStatus enum values are the documented precedence order —
                     // a more meaningful grouping than the status labels' alphabetical order.
-                    return compareValues(a.statusRank, b.statusRank);
-                case 8:
+                    // A blank pocket carries none and sinks either way.
+                    return compareOptional(a.statusRank, b.statusRank, ascending, rank);
+                case 10:
                     return compareOptional(a.priceCents, b.priceCents, ascending,
                                            [](long long x, long long y) { return compareValues(x, y); });
             }
@@ -832,6 +981,7 @@ void BinderView::applyFilter(const QString& filter) {
             shownStillVisible = true;
         }
     }
+    updateBlankButtonState();  // the selected row may have just been hidden
     if (shownStillVisible) {
         return;
     }
@@ -875,18 +1025,23 @@ void BinderView::showEntryInPanel(int row) {
             sameSpeciesTotal = it == ownedCountsByDex_.end() ? 0 : it->second;
         }
         detail_->showSingleCopy(*copy, sameSpeciesTotal);
+        updateBlankButtonState();
+        return;
+    }
+    // A blank pocket: it stands for no species and no card, so there is nothing to
+    // inspect. (This branch used to be unreachable defensive code; the blank row is what
+    // now makes an entry naming neither a real, expected shape.)
+    if (!entry.pokemon) {
+        clearPanel();  // which also re-labels the blank button for this row
         return;
     }
     // A placeholder row: the species is listed but holds nothing here, so there is only
     // its artwork to show.
-    if (!entry.pokemon) {
-        clearPanel();  // defensive: an entry naming neither is never produced
-        return;
-    }
     detail_->setAddMode(PokemonDetailPanel::AddMode::SpeciesCopy);
     detail_->setWishlistVisible(true);
     shownDex_ = entry.pokemon->dexNumber;
     detail_->showPokemon(shownDex_, QString::fromStdString(entry.pokemon->name));
+    updateBlankButtonState();
 }
 
 void BinderView::clearPanel() {
@@ -896,6 +1051,7 @@ void BinderView::clearPanel() {
     detail_->setWishlistVisible(true);
     detail_->clear();
     shownDex_ = -1;
+    updateBlankButtonState();
 }
 
 void BinderView::activateRow(int row) {
@@ -1026,19 +1182,133 @@ void BinderView::openWishlist(int dexNumber, const QString& name) {
     stack_->setCurrentWidget(page);
 }
 
+std::optional<CardBinderBlank> BinderView::blankAnchorForRow(int row) const {
+    if (row < 0 || row >= static_cast<int>(entries_.size())) {
+        return std::nullopt;
+    }
+    const CardBinderEntry& entry = entries_[row];
+    CardBinderBlank anchor;
+    anchor.blanks = 1;
+    if (entry.pokemon) {
+        // Anchor to the SPECIES, not the copy: it survives that card being deleted and
+        // re-added, and it is the unit the user is thinking in ("Kalos starts here").
+        // Consequence, spelled out in the button's tooltip: on a species holding several
+        // copies the blank lands before the first of them, not before the clicked row.
+        anchor.beforeDexNum = entry.pokemon->dexNumber;
+        return anchor;
+    }
+    if (entry.cardCopyId) {
+        // A species-free card has no dex number to name it, so it anchors to itself.
+        anchor.beforeCopyId = *entry.cardCopyId;
+        return anchor;
+    }
+    return std::nullopt;  // a blank row anchors nothing of its own
+}
+
+void BinderView::updateBlankButtonState() {
+    const int row = table_->currentRow();
+    const bool haveRow = row >= 0 && row < static_cast<int>(entries_.size()) &&
+                         !table_->isRowHidden(row) && !table_->selectedItems().isEmpty();
+    const bool onBlank = haveRow && isBlankSlot(entries_[row]);
+
+    blankButton_->setText(onBlank ? tr("Remove blank") : tr("Insert blank"));
+    if (!binder_.pocketGrid) {
+        blankButton_->setEnabled(false);
+        blankButton_->setToolTip(
+            tr("Set this binder's pocket grid in “Edit binder” first — without it there are "
+               "no pages to break."));
+        return;
+    }
+    if (sortColumn_ >= 0) {
+        // The anchor would still be well defined under a sort, but "push what follows onto
+        // the next page" is only legible in filed order. The tooltip doubles as the hint
+        // for how to get back there.
+        blankButton_->setEnabled(false);
+        blankButton_->setToolTip(
+            tr("Blank pockets can only be arranged in page order — click the Page column "
+               "heading to return to it."));
+        return;
+    }
+    if (onBlank) {
+        blankButton_->setEnabled(true);
+        blankButton_->setToolTip(tr("Remove this deliberately empty pocket."));
+        return;
+    }
+    blankButton_->setEnabled(haveRow && blankAnchorForRow(row).has_value());
+    blankButton_->setToolTip(
+        haveRow ? tr("Leave a pocket empty before this row, pushing everything after it "
+                     "further along the page. On a Pokémon with several cards filed here, "
+                     "the gap goes before the first of them.")
+                : tr("Select a row to leave a pocket empty before it."));
+}
+
+void BinderView::toggleBlankAtSelection() {
+    const int row = table_->currentRow();
+    if (row < 0 || row >= static_cast<int>(entries_.size())) {
+        return;
+    }
+    const bool removing = isBlankSlot(entries_[row]);
+    // A blank row carries no identity of its own, so removing works off the row it sits
+    // before: scan forward to the first row that does anchor one. Sound because the action
+    // is gated to natural (filed) order, where "the next real row" is exactly the anchor
+    // this blank was recorded against.
+    std::optional<CardBinderBlank> anchor;
+    if (removing) {
+        for (int i = row + 1; i < static_cast<int>(entries_.size()); ++i) {
+            anchor = blankAnchorForRow(i);
+            if (anchor) {
+                break;
+            }
+        }
+    } else {
+        anchor = blankAnchorForRow(row);
+    }
+    if (!anchor) {
+        return;
+    }
+
+    try {
+        binder_ = removing ? binders_.removeBlanks(binder_.id, *anchor)
+                           : binders_.insertBlanks(binder_.id, *anchor);
+    } catch (const std::exception& e) {
+        QMessageBox::critical(this, tr("Pokedex TCG"),
+                              tr("Could not change this binder's blank pockets:\n%1")
+                                  .arg(QString::fromUtf8(e.what())));
+        return;
+    }
+    showToast(this, removing ? tr("Blank pocket removed.") : tr("Blank pocket inserted."));
+
+    // Rebuild, then put the highlight back on the ANCHOR row rather than the blank — so
+    // pressing Insert again widens the same gap, which is how a page gets padded out.
+    const QString anchorCopyId =
+        anchor->beforeCopyId ? QString::fromStdString(*anchor->beforeCopyId) : QString();
+    const int anchorDex = anchor->beforeDexNum.value_or(-1);
+    refresh();
+    reselectRow(anchorCopyId, anchorDex);
+}
+
+void BinderView::updatePocketHeaderTooltips() {
+    table_->horizontalHeaderItem(0)->setToolTip(
+        binder_.pocketGrid
+            ? tr("Which page of the binder this slot falls on, counting %1 pockets per page.")
+                  .arg(pocketsPerPage(*binder_.pocketGrid))
+            : tr("Record this binder's pocket grid in “Edit binder” to see page numbers."));
+}
+
 void BinderView::openEditBinder() {
     auto* page = new BinderEditPage(binders_, binder_);
-    // The page hands the committed name/regions straight back on save, so update
-    // binder_ (and the heading) in place — no storage re-read. On Back, refresh()
-    // rebuilds the guide from the updated binder_ (a region change alters which
-    // species it lists); on a plain cancel, binder_ is unchanged and refresh() is a
-    // harmless recompute.
-    connect(page, &BinderEditPage::saved, this,
-            [this](const QString& name, const std::vector<Region>& regions) {
-                binder_.name = name.toStdString();
-                binder_.pokemonRegions = regions;
-                heading_->setText(binderComboLabel(binder_));
-            });
+    // The page hands the whole persisted binder back on save, so binder_ is replaced in
+    // place — no storage re-read. On Back, refresh() rebuilds the guide from the updated
+    // binder_ (a region change alters which species it lists, a grid change repages it);
+    // on a plain cancel, binder_ is unchanged and refresh() is a harmless recompute.
+    connect(page, &BinderEditPage::saved, this, [this](const CardBinder& updated) {
+        // Replace the whole value rather than patching field by field: this view never
+        // re-reads binder_ from storage, so a wholesale swap is what keeps every field —
+        // including the blanks the edit form doesn't touch, and anything added later —
+        // in step with what was just persisted.
+        binder_ = updated;
+        heading_->setText(binderComboLabel(binder_));
+    });
     pushBackablePage(stack_, page, [this]() { refresh(); });
 }
 
@@ -1051,7 +1321,7 @@ void BinderView::reselectRow(const QString& copyId, int dex) {
         return;
     }
     table_->blockSignals(true);  // setCurrentCell would re-fire showRow redundantly
-    table_->setCurrentCell(row, 1);
+    table_->setCurrentCell(row, 3);  // the name column
     table_->blockSignals(false);
     // Drive the panel explicitly: if the copy is gone this lands on the species'
     // placeholder row and falls back to plain artwork.

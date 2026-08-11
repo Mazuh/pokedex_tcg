@@ -37,7 +37,8 @@ src/
     domain/             entities & value objects, pure logic — three zones:
                           catalog (Region, Pokemon); collection (CardBinder,
                           CardCopy, Wishlist, CardReference, CardCondition,
-                          CardOwnership); inferred (CollectionStatus,
+                          CardOwnership, CardBinderPocketGrid, CardBinderBlank);
+                          inferred (CollectionStatus,
                           CardBinderEntry) — see "Domain model" below
     storage/            local-file persistence (SQLite DB + media cache),
                           workspace-directory resolution, repositories
@@ -87,10 +88,23 @@ region [e.g. a "Kanto + Johto" album]. The v1 `card_binder.region` column become
 place, never read again — additive migrations don't rewrite v1's table]; the migration backfills each
 existing single-region row into the join table, and `CardBinderRepository` reads/writes only the join
 table thereafter [mirroring `wishlist_source`: `add`/`update` write the parent then the region rows in
-one transaction, `listAll` attaches them in a second pass sorted to canonical enum order]),
+one transaction, `listAll` attaches them in a second pass sorted to canonical enum order]; v12 added
+`card_binder.capacity` / `pocket_rows` / `pocket_columns`, the album's optional **physical layout**
+[`INTEGER NOT NULL DEFAULT 0`, 0 = unset — so every existing binder backfills to "not recorded" and
+`DEFAULT 0` *is* the backfill]. Capacity is stored INDEPENDENTLY of the grid, never derived as
+pages×pocketsPerPage [the page count isn't recorded], and is never enforced — a stuffed binder is
+real, so the guide displays how full it is and blocks nothing; v13 added `card_binder_blank`
+[`(binder_id, before_dex_num, before_copy_id)` PK, `ON DELETE CASCADE`], the deliberate **empty
+pockets** that let a user control where a page breaks — see the blank-pockets note below),
 so a fresh DB runs the whole chain and an existing one
 only the tail — bump `kSchemaVersion` and add a step (never edit `kSchemaV1`) when
-the schema changes. `storage/` holds
+the schema changes.
+
+**From v12 on, a migration step ALTERs a v1 table, so "migrate a fresh DB, then roll
+`user_version` back and re-migrate" is no longer a safe way to exercise a step in a test** — the
+replayed `ADD COLUMN` fails as a duplicate, and it can't be undone without `DROP COLUMN`, whose
+availability varies with the system SQLite across the two CI legs. Stand the older shape up BY HAND
+instead (`tests/storage/database_test.cpp`'s v8/v9/v11 tests are the pattern). `storage/` holds
 workspace resolution, the SQLite `Database` wrapper + schema/migrations, the
 `codecs` (region/ownership/condition enums ↔ tokens, timestamps ↔ ISO-8601),
 and repositories for `CardBinder`, `CardCopy`, and `Wishlist`. The `CardCopy`
@@ -101,11 +115,18 @@ the full CRUD surface: `save` (upsert parent + replace its source set), `find`,
 `listAll`, `remove`, and `wishedDexNums` (the "Wished" status read). `app/` holds
 `install_service`, `uuid` (`newUuidV4`, the shared id minter used by every
 service), `BinderService` (binder CRUD verbs — `create`/`update` both take a
-`std::vector<Region>` for the multivalued region set; `update` replaced the old
-name-only `rename`), `BinderGuideService`
+`std::vector<Region>` for the multivalued region set plus the optional `capacity` +
+`CardBinderPocketGrid`; `update` replaced the old name-only `rename`; and
+`insertBlanks`/`removeBlanks`, the blank-pocket verbs. **Every mutating verb RETURNS the
+persisted `CardBinder`**, read back through the new `CardBinderRepository::find` — the GUI
+keeps a by-value binder it never re-reads, so returning the whole entity lets a host replace
+its copy wholesale [`binder_ = service.insertBlanks(...)`] instead of patching the fields it
+happens to know about, which is what stops a newly added field from being silently dropped on
+that path), `BinderGuideService`
 (the `buildBinderEntries` the inferred zone refers to — one row per card FILED in the
 binder [a species' duplicates adjacent in filed order; species-free cards last, since they
-carry no dex number] plus one placeholder row per listed species holding nothing; a row is a
+carry no dex number] plus one placeholder row per listed species holding nothing, plus one
+row per **blank pocket** interleaved before the row its anchor names; a row is a
 slot, not a species), `PokemonBrowseService`
 (`listAll` → every catalog species paired with its owned-copy count, the unscoped
 Pokédex browser's data), `CardCopyService` (the copy verbs —
@@ -316,8 +337,10 @@ card"** button — the species-free add page locked to this binder, always avail
 Trainer card has no row to start from; the species add flow is unchanged. Header stats are four
 tooltipped labels: `Listed` [distinct species — NOT `entries_.size()` any more] · `Captured`
 [species with ≥1 Owned copy filed here] · `Cards` [Owned copies filed here; duplicates and
-non-Pokémon cards each count — the figure to eyeball against a future binder capacity] ·
-market value), the
+non-Pokémon cards each count — rendered as "Cards 42 of 360 (12%)" when the binder records a
+capacity, and deliberately UNCLAMPED, since an over-full album is exactly what the figure
+exists to reveal] · market value. Its first two columns, `Page` and `Pocket`, say where a row
+physically sits — see the binder-layout note below), the
 Pokémon browser (`PokemonListView`, which hosts an inner stack for the add-copy
 page), and two card-copy pages built from the same two shared blocks — the reusable
 `CardCopyForm` (the details pane: printed-identity/condition/ownership fields + binder
@@ -663,6 +686,78 @@ ctest --test-dir build --output-on-failure
   `POKEDEX_TCG_CONFIG_DIR=<throwaway dir>` so you exercise a scratch workspace,
   not the user's — two instances writing the same DB also contend on SQLite's
   file lock.
+
+**A binder's physical layout: pages, pockets, and blanks.** A binder optionally records
+what the album physically IS — its `capacity` (an int) and its `pocketGrid`
+(`CardBinderPocketGrid{rows, columns}`) — both edited on `BinderEditPage` and shown as two
+new sortable columns on `BindersPage`. The grid is modelled as ONE `std::optional<struct>`
+rather than two independent `optional<int>`s precisely so "rows known, columns unknown" is
+unrepresentable instead of merely invalid, sparing every reader a defensive branch (storage
+still decodes a hand-edited half-set pair as unset). From it the binder guide derives its
+first two columns — `Page` and `Pocket` ("row×column" from the page's top-left, e.g. "2×3")
+— plus a separator drawn under the row that closes a page (`PageBreakDelegate`, reading a
+`kPageEndRole` flag the fill loop sets). Formatting lives in `gui/views/binder_layout_labels.h`
+(`pocketLabel`, `pocketGridLabel`, `percentLabel`), shared by both screens.
+
+Three rules govern the pocket count, and each is load-bearing:
+- **It counts filed-order position, never visible position.** The search box hides rows, and
+  a surviving row must still name the page it is physically on; a visible-position number
+  would renumber itself per search and send the user to the wrong sleeve. The cost is that
+  the separators look arbitrary under a filter — accepted, the page number is the part that
+  stays meaningful.
+- **Everything holds a pocket EXCEPT a Removed copy.** Read `holdsPocket = !(copy &&
+  isRemoved(*copy))` carefully: a placeholder row (a listed species, sleeve reserved) and a
+  blank row (`copy == nullptr`) both DO hold one. Writing it the tempting other way round
+  (`copy != nullptr && !isRemoved(*copy)`) makes blanks free and breaks the feature outright
+  while every test still passes.
+- **Page/Pocket blank out unless the grid is recorded AND the guide is in natural filed
+  order** (`showPockets = perPage > 0 && sortColumn_ < 0`) — under a header sort the rows no
+  longer follow the sleeves. The columns stay PRESENT but empty, never `setColumnHidden`:
+  every column index in that file is a hardcoded literal, and the Page/Pocket headers are the
+  only affordance that resets the sort back to natural order. Columns 0/1 must still be
+  `setItem`-ed even when blank — the Removed-graying pass walks every column and would
+  dereference a null cell. Use a plain empty item there, not `cell()`, whose em-dash means
+  "this record has no data" rather than "this column doesn't apply".
+
+**Blank pockets** (`CardBinderBlank`, table `card_binder_blank`) are the region-agnostic way
+a user controls where a page breaks: species run contiguously by dex number, so Kanto ends
+mid-page and Kalos's first evolution line splits across two pages — two blanks before Chespin
+start Kalos at pocket 1×1. Collectors break pages by different rules, so the app stores where
+they chose to leave gaps rather than guessing at one. A blank names EXACTLY ONE anchor and
+sits immediately before that row: `beforeDexNum` (a species — the durable choice, and the one
+the GUI mints for any row that has a species, since it survives that card being deleted and
+re-added and works on a species not owned yet) or `beforeCopyId` (one exact card, for a
+species-free row with no dex number to name it). `blanks` is a COUNT per anchor, not a row per
+pocket — blanks at one anchor are indistinguishable, so a row-per-pocket table would need a
+synthetic ordinal purely to permit duplicates. An ORPHANED blank (region un-scoped, copy
+deleted or moved away) simply emits nothing; `buildEntries` stays read-only and never prunes
+it, so restoring the region restores the layout. A blank guide row is `CardBinderEntry` with
+BOTH optionals unset and `status == nullopt` — which is why `status` is now
+`std::optional<CollectionStatus>` (an empty pocket has no collection verdict, and it composes
+with `compareOptional` so blanks sink in the Status sort in both directions). `BinderView`'s
+`showEntryInPanel` / `activateRow` branches that used to be defensive dead code are now the
+real blank path.
+
+The insert/remove affordance is ONE contextual button in a **new row under the table** —
+"Insert blank", or "Remove blank" when the selected row is one. That placement follows the
+precedent of every other list screen (`OwnedCardsView`, `BindersPage`, `WishlistView` all put
+row actions below the table); the rule it settles for `BinderView` is **selection-scoped
+actions go under the table, binder-scoped ones (Add a card, Edit binder, Refresh prices) stay
+in the top bar**. It is disabled with an explaining tooltip when no grid is recorded or while
+a header sort is active (that tooltip doubles as the hint for how to get back to filed order).
+After a write the highlight returns to the ANCHOR row, not the blank — so pressing Insert
+twice widens the same gap, which is exactly how a page gets padded out. Removing works off the
+row the blank sits before (scan forward to the first row that anchors one), which is sound
+only because the action is gated to filed order.
+
+**A numeric field is a `QSpinBox`.** `BinderEditPage`'s capacity and rows×columns are the
+first numeric inputs in the app. A spinbox rather than `QLineEdit` + `QIntValidator`: it makes
+an invalid value unrepresentable (so `submit()` needs no parse branch), and
+`setSpecialValueText` at the minimum (0) maps storage's own 0-is-unset sentinel onto a visible
+"Not set" state — an empty line edit can't distinguish "not recorded" from "cleared". Do the
+same for any new numeric field. The two grid sides are deliberately NOT auto-linked; a
+half-set grid is caught by a message on submit (and by `BinderService`, the record of truth),
+because silently coercing a value the user typed is worse than telling them.
 
 **A card section re-reads on `showEvent`.** All three copy-backed sections —
 `OwnedCardsView`, `PokemonListView`, and `BinderView` (the binder guide) — override

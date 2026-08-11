@@ -113,7 +113,9 @@ struct GuideTest : ::testing::Test {
         std::vector<CollectionStatus> statuses;
         for (const CardBinderEntry& e : entries) {
             if (e.pokemon && e.pokemon->dexNumber == dex) {
-                statuses.push_back(e.status);
+                // A row naming a species always carries a status; only a blank pocket
+                // (which names no species, so never matches here) leaves it unset.
+                statuses.push_back(*e.status);
             }
         }
         return statuses;
@@ -469,6 +471,212 @@ TEST_F(GuideTest, RegionlessBinderWithOnlySpeciesFreeCopiesListsThem) {
     EXPECT_EQ(entries[0].status, CollectionStatus::Completed);
     EXPECT_EQ(entries[1].cardCopyId, "t2");
     EXPECT_EQ(entries[1].status, CollectionStatus::Incoming);
+}
+
+// --- blank pockets ----------------------------------------------------------------
+//
+// Blanks live on the binder value, so these drive them directly rather than through
+// storage — the guide is a pure function of (binder, copies, wishlist).
+
+namespace {
+
+constexpr int kChespin = 650;  // Kalos — the first species after Kanto's 151
+constexpr int kQuilladin = 651;
+
+bool isBlank(const CardBinderEntry& e) {
+    return !e.pokemon && !e.cardCopyId && !e.status;
+}
+
+int blankCount(const std::vector<CardBinderEntry>& entries) {
+    int n = 0;
+    for (const CardBinderEntry& e : entries) {
+        n += isBlank(e) ? 1 : 0;
+    }
+    return n;
+}
+
+// The row index of the first row naming `dex`, or -1.
+int indexOfSpecies(const std::vector<CardBinderEntry>& entries, PokemonDexNum dex) {
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        if (entries[i].pokemon && entries[i].pokemon->dexNumber == dex) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+}  // namespace
+
+TEST_F(GuideTest, BlankBeforeASpeciesEmitsAnEmptyRowAheadOfIt) {
+    CardBinder binder = makeBinder("b1", {Region::Kanto});
+    binders.add(binder);
+    binder.pocketBlanks = {{.beforeDexNum = kPikachu, .blanks = 1}};
+
+    const auto entries = guide.buildEntries(binder);
+    const int pikachuRow = indexOfSpecies(entries, kPikachu);
+    ASSERT_GT(pikachuRow, 0);
+    EXPECT_TRUE(isBlank(entries[static_cast<std::size_t>(pikachuRow) - 1]));
+    EXPECT_EQ(blankCount(entries), 1);
+}
+
+// A blank row stands for an empty pocket: it names no species, no card, and — unlike
+// every other row — reports no CollectionStatus at all.
+TEST_F(GuideTest, BlankRowCarriesNoSpeciesNoCopyAndNoStatus) {
+    CardBinder binder = makeBinder("b1", {});
+    binders.add(binder);
+    copies.add(makeCopy("c1", kPikachu, CardOwnership::Owned, "b1"));
+    binder.pocketBlanks = {{.beforeDexNum = kPikachu, .blanks = 1}};
+
+    const auto entries = guide.buildEntries(binder);
+    ASSERT_EQ(entries.size(), 2u);
+    EXPECT_FALSE(entries[0].pokemon.has_value());
+    EXPECT_FALSE(entries[0].cardCopyId.has_value());
+    EXPECT_FALSE(entries[0].status.has_value());
+}
+
+TEST_F(GuideTest, SeveralBlanksAtOneAnchorEmitThatManyRows) {
+    CardBinder binder = makeBinder("b1", {});
+    binders.add(binder);
+    copies.add(makeCopy("c1", kPikachu, CardOwnership::Owned, "b1"));
+    binder.pocketBlanks = {{.beforeDexNum = kPikachu, .blanks = 3}};
+
+    const auto entries = guide.buildEntries(binder);
+    ASSERT_EQ(entries.size(), 4u);
+    EXPECT_EQ(blankCount(entries), 3);
+    EXPECT_EQ(entries[3].cardCopyId, "c1");
+}
+
+// The page break has to be settable ahead of a species you don't own yet — that is
+// exactly how you reserve the next page for a region before collecting it.
+TEST_F(GuideTest, BlankBeforeAPlaceholderRowStillEmits) {
+    CardBinder binder = makeBinder("b1", {Region::Kanto});
+    binders.add(binder);
+    binder.pocketBlanks = {{.beforeDexNum = kMew, .blanks = 2}};
+
+    const auto entries = guide.buildEntries(binder);
+    const int mewRow = indexOfSpecies(entries, kMew);
+    ASSERT_GT(mewRow, 1);
+    EXPECT_TRUE(isBlank(entries[static_cast<std::size_t>(mewRow) - 1]));
+    EXPECT_TRUE(isBlank(entries[static_cast<std::size_t>(mewRow) - 2]));
+    // The placeholder itself is untouched.
+    EXPECT_FALSE(entries[static_cast<std::size_t>(mewRow)].cardCopyId.has_value());
+}
+
+// A species anchor names the species, so its blanks precede the whole block of copies
+// rather than landing between two of them.
+TEST_F(GuideTest, BlankAnchoredToASpeciesPrecedesEveryCopyRowOfIt) {
+    CardBinder binder = makeBinder("b1", {});
+    binders.add(binder);
+    copies.add(makeCopy("c1", kPikachu, CardOwnership::Owned, "b1", "2026-07-14T09:00:00Z"));
+    copies.add(makeCopy("c2", kPikachu, CardOwnership::Owned, "b1", "2026-07-14T10:00:00Z"));
+    binder.pocketBlanks = {{.beforeDexNum = kPikachu, .blanks = 1}};
+
+    const auto entries = guide.buildEntries(binder);
+    ASSERT_EQ(entries.size(), 3u);
+    EXPECT_TRUE(isBlank(entries[0]));
+    EXPECT_EQ(entries[1].cardCopyId, "c1");
+    EXPECT_EQ(entries[2].cardCopyId, "c2");
+}
+
+// A species-free card has no dex number to name it, so its blanks anchor to the copy.
+TEST_F(GuideTest, BlankAnchoredToASpeciesFreeCardPrecedesThatCardsRow) {
+    CardBinder binder = makeBinder("b1", {});
+    binders.add(binder);
+    copies.add(makeCopy("c1", kPikachu, CardOwnership::Owned, "b1", "2026-07-14T09:00:00Z"));
+    copies.add(makeCopy("t1", std::nullopt, CardOwnership::Owned, "b1", "2026-07-14T10:00:00Z"));
+    binder.pocketBlanks = {{.beforeCopyId = "t1", .blanks = 1}};
+
+    const auto entries = guide.buildEntries(binder);
+    ASSERT_EQ(entries.size(), 3u);
+    EXPECT_EQ(entries[0].cardCopyId, "c1");
+    EXPECT_TRUE(isBlank(entries[1]));
+    EXPECT_EQ(entries[2].cardCopyId, "t1");
+}
+
+// An orphan: the anchor species isn't listed here and holds no card, so there is no row
+// to sit before. The blank produces nothing — and, crucially, is not pruned, so
+// re-scoping the region brings the layout back.
+TEST_F(GuideTest, BlankWithAnUnlistedAnchorSpeciesEmitsNothing) {
+    CardBinder binder = makeBinder("b1", {Region::Kanto});
+    binders.add(binder);
+    binder.pocketBlanks = {{.beforeDexNum = kChespin, .blanks = 2}};
+
+    const auto entries = guide.buildEntries(binder);
+    EXPECT_EQ(blankCount(entries), 0);
+    EXPECT_EQ(indexOfSpecies(entries, kChespin), -1);
+}
+
+TEST_F(GuideTest, BlankAnchoredToAMissingCopyEmitsNothing) {
+    CardBinder binder = makeBinder("b1", {});
+    binders.add(binder);
+    copies.add(makeCopy("c1", kPikachu, CardOwnership::Owned, "b1"));
+    binder.pocketBlanks = {{.beforeCopyId = "deleted-copy", .blanks = 2}};
+
+    const auto entries = guide.buildEntries(binder);
+    ASSERT_EQ(entries.size(), 1u);
+    EXPECT_EQ(blankCount(entries), 0);
+}
+
+// A blank naming both anchors or neither, or counting no pockets, can't be placed —
+// dropped without disturbing the rest of the guide.
+TEST_F(GuideTest, UnplaceableBlanksAreIgnored) {
+    CardBinder binder = makeBinder("b1", {});
+    binders.add(binder);
+    copies.add(makeCopy("c1", kPikachu, CardOwnership::Owned, "b1"));
+    binder.pocketBlanks = {
+        {.beforeDexNum = kPikachu, .beforeCopyId = "c1", .blanks = 1},  // both
+        {.blanks = 1},                                                  // neither
+        {.beforeDexNum = kPikachu, .blanks = 0},                        // no pockets
+    };
+
+    const auto entries = guide.buildEntries(binder);
+    ASSERT_EQ(entries.size(), 1u);
+    EXPECT_EQ(entries[0].cardCopyId, "c1");
+}
+
+TEST_F(GuideTest, BlanksDoNotChangeTheRelativeOrderOfTheRealRows) {
+    CardBinder binder = makeBinder("b1", {Region::Kanto});
+    binders.add(binder);
+    const auto withoutBlanks = guide.buildEntries(binder);
+
+    binder.pocketBlanks = {{.beforeDexNum = kPikachu, .blanks = 2},
+                           {.beforeDexNum = kMew, .blanks = 1}};
+    const auto withBlanks = guide.buildEntries(binder);
+
+    std::vector<PokemonDexNum> before;
+    for (const CardBinderEntry& e : withoutBlanks) {
+        before.push_back(e.pokemon ? e.pokemon->dexNumber : 0);
+    }
+    std::vector<PokemonDexNum> after;
+    for (const CardBinderEntry& e : withBlanks) {
+        if (!isBlank(e)) {
+            after.push_back(e.pokemon ? e.pokemon->dexNumber : 0);
+        }
+    }
+    EXPECT_EQ(before, after);
+    EXPECT_EQ(withBlanks.size(), withoutBlanks.size() + 3);
+}
+
+// The motivating scenario, end to end. A Kanto+Kalos binder runs 1..151 then 650..;
+// with 9 pockets to a page Kanto ends 7 pockets into page 17, so Kalos starts mid-page
+// and Chespin's evolution line splits across two pages. Two blanks before Chespin push
+// it to the first pocket of the next page.
+TEST_F(GuideTest, TheKantoToKalosPageBreakScenario) {
+    CardBinder binder = makeBinder("b1", {Region::Kanto, Region::Kalos});
+    binders.add(binder);
+
+    const auto before = guide.buildEntries(binder);
+    const int chespinBefore = indexOfSpecies(before, kChespin);
+    ASSERT_EQ(chespinBefore, 151);       // 0-based: right after Kanto's 151 species
+    EXPECT_EQ(chespinBefore % 9, 7);     // the 8th pocket of its page — mid-page
+
+    binder.pocketBlanks = {{.beforeDexNum = kChespin, .blanks = 2}};
+    const auto after = guide.buildEntries(binder);
+    const int chespinAfter = indexOfSpecies(after, kChespin);
+    EXPECT_EQ(chespinAfter, chespinBefore + 2);  // shifted by exactly the two blanks
+    EXPECT_EQ(chespinAfter % 9, 0);              // now the FIRST pocket of a page
+    // And its evolution line follows it onto that same page.
+    EXPECT_EQ(indexOfSpecies(after, kQuilladin), chespinAfter + 1);
 }
 
 }  // namespace

@@ -151,15 +151,30 @@ TEST(DatabaseTest, UpgradesAnExistingV8SetCachePreservingPokemontcgRows) {
 // gains just that table, leaving its prior data intact.
 TEST(DatabaseTest, UpgradesAnExistingV9DatabaseByAddingPriceSuppression) {
     Database db(":memory:");
-    db.migrate();  // a fresh DB is already current (>= v10) — roll the stamp back to v9…
-    // …then drop the tables the v10 and v11 steps add so we exercise them in isolation,
-    // as if this were a pre-v10 file.
-    db.exec("DROP TABLE card_price_suppression;");
-    db.exec("DROP TABLE card_binder_region;");
+    // Stand up the one pre-existing table the v10..v13 tail touches — the v1-shaped
+    // card_binder (v11 backfills its region into a join table, v12 ALTERs it, v13
+    // references it) — then mark the file v9 so migrate() runs only that tail.
+    //
+    // Building the fixture BY HAND rather than migrating a fresh DB and rolling the stamp
+    // back is deliberate, and the general rule now that a step ALTERs a v1 table:
+    // migrate-then-replay is no longer safe. Re-running v12 over a table that already has
+    // the column fails with "duplicate column name", and an ADD COLUMN can't be undone
+    // without DROP COLUMN, whose availability varies with the system SQLite on either CI leg.
+    db.exec(
+        "CREATE TABLE card_binder(id TEXT PRIMARY KEY, name TEXT NOT NULL, region TEXT,"
+        " inserted_at TEXT NOT NULL, updated_at TEXT NOT NULL);");
+    db.exec(
+        "INSERT INTO card_binder(id,name,region,inserted_at,updated_at)"
+        " VALUES('b1','Kanto Journey','Kanto','2026-07-14T00:00:00Z','2026-07-14T00:00:00Z');");
     db.setUserVersion(9);
 
     db.migrate();
     EXPECT_EQ(db.userVersion(), Database::kSchemaVersion);
+
+    // The pre-existing binder survives the tail untouched.
+    Statement binder(db, "SELECT name FROM card_binder WHERE id = 'b1';");
+    ASSERT_TRUE(binder.step());
+    EXPECT_EQ(binder.columnText(0), "Kanto Journey");
 
     // The table exists with its (external_card_id, provenance) primary key: a row inserts,
     // a duplicate is rejected.
@@ -167,6 +182,59 @@ TEST(DatabaseTest, UpgradesAnExistingV9DatabaseByAddingPriceSuppression) {
                             " VALUES('sv3-125','tcgplayer');"));
     EXPECT_ANY_THROW(db.exec("INSERT INTO card_price_suppression(external_card_id,provenance)"
                              " VALUES('sv3-125','tcgplayer');"));
+}
+
+// v12/v13 give a binder its optional physical layout and its blank pockets. An existing
+// binder must survive the upgrade with its layout reading "unset" (the 0 sentinel) rather
+// than being handed a fabricated 3×3.
+TEST(DatabaseTest, UpgradesAnExistingV11DatabaseAddingLayoutColumnsAndBlanks) {
+    Database db(":memory:");
+    // The v11 shape by hand (see the note on kSchemaVersion): a v1 card_binder plus the
+    // region join table v11 added, holding one binder.
+    db.exec(
+        "CREATE TABLE card_binder(id TEXT PRIMARY KEY, name TEXT NOT NULL, region TEXT,"
+        " inserted_at TEXT NOT NULL, updated_at TEXT NOT NULL);");
+    db.exec(
+        "CREATE TABLE card_binder_region(binder_id TEXT NOT NULL"
+        " REFERENCES card_binder(id) ON DELETE CASCADE, region TEXT NOT NULL,"
+        " PRIMARY KEY (binder_id, region));");
+    db.exec(
+        "INSERT INTO card_binder(id,name,region,inserted_at,updated_at)"
+        " VALUES('b1','Kanto Journey',NULL,'2026-07-14T00:00:00Z','2026-07-14T00:00:00Z');");
+    db.exec("INSERT INTO card_binder_region(binder_id,region) VALUES('b1','Kanto');");
+    db.setUserVersion(11);
+
+    db.migrate();
+    EXPECT_EQ(db.userVersion(), Database::kSchemaVersion);
+
+    // The existing binder keeps its name and region, and its layout backfills to 0 = unset.
+    Statement layout(db,
+                     "SELECT name, capacity, pocket_rows, pocket_columns"
+                     " FROM card_binder WHERE id = 'b1';");
+    ASSERT_TRUE(layout.step());
+    EXPECT_EQ(layout.columnText(0), "Kanto Journey");
+    EXPECT_EQ(layout.columnInt(1), 0);
+    EXPECT_EQ(layout.columnInt(2), 0);
+    EXPECT_EQ(layout.columnInt(3), 0);
+
+    // card_binder_blank exists with its three-part primary key: one run per anchor, so a
+    // second row for the same anchor is rejected rather than silently doubling the gap.
+    EXPECT_NO_THROW(
+        db.exec("INSERT INTO card_binder_blank(binder_id,before_dex_num,before_copy_id,blanks)"
+                " VALUES('b1',650,'',2);"));
+    EXPECT_ANY_THROW(
+        db.exec("INSERT INTO card_binder_blank(binder_id,before_dex_num,before_copy_id,blanks)"
+                " VALUES('b1',650,'',1);"));
+    // A different anchor in the same binder is a distinct run.
+    EXPECT_NO_THROW(
+        db.exec("INSERT INTO card_binder_blank(binder_id,before_dex_num,before_copy_id,blanks)"
+                " VALUES('b1',0,'copy-7',1);"));
+
+    // Removing the binder cascades its blank rows away, as it does its region rows.
+    db.exec("DELETE FROM card_binder WHERE id = 'b1';");
+    Statement orphans(db, "SELECT COUNT(*) FROM card_binder_blank;");
+    ASSERT_TRUE(orphans.step());
+    EXPECT_EQ(orphans.columnInt(0), 0);
 }
 
 // Exercising the tables through DML proves they exist with the expected columns

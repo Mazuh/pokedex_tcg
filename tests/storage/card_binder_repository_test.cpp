@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <optional>
 #include <vector>
 
 #include "core/domain/card_binder.h"
@@ -13,6 +14,8 @@
 namespace {
 
 using pokedex::CardBinder;
+using pokedex::CardBinderBlank;
+using pokedex::CardBinderPocketGrid;
 using pokedex::CardBinderRepository;
 using pokedex::Database;
 using pokedex::Region;
@@ -98,8 +101,9 @@ TEST(CardBinderRepositoryTest, UpdateThrowsForMissingId) {
     Database db(":memory:");
     db.migrate();
     CardBinderRepository repo(db);
-    EXPECT_THROW(repo.update("ghost", "New", {}, at("2026-07-15T12:00:00Z")),
-                 pokedex::StorageError);
+    EXPECT_THROW(
+        repo.update("ghost", "New", {}, std::nullopt, std::nullopt, at("2026-07-15T12:00:00Z")),
+        pokedex::StorageError);
 }
 
 TEST(CardBinderRepositoryTest, UpdateChangesNameRegionsAndStamp) {
@@ -108,7 +112,7 @@ TEST(CardBinderRepositoryTest, UpdateChangesNameRegionsAndStamp) {
     CardBinderRepository repo(db);
     repo.add(makeBinder("b1", "Old Name", {}, "2026-07-14T09:00:00Z"));
 
-    repo.update("b1", "New Name", {Region::Kanto, Region::Johto},
+    repo.update("b1", "New Name", {Region::Kanto, Region::Johto}, std::nullopt, std::nullopt,
                 at("2026-07-15T12:00:00Z"));
 
     auto binders = repo.listAll();
@@ -120,14 +124,269 @@ TEST(CardBinderRepositoryTest, UpdateChangesNameRegionsAndStamp) {
     EXPECT_EQ(binders[0].insertedAt, at("2026-07-14T09:00:00Z"));  // untouched
 
     // A second update replaces the whole set — here, down to a single region.
-    repo.update("b1", "New Name", {Region::Hoenn}, at("2026-07-16T12:00:00Z"));
+    repo.update("b1", "New Name", {Region::Hoenn}, std::nullopt, std::nullopt,
+                at("2026-07-16T12:00:00Z"));
     binders = repo.listAll();
     EXPECT_EQ(binders[0].pokemonRegions, (std::vector<Region>{Region::Hoenn}));
 
     // And it can be cleared back to none.
-    repo.update("b1", "New Name", {}, at("2026-07-17T12:00:00Z"));
+    repo.update("b1", "New Name", {}, std::nullopt, std::nullopt, at("2026-07-17T12:00:00Z"));
     binders = repo.listAll();
     EXPECT_TRUE(binders[0].pokemonRegions.empty());
+}
+
+// The album's physical layout round-trips through add/listAll. A binder that records
+// neither reads back as unset, not as some invented default.
+TEST(CardBinderRepositoryTest, AddThenListRoundTripsCapacityAndPocketGrid) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+
+    CardBinder measured = makeBinder("b1", "Kanto Journey", {}, "2026-07-14T09:00:00Z");
+    measured.capacity = 360;
+    measured.pocketGrid = CardBinderPocketGrid{.rows = 3, .columns = 3};
+    repo.add(measured);
+    repo.add(makeBinder("b2", "Unmeasured", {}, "2026-07-14T10:00:00Z"));
+
+    const auto binders = repo.listAll();
+    ASSERT_EQ(binders.size(), 2u);
+    EXPECT_EQ(binders[0].capacity, 360);
+    ASSERT_TRUE(binders[0].pocketGrid.has_value());
+    EXPECT_EQ(binders[0].pocketGrid->rows, 3);
+    EXPECT_EQ(binders[0].pocketGrid->columns, 3);
+    EXPECT_FALSE(binders[1].capacity.has_value());
+    EXPECT_FALSE(binders[1].pocketGrid.has_value());
+}
+
+// 0 is the storage sentinel for "unset" (see the v12 migration), which is also what
+// every binder that predates the columns holds.
+TEST(CardBinderRepositoryTest, ListDecodesZeroLayoutColumnsAsUnset) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    db.exec(
+        "INSERT INTO card_binder(id,name,region,capacity,pocket_rows,pocket_columns,"
+        "inserted_at,updated_at)"
+        " VALUES('b1','Legacy',NULL,0,0,0,'2026-07-14T09:00:00Z','2026-07-14T09:00:00Z');");
+
+    const auto binders = repo.listAll();
+    ASSERT_EQ(binders.size(), 1u);
+    EXPECT_FALSE(binders[0].capacity.has_value());
+    EXPECT_FALSE(binders[0].pocketGrid.has_value());
+}
+
+// A grid needs both sides to mean anything; half of one describes no album and would
+// divide by zero downstream, so it decodes as unset rather than as a 3×0 grid.
+TEST(CardBinderRepositoryTest, ListDecodesAHalfSetGridAsUnset) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    db.exec(
+        "INSERT INTO card_binder(id,name,region,capacity,pocket_rows,pocket_columns,"
+        "inserted_at,updated_at)"
+        " VALUES('b1','Half',NULL,0,3,0,'2026-07-14T09:00:00Z','2026-07-14T09:00:00Z');");
+
+    const auto binders = repo.listAll();
+    ASSERT_EQ(binders.size(), 1u);
+    EXPECT_FALSE(binders[0].pocketGrid.has_value());
+}
+
+TEST(CardBinderRepositoryTest, UpdateChangesTheLayoutAndCanClearIt) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    repo.add(makeBinder("b1", "Kanto Journey", {}, "2026-07-14T09:00:00Z"));
+
+    repo.update("b1", "Kanto Journey", {}, 360, CardBinderPocketGrid{.rows = 3, .columns = 3},
+                at("2026-07-15T12:00:00Z"));
+    auto binders = repo.listAll();
+    ASSERT_EQ(binders.size(), 1u);
+    EXPECT_EQ(binders[0].capacity, 360);
+    ASSERT_TRUE(binders[0].pocketGrid.has_value());
+    EXPECT_EQ(pocketsPerPage(*binders[0].pocketGrid), 9);
+
+    repo.update("b1", "Kanto Journey", {}, std::nullopt, std::nullopt,
+                at("2026-07-16T12:00:00Z"));
+    binders = repo.listAll();
+    EXPECT_FALSE(binders[0].capacity.has_value());
+    EXPECT_FALSE(binders[0].pocketGrid.has_value());
+}
+
+TEST(CardBinderRepositoryTest, FindReturnsTheBinderWithItsRegionsAndBlanks) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    repo.add(makeBinder("b1", "Kanto+Kalos", {Region::Kalos, Region::Kanto},
+                        "2026-07-14T09:00:00Z"));
+    repo.add(makeBinder("b2", "Other", {}, "2026-07-14T10:00:00Z"));
+    repo.addBlanks("b1", CardBinderBlank{.beforeDexNum = 650, .blanks = 2});
+    repo.addBlanks("b2", CardBinderBlank{.beforeDexNum = 1, .blanks = 5});
+
+    const auto found = repo.find("b1");
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(found->name, "Kanto+Kalos");
+    EXPECT_EQ(found->pokemonRegions, (std::vector<Region>{Region::Kanto, Region::Kalos}));
+    // Scoped to this binder: b2's blank must not leak in.
+    ASSERT_EQ(found->pocketBlanks.size(), 1u);
+    EXPECT_EQ(found->pocketBlanks[0].beforeDexNum, 650);
+    EXPECT_EQ(found->pocketBlanks[0].blanks, 2);
+}
+
+TEST(CardBinderRepositoryTest, FindReturnsNulloptForAMissingId) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    EXPECT_FALSE(repo.find("ghost").has_value());
+}
+
+// Inserting twice at one anchor widens the gap rather than failing on the primary key
+// — pressing "Insert blank" twice is how the user pads out a page.
+TEST(CardBinderRepositoryTest, AddBlanksAccumulatesAtTheSameAnchor) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    repo.add(makeBinder("b1", "Kanto+Kalos", {}, "2026-07-14T09:00:00Z"));
+
+    repo.addBlanks("b1", CardBinderBlank{.beforeDexNum = 650, .blanks = 1});
+    repo.addBlanks("b1", CardBinderBlank{.beforeDexNum = 650, .blanks = 1});
+
+    const auto found = repo.find("b1");
+    ASSERT_TRUE(found.has_value());
+    ASSERT_EQ(found->pocketBlanks.size(), 1u);
+    EXPECT_EQ(found->pocketBlanks[0].blanks, 2);
+}
+
+TEST(CardBinderRepositoryTest, BlanksAnchorToEitherASpeciesOrAnExactCard) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    repo.add(makeBinder("b1", "Mixed", {}, "2026-07-14T09:00:00Z"));
+
+    repo.addBlanks("b1", CardBinderBlank{.beforeDexNum = 650, .blanks = 2});
+    repo.addBlanks("b1", CardBinderBlank{.beforeCopyId = "copy-7", .blanks = 1});
+
+    const auto found = repo.find("b1");
+    ASSERT_TRUE(found.has_value());
+    ASSERT_EQ(found->pocketBlanks.size(), 2u);
+    // Ordered by anchor: the copy-anchored row (dex 0) sorts before the species one.
+    EXPECT_EQ(found->pocketBlanks[0].beforeCopyId, "copy-7");
+    EXPECT_FALSE(found->pocketBlanks[0].beforeDexNum.has_value());
+    EXPECT_EQ(found->pocketBlanks[1].beforeDexNum, 650);
+    EXPECT_FALSE(found->pocketBlanks[1].beforeCopyId.has_value());
+}
+
+TEST(CardBinderRepositoryTest, RemoveBlanksDecrementsThenDropsTheAnchor) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    repo.add(makeBinder("b1", "Kanto+Kalos", {}, "2026-07-14T09:00:00Z"));
+    repo.addBlanks("b1", CardBinderBlank{.beforeDexNum = 650, .blanks = 2});
+
+    repo.removeBlanks("b1", CardBinderBlank{.beforeDexNum = 650, .blanks = 1});
+    auto found = repo.find("b1");
+    ASSERT_TRUE(found.has_value());
+    ASSERT_EQ(found->pocketBlanks.size(), 1u);
+    EXPECT_EQ(found->pocketBlanks[0].blanks, 1);
+
+    // The last one takes the row with it, rather than leaving a zero the reader skips.
+    repo.removeBlanks("b1", CardBinderBlank{.beforeDexNum = 650, .blanks = 1});
+    found = repo.find("b1");
+    ASSERT_TRUE(found.has_value());
+    EXPECT_TRUE(found->pocketBlanks.empty());
+    Statement rows(db, "SELECT COUNT(*) FROM card_binder_blank;");
+    ASSERT_TRUE(rows.step());
+    EXPECT_EQ(rows.columnInt(0), 0);
+}
+
+TEST(CardBinderRepositoryTest, RemoveBlanksIsANoOpAtAnAnchorHoldingNone) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    repo.add(makeBinder("b1", "Kanto+Kalos", {}, "2026-07-14T09:00:00Z"));
+
+    EXPECT_NO_THROW(repo.removeBlanks("b1", CardBinderBlank{.beforeDexNum = 650, .blanks = 1}));
+    const auto found = repo.find("b1");
+    ASSERT_TRUE(found.has_value());
+    EXPECT_TRUE(found->pocketBlanks.empty());
+}
+
+// A blank that names both anchors, or neither, could never be placed in the guide —
+// reject it on write rather than storing a row the reader will silently drop.
+TEST(CardBinderRepositoryTest, BlankVerbsRejectAnUnplaceableAnchor) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    repo.add(makeBinder("b1", "Kanto+Kalos", {}, "2026-07-14T09:00:00Z"));
+
+    EXPECT_THROW(repo.addBlanks("b1", CardBinderBlank{.blanks = 1}), pokedex::StorageError);
+    EXPECT_THROW(
+        repo.addBlanks("b1", CardBinderBlank{.beforeDexNum = 650, .beforeCopyId = "c", .blanks = 1}),
+        pokedex::StorageError);
+    EXPECT_THROW(repo.addBlanks("b1", CardBinderBlank{.beforeDexNum = 650, .blanks = 0}),
+                 pokedex::StorageError);
+}
+
+// Mirrors ListToleratesUnknownRegionToken: a hand-edited row that names both anchors,
+// neither, or no pockets is dropped without taking the binder down with it.
+TEST(CardBinderRepositoryTest, ListSkipsUnplaceableBlankRows) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    repo.add(makeBinder("b1", "Mystery", {}, "2026-07-14T09:00:00Z"));
+    db.exec(
+        "INSERT INTO card_binder_blank(binder_id,before_dex_num,before_copy_id,blanks)"
+        " VALUES('b1',650,'copy-1',2);");  // both anchors
+    db.exec(
+        "INSERT INTO card_binder_blank(binder_id,before_dex_num,before_copy_id,blanks)"
+        " VALUES('b1',0,'',2);");  // neither anchor
+    db.exec(
+        "INSERT INTO card_binder_blank(binder_id,before_dex_num,before_copy_id,blanks)"
+        " VALUES('b1',151,'',0);");  // no pockets
+    db.exec(
+        "INSERT INTO card_binder_blank(binder_id,before_dex_num,before_copy_id,blanks)"
+        " VALUES('b1',650,'',2);");  // the one good row
+
+    std::vector<CardBinder> binders;
+    ASSERT_NO_THROW(binders = repo.listAll());
+    ASSERT_EQ(binders.size(), 1u);
+    ASSERT_EQ(binders[0].pocketBlanks.size(), 1u);
+    EXPECT_EQ(binders[0].pocketBlanks[0].beforeDexNum, 650);
+}
+
+// The load-bearing guard: update() is the name/regions/layout form's write path and
+// must leave the blank set alone. If it ever took a whole CardBinder and rewrote the
+// blanks, a save from a stale in-memory binder would wipe blanks added since it was read.
+TEST(CardBinderRepositoryTest, UpdateLeavesTheBlankSetUntouched) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    repo.add(makeBinder("b1", "Kanto+Kalos", {Region::Kanto}, "2026-07-14T09:00:00Z"));
+    repo.addBlanks("b1", CardBinderBlank{.beforeDexNum = 650, .blanks = 2});
+
+    repo.update("b1", "Renamed", {Region::Kanto, Region::Kalos}, 360,
+                CardBinderPocketGrid{.rows = 3, .columns = 3}, at("2026-07-15T12:00:00Z"));
+
+    const auto found = repo.find("b1");
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(found->name, "Renamed");
+    ASSERT_EQ(found->pocketBlanks.size(), 1u);
+    EXPECT_EQ(found->pocketBlanks[0].beforeDexNum, 650);
+    EXPECT_EQ(found->pocketBlanks[0].blanks, 2);
+}
+
+// Blanks round-trip through add() too, so a whole CardBinder value survives a write.
+TEST(CardBinderRepositoryTest, AddWritesTheBlankSetItIsGiven) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    CardBinder binder = makeBinder("b1", "Restored", {}, "2026-07-14T09:00:00Z");
+    binder.pocketBlanks = {CardBinderBlank{.beforeDexNum = 650, .blanks = 2}};
+    repo.add(binder);
+
+    const auto found = repo.find("b1");
+    ASSERT_TRUE(found.has_value());
+    ASSERT_EQ(found->pocketBlanks.size(), 1u);
+    EXPECT_EQ(found->pocketBlanks[0].blanks, 2);
 }
 
 TEST(CardBinderRepositoryTest, RemoveDeletesTheRow) {
@@ -153,6 +412,22 @@ TEST(CardBinderRepositoryTest, RemoveCascadesRegionRows) {
     repo.remove("b1");
 
     Statement stmt(db, "SELECT COUNT(*) FROM card_binder_region;");
+    ASSERT_TRUE(stmt.step());
+    EXPECT_EQ(stmt.columnInt(0), 0);
+}
+
+// Same for its blank rows — card_binder_blank has ON DELETE CASCADE too, so a re-used
+// id can't inherit a stranger's page breaks.
+TEST(CardBinderRepositoryTest, RemoveCascadesBlankRows) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    repo.add(makeBinder("b1", "Kanto+Kalos", {}, "2026-07-14T09:00:00Z"));
+    repo.addBlanks("b1", CardBinderBlank{.beforeDexNum = 650, .blanks = 2});
+
+    repo.remove("b1");
+
+    Statement stmt(db, "SELECT COUNT(*) FROM card_binder_blank;");
     ASSERT_TRUE(stmt.step());
     EXPECT_EQ(stmt.columnInt(0), 0);
 }

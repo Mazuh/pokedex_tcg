@@ -202,6 +202,52 @@ INSERT INTO card_binder_region(binder_id, region)
   SELECT id, region FROM card_binder WHERE region IS NOT NULL AND region <> '';
 )sql";
 
+// v11 → v12: a binder's optional PHYSICAL LAYOUT — how many cards the album holds
+// (capacity) and the shape of one page (pocket_rows × pocket_columns), which is what
+// lets the guide say a card sits on page 18, pocket 1×3. All three use the 0 = unset
+// sentinel (the same convention as pokemon_dex_num's 0 and condition's ""), so every
+// existing binder backfills to "unset" — DEFAULT 0 *is* the backfill — with no
+// nullable-column table rebuild.
+//
+// Capacity is stored INDEPENDENTLY of the grid, not derived as pages × pocketsPerPage:
+// it is a fact about the album ("a 360-card binder") and the page count isn't recorded.
+// It is never enforced — a stuffed binder is a real thing, so the guide displays how
+// full it is and never blocks a card.
+constexpr char kMigrationV12[] = R"sql(
+ALTER TABLE card_binder ADD COLUMN capacity       INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE card_binder ADD COLUMN pocket_rows    INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE card_binder ADD COLUMN pocket_columns INTEGER NOT NULL DEFAULT 0;
+)sql";
+
+// v12 → v13: deliberate EMPTY POCKETS — per binder, "leave N pockets blank immediately
+// before this row". This is the region-agnostic way a user controls where a page breaks:
+// species run contiguously by dex number, so Kanto ends mid-page and Kalos's first
+// evolution line gets split across two pages; two blanks before Chespin start Kalos at
+// pocket 1×1 instead. Collectors break pages by different rules, so the app stores where
+// they chose to leave gaps rather than guessing at one.
+//
+// Mirrors card_binder_region: a multivalued child of the binder, ON DELETE CASCADE. The
+// anchor is EITHER a species (before_dex_num — durable, it survives the card being deleted
+// and re-added, and works on a species not owned yet) OR one exact filed card
+// (before_copy_id, for a species-free card with no dex number to name it); the unused half
+// holds the 0 / '' unset sentinel and both are in the primary key, so a binder keeps one
+// blank RUN per anchor.
+//
+// `blanks` is a COUNT rather than one row per pocket: blanks at one anchor are
+// indistinguishable, so a row-per-pocket table would need a synthetic ordinal in the key
+// purely to permit duplicates. before_copy_id carries NO foreign key — '' is a legal value
+// here and would violate one — so a hard-deleted anchor copy leaves an inert row that the
+// guide simply never emits.
+constexpr char kMigrationV13[] = R"sql(
+CREATE TABLE card_binder_blank (
+  binder_id       TEXT    NOT NULL REFERENCES card_binder(id) ON DELETE CASCADE,
+  before_dex_num  INTEGER NOT NULL DEFAULT 0,
+  before_copy_id  TEXT    NOT NULL DEFAULT '',
+  blanks          INTEGER NOT NULL,
+  PRIMARY KEY (binder_id, before_dex_num, before_copy_id)
+);
+)sql";
+
 }  // namespace
 
 Database::Database(const std::filesystem::path& path) {
@@ -316,6 +362,12 @@ void Database::migrate() {
         }
         if (from < 11) {
             exec(kMigrationV11);
+        }
+        if (from < 12) {
+            exec(kMigrationV12);
+        }
+        if (from < 13) {
+            exec(kMigrationV13);
         }
         setUserVersion(kSchemaVersion);
     });

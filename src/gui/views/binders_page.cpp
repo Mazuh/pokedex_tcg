@@ -22,6 +22,7 @@
 #include "core/domain/card_binder.h"
 #include "gui/views/backable_page_host.h"
 #include "gui/views/binder_edit_page.h"
+#include "gui/views/binder_layout_labels.h"
 #include "gui/views/binder_view.h"
 #include "gui/views/datetime_label.h"
 #include "gui/views/region_labels.h"
@@ -58,17 +59,24 @@ BindersPage::BindersPage(BinderService& service, BinderGuideService& guide,
     // A read-only two-column table: binder name (stretches) and region. Whole-row
     // single selection, no editing, no vertical header.
     table_ = new QTableWidget(listPage);
-    table_->setColumnCount(4);
-    table_->setHorizontalHeaderLabels({tr("Binder"), tr("Region"), tr("Added"), tr("Updated")});
+    table_->setColumnCount(6);
+    table_->setHorizontalHeaderLabels({tr("Binder"), tr("Region"), tr("Capacity"), tr("Pockets"),
+                                       tr("Added"), tr("Updated")});
     table_->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
     table_->verticalHeader()->setVisible(false);
     table_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-    table_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    table_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    table_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+    for (int col = 1; col < table_->columnCount(); ++col) {
+        table_->horizontalHeader()->setSectionResizeMode(col, QHeaderView::ResizeToContents);
+    }
+    // The two layout columns are optional per binder, so say what an em-dash means.
+    table_->horizontalHeaderItem(2)->setToolTip(
+        tr("How many cards the album holds, when recorded. Set it in the binder's edit "
+           "screen."));
+    table_->horizontalHeaderItem(3)->setToolTip(
+        tr("The pocket grid of one page, rows×columns — what the binder guide pages by."));
     // Cell padding so content clears the edges and the overlay scrollbar.
     table_->setStyleSheet("QTableView::item { padding-left: 8px; padding-right: 16px; }");
 
@@ -157,8 +165,13 @@ void BindersPage::repopulate() {
         // A region-less binder passes an empty string; cell() renders it as
         // an em-dash. A multi-region binder shows a comma-joined list.
         table_->setItem(i, 1, cell(regionsLabel(binder.pokemonRegions)));
-        table_->setItem(i, 2, cell(dateTimeLabel(binder.insertedAt)));
-        table_->setItem(i, 3, cell(dateTimeLabel(binder.updatedAt)));
+        // Both optional: an unmeasured binder shows cell()'s em-dash, which reads
+        // correctly here as "this record doesn't say".
+        table_->setItem(i, 2,
+                        cell(binder.capacity ? QString::number(*binder.capacity) : QString()));
+        table_->setItem(i, 3, cell(pocketGridLabel(binder.pocketGrid)));
+        table_->setItem(i, 4, cell(dateTimeLabel(binder.insertedAt)));
+        table_->setItem(i, 5, cell(dateTimeLabel(binder.updatedAt)));
     }
     // Restore the selection at its new row (a no-op if it was removed).
     if (!previouslySelected.empty()) {
@@ -179,24 +192,41 @@ void BindersPage::sortBinders() {
     struct Key {
         QString name;
         QString region;
+        // Optional so an unmeasured binder sinks to the bottom in BOTH directions
+        // (compareOptional) — "not recorded" is not a low value.
+        std::optional<int> capacity;
+        std::optional<int> pocketsPerPage;
         Timestamp insertedAt;
         Timestamp updatedAt;
     };
+    const bool ascending = sortOrder_ == Qt::AscendingOrder;
     sortByKeys(
         binders_, sortColumn_, sortOrder_,
         [](const CardBinder& b) {
-            return Key{QString::fromStdString(b.name), regionsLabel(b.pokemonRegions),
-                       b.insertedAt, b.updatedAt};
+            // Sort the grid by how many cards a page holds, so 3×3 orders below 4×3
+            // rather than by the string, where "10×2" would land beside "1×2".
+            return Key{QString::fromStdString(b.name),
+                       regionsLabel(b.pokemonRegions),
+                       b.capacity,
+                       b.pocketGrid ? std::optional<int>(pocketsPerPage(*b.pocketGrid))
+                                    : std::nullopt,
+                       b.insertedAt,
+                       b.updatedAt};
         },
-        [](const Key& a, const Key& b, int column) -> int {
+        [ascending](const Key& a, const Key& b, int column) -> int {
+            const auto rank = [](int x, int y) { return compareValues(x, y); };
             switch (column) {
                 case 0:
                     return a.name.localeAwareCompare(b.name);
                 case 1:
                     return a.region.localeAwareCompare(b.region);
                 case 2:
-                    return compareValues(a.insertedAt, b.insertedAt);
+                    return compareOptional(a.capacity, b.capacity, ascending, rank);
                 case 3:
+                    return compareOptional(a.pocketsPerPage, b.pocketsPerPage, ascending, rank);
+                case 4:
+                    return compareValues(a.insertedAt, b.insertedAt);
+                case 5:
                     return compareValues(a.updatedAt, b.updatedAt);
             }
             return 0;

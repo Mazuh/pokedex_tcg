@@ -9,9 +9,9 @@ using pokedex::CollectionStatus;
 using pokedex::Pokemon;
 using pokedex::Region;
 
-// A binder guide row is one of exactly three shapes (see CardBinderEntry): a
-// species placeholder, a copy of a species, or a species-free card. Pin all three
-// so the projection can't quietly lose one.
+// A binder guide row is one of exactly four shapes (see CardBinderEntry): a
+// species placeholder, a copy of a species, a species-free card, or a deliberate
+// blank pocket. Pin all four so the projection can't quietly lose one.
 TEST(DomainModelTest, BinderEntryPlaceholderRowPairsPokemonWithStatus) {
     CardBinderEntry entry{
         .pokemon = Pokemon{.dexNumber = 3, .name = "Venusaur", .region = Region::Kanto},
@@ -44,6 +44,16 @@ TEST(DomainModelTest, BinderEntrySpeciesFreeRowCarriesOnlyTheCopy) {
     EXPECT_FALSE(entry.pokemon.has_value());  // a Trainer/Energy card depicts none
     EXPECT_EQ(entry.cardCopyId, "copy-2");
     EXPECT_EQ(entry.status, CollectionStatus::Completed);
+}
+
+// The fourth shape: a pocket the user deliberately left empty to push what follows
+// onto a fresh page. It stands for neither a species nor a card, so there is
+// nothing for it to report a CollectionStatus about.
+TEST(DomainModelTest, BinderEntryBlankRowNamesNeitherSpeciesNorCopyNorStatus) {
+    CardBinderEntry entry{};
+    EXPECT_FALSE(entry.pokemon.has_value());
+    EXPECT_FALSE(entry.cardCopyId.has_value());
+    EXPECT_FALSE(entry.status.has_value());
 }
 
 // The enum is declared in first-match-wins precedence order; the app relies on

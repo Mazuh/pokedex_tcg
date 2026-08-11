@@ -40,7 +40,18 @@ public:
     //        caches its set table beside pokemontcg's; old rows re-tagged 'pokemontcg'.
     //   v10 — card_price_suppression (external_card_id, provenance): a per-card, per-vendor
     //        "hide this vendor's price" that survives a Refresh and is dropped only by Clear.
-    static constexpr int kSchemaVersion = 11;
+    //   v11 — card_binder_region (binder_id, region): a binder's region scope becomes
+    //        MULTIVALUED (a "Kanto + Kalos" album). The v1 card_binder.region column is left
+    //        vestigial, its value backfilled into the join table.
+    //   v12 — card_binder.capacity / pocket_rows / pocket_columns: the album's optional
+    //        physical layout, 0 = unset. Capacity is stored, not derived from the grid.
+    //   v13 — card_binder_blank (binder_id, before_dex_num, before_copy_id): deliberate empty
+    //        pockets, the user-driven page-break mechanism. `blanks` is a count per anchor.
+    //
+    // NOTE: from v12 on, a step ALTERs a v1 table, so "migrate a fresh DB, then roll the
+    // stamp back and re-migrate" is no longer a safe way to exercise a step in a test — the
+    // replayed ADD COLUMN fails as a duplicate. Stand the older shape up by hand instead.
+    static constexpr int kSchemaVersion = 13;
 
     // Open (creating if absent) the database at `path`, or an in-memory database
     // when path == ":memory:". Throws StorageError on failure.

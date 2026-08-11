@@ -9,6 +9,7 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -53,7 +54,9 @@ void BinderEditPage::build(const std::optional<CardBinder>& existing) {
     topBar->addStretch();
 
     auto* subtitle = new QLabel(
-        tr("Name your binder, and optionally scope it to one or more regions."), this);
+        tr("Name your binder, optionally scope it to one or more regions, and record the "
+           "album's size if you know it."),
+        this);
     subtitle->setEnabled(false);  // muted: a hint, not content
 
     nameEdit_ = new QLineEdit(this);
@@ -75,6 +78,47 @@ void BinderEditPage::build(const std::optional<CardBinder>& existing) {
                                static_cast<int>(i) % kColumns);
     }
 
+    // The album's physical size, both parts optional. A spinbox at its minimum (0) shows
+    // "Not set" via setSpecialValueText, which maps the storage layer's 0-is-unset
+    // sentinel onto a visible UI state — an empty line edit couldn't distinguish "not
+    // recorded" from "cleared", and would need parsing on submit.
+    capacityEdit_ = new QSpinBox(this);
+    capacityEdit_->setRange(0, 100000);
+    capacityEdit_->setSpecialValueText(tr("Not set"));
+    capacityEdit_->setSuffix(tr(" cards"));  // superseded by the special text at 0
+    capacityEdit_->setAccelerated(true);
+    capacityEdit_->setMaximumWidth(180);
+    capacityEdit_->setToolTip(
+        tr("How many cards the whole album holds. Shown against the count filed here, so "
+           "you can see how full it is; going over is never blocked."));
+
+    pocketRowsEdit_ = new QSpinBox(this);
+    pocketColumnsEdit_ = new QSpinBox(this);
+    for (QSpinBox* box : {pocketRowsEdit_, pocketColumnsEdit_}) {
+        box->setRange(0, 20);
+        box->setSpecialValueText(tr("—"));
+        box->setMaximumWidth(90);
+    }
+    pocketRowsEdit_->setToolTip(tr("Pocket rows on one page — 3 for a typical 3×3 album."));
+    pocketColumnsEdit_->setToolTip(tr("Pockets across one page — 3 for a typical 3×3 album."));
+    pocketHint_ = new QLabel(this);
+    pocketHint_->setEnabled(false);  // muted: a derived figure, not an input
+
+    // [rows] × [columns]   · 9 pockets per page
+    auto* gridBox = new QWidget(this);
+    auto* gridRow = new QHBoxLayout(gridBox);
+    gridRow->setContentsMargins(0, 0, 0, 0);
+    gridRow->addWidget(pocketRowsEdit_);
+    gridRow->addWidget(new QLabel(QStringLiteral("×"), gridBox));
+    gridRow->addWidget(pocketColumnsEdit_);
+    gridRow->addWidget(pocketHint_);
+    gridRow->addStretch();
+    // The two sides are deliberately NOT linked (setting rows to 3 does not set columns):
+    // silently coercing a value the user typed is worse than the submit-time message.
+    for (QSpinBox* box : {pocketRowsEdit_, pocketColumnsEdit_}) {
+        connect(box, &QSpinBox::valueChanged, this, &BinderEditPage::updatePocketHint);
+    }
+
     if (editing) {
         nameEdit_->setText(QString::fromStdString(existing->name));
         for (std::size_t i = 0; i < kRegions.size(); ++i) {
@@ -83,7 +127,13 @@ void BinderEditPage::build(const std::optional<CardBinder>& existing) {
                                           kRegions[i]) != existing->pokemonRegions.end();
             regionChecks_[i]->setChecked(scoped);
         }
+        capacityEdit_->setValue(existing->capacity.value_or(0));
+        if (existing->pocketGrid) {
+            pocketRowsEdit_->setValue(existing->pocketGrid->rows);
+            pocketColumnsEdit_->setValue(existing->pocketGrid->columns);
+        }
     }
+    updatePocketHint();
 
     auto* form = new QFormLayout;
     // macOS's style centers a QFormLayout by default; on this full-width page that
@@ -93,6 +143,8 @@ void BinderEditPage::build(const std::optional<CardBinder>& existing) {
     form->setLabelAlignment(Qt::AlignLeft | Qt::AlignTop);
     form->addRow(tr("Name"), nameEdit_);
     form->addRow(tr("Regions"), regionsBox);
+    form->addRow(tr("Capacity"), capacityEdit_);
+    form->addRow(tr("Pocket grid"), gridBox);
 
     auto* submitButton =
         new QPushButton(editing ? tr("Save changes") : tr("Create binder"), this);
@@ -132,12 +184,28 @@ void BinderEditPage::submit() {
         }
     }
 
+    // A grid needs both sides to describe a page. Guard it here for an immediate,
+    // in-page message; the service enforces the same rule as the record of truth.
+    const bool halfGrid =
+        (pocketRowsEdit_->value() > 0) != (pocketColumnsEdit_->value() > 0);
+    if (halfGrid) {
+        QMessageBox::warning(
+            this, tr("Binder"),
+            tr("Enter both the rows and the columns of the pocket grid, or leave both unset."));
+        return;
+    }
+
+    const std::optional<int> capacity =
+        capacityEdit_->value() > 0 ? std::optional<int>(capacityEdit_->value()) : std::nullopt;
+
+    CardBinder persisted;
     try {
         if (editingId_.empty()) {
-            service_.create(name.toStdString(), regions);
+            persisted = service_.create(name.toStdString(), regions, capacity, enteredGrid());
             showToast(this, tr("Binder “%1” created.").arg(name));
         } else {
-            service_.update(editingId_, name.toStdString(), regions);
+            persisted =
+                service_.update(editingId_, name.toStdString(), regions, capacity, enteredGrid());
             showToast(this, tr("Binder “%1” saved.").arg(name));
         }
     } catch (const std::exception& e) {
@@ -146,10 +214,26 @@ void BinderEditPage::submit() {
                                   .arg(QString::fromUtf8(e.what())));
         return;  // stay on the page so the user can correct and retry
     }
-    // Hand the committed values back before leaving, so a host showing this binder
-    // can update its heading/guide in place without re-querying storage.
-    Q_EMIT saved(name, regions);
+    // Hand the whole persisted binder back before leaving, so a host showing it can
+    // replace its by-value copy outright without re-querying storage.
+    Q_EMIT saved(persisted);
     Q_EMIT backRequested();
+}
+
+std::optional<CardBinderPocketGrid> BinderEditPage::enteredGrid() const {
+    if (pocketRowsEdit_->value() <= 0 || pocketColumnsEdit_->value() <= 0) {
+        return std::nullopt;
+    }
+    return CardBinderPocketGrid{.rows = pocketRowsEdit_->value(),
+                                .columns = pocketColumnsEdit_->value()};
+}
+
+void BinderEditPage::updatePocketHint() {
+    // Spell out the product at the moment of entry, so "3 × 3" visibly means nine cards
+    // to a page. Blank while either side is unset — there is no page to describe yet.
+    const std::optional<CardBinderPocketGrid> grid = enteredGrid();
+    pocketHint_->setText(grid ? tr(" · %1 pockets per page").arg(pocketsPerPage(*grid))
+                              : QString());
 }
 
 }  // namespace pokedex

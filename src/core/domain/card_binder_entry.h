@@ -20,7 +20,7 @@ namespace pokedex {
 // checklist, which could only fold several copies into a single verdict and had
 // nowhere to put a species-free card.
 //
-// Exactly three combinations are produced; both fields unset never is:
+// All four combinations of the two optionals are produced:
 //
 //   pokemon set, cardCopyId unset — PLACEHOLDER: a species the binder lists (it
 //       falls in one of the binder's regions) with no copy filed here. Its status
@@ -32,14 +32,17 @@ namespace pokedex {
 //       Trainer/Energy/promo, or a copy whose dex number isn't in the catalog).
 //       Same per-copy status rule; it has no Pokédex number to sort among the
 //       species rows, so it lands after them.
+//   both unset                    — a BLANK POCKET the user deliberately left
+//       empty to control where a page breaks (see CardBinderBlank). It stands for
+//       no species and no card, so it carries NO status — hence the optional.
 //
 // It carries just the verdict plus the identity of the copy it stands for. For
 // the copy's own fields (printing, condition, prices) or the wishlist sources,
 // the app looks those entities up itself.
 struct CardBinderEntry {
-    std::optional<Pokemon> pokemon;        // nullopt = a species-free card row
-    std::optional<CardCopyId> cardCopyId;  // nullopt = a species placeholder row
-    CollectionStatus status;
+    std::optional<Pokemon> pokemon;        // nullopt = a species-free card, or a blank
+    std::optional<CardCopyId> cardCopyId;  // nullopt = a species placeholder, or a blank
+    std::optional<CollectionStatus> status;  // nullopt = a blank pocket: nothing to report
 };
 
 }  // namespace pokedex

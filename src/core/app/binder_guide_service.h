@@ -36,6 +36,13 @@ public:
     //      order, after every species row, since they have no dex number to sort
     //      among them.
     //
+    // Interleaved through both: the binder's BLANK POCKETS (CardBinderBlank), one row
+    // each, immediately before the row their anchor names — a species (ahead of all its
+    // copy rows, or of its placeholder) or one exact filed card. A blank whose anchor
+    // has no row here (the region was un-scoped, the copy was deleted or moved away)
+    // produces nothing; this stays a read-only projection and never prunes the record,
+    // so restoring the region restores the layout.
+    //
     // A regionless binder therefore shows exactly what is filed in it. "Filed
     // order" is the repository's inserted_at, rowid ordering.
     std::vector<CardBinderEntry> buildEntries(const CardBinder& binder);

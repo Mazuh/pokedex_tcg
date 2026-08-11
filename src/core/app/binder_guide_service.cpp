@@ -5,6 +5,7 @@
 #include <optional>
 #include <set>
 #include <span>
+#include <unordered_map>
 #include <vector>
 
 #include "core/domain/card_copy.h"
@@ -70,6 +71,24 @@ std::vector<CardBinderEntry> BinderGuideService::buildEntries(const CardBinder& 
 
     const std::span<const Pokemon> catalog = pokemonCatalog();
 
+    // The binder's deliberate empty pockets, indexed by the row each sits before. A
+    // blank names EITHER a species OR one copy, never both and never neither, and counts
+    // at least one pocket; a row failing that can't be placed, so it is dropped rather
+    // than guessed at (the same tolerance the repository's region decode has). Several
+    // records at one anchor simply add up.
+    std::map<PokemonDexNum, int> blanksBeforeDex;
+    std::unordered_map<CardCopyId, int> blanksBeforeCopy;
+    for (const CardBinderBlank& blank : binder.pocketBlanks) {
+        if (blank.blanks <= 0 || blank.beforeDexNum.has_value() == blank.beforeCopyId.has_value()) {
+            continue;
+        }
+        if (blank.beforeDexNum) {
+            blanksBeforeDex[*blank.beforeDexNum] += blank.blanks;
+        } else {
+            blanksBeforeCopy[*blank.beforeCopyId] += blank.blanks;
+        }
+    }
+
     // Partition the filed copies once. The repository returns them in filed order
     // (inserted_at, rowid), so push_back preserves that within a species, and the
     // std::map keeps the species themselves dex-ordered. A copy whose dex number
@@ -108,6 +127,19 @@ std::vector<CardBinderEntry> BinderGuideService::buildEntries(const CardBinder& 
     // duplicates has more rows than it lists species.
     std::vector<CardBinderEntry> entries;
     entries.reserve(dexNums.size() + copiesInBinder.size());
+
+    // Emit the blank pockets recorded before a row, if any. A blank row names neither a
+    // species nor a copy and carries no status — see CardBinderEntry.
+    const auto emitBlanksBefore = [&entries](const auto& counts, const auto& anchor) {
+        const auto it = counts.find(anchor);
+        if (it == counts.end()) {
+            return;
+        }
+        for (int i = 0; i < it->second; ++i) {
+            entries.push_back({std::nullopt, std::nullopt, std::nullopt});
+        }
+    };
+
     for (const PokemonDexNum dexNum : dexNums) {
         // The partition above routed every unresolvable filed copy to the tail through
         // this same helper, so a bucketed species always resolves here — this guard now
@@ -118,6 +150,13 @@ std::vector<CardBinderEntry> BinderGuideService::buildEntries(const CardBinder& 
             continue;
         }
         const Pokemon& pokemon = *species;
+        // Blanks anchored to this species go ahead of ALL its rows. Emitting them here —
+        // after the resolve guard, before the placeholder branch — is deliberate on both
+        // counts: a blank anchored to a dex number with no species is skipped along with
+        // the species it names (never left floating), and a page break can still be set
+        // ahead of a species the user doesn't own a card of yet, which is the whole point
+        // of pushing the next region onto a fresh page before collecting it.
+        emitBlanksBefore(blanksBeforeDex, dexNum);
         const auto bucket = copiesByDex.find(dexNum);
         if (bucket == copiesByDex.end()) {
             entries.push_back({pokemon, std::nullopt,
@@ -127,6 +166,10 @@ std::vector<CardBinderEntry> BinderGuideService::buildEntries(const CardBinder& 
         // One row per filed copy, in filed order, and NO placeholder — the copies
         // themselves are what this species has to say about this binder.
         for (const CardCopy* copy : bucket->second) {
+            // A copy anchor means "immediately before this row" wherever the row sits.
+            // The GUI only mints one for a species-free card (which has no dex number to
+            // name it), but honouring it here too keeps an anchor's meaning uniform.
+            emitBlanksBefore(blanksBeforeCopy, copy->id);
             entries.push_back({pokemon, copy->id, statusOfCopy(copy->ownership)});
         }
     }
@@ -134,6 +177,7 @@ std::vector<CardBinderEntry> BinderGuideService::buildEntries(const CardBinder& 
     // Species-free cards last: they carry no dex number, so there is nowhere among
     // the species rows to sort them.
     for (const CardCopy* copy : tail) {
+        emitBlanksBefore(blanksBeforeCopy, copy->id);
         entries.push_back({std::nullopt, copy->id, statusOfCopy(copy->ownership)});
     }
     return entries;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -25,6 +26,13 @@ public:
 // storage layers deliberately do not: minting ids and reading the clock. Both
 // are injectable so tests are deterministic; the defaults use a random UUID and
 // the system clock.
+//
+// Every mutating verb RETURNS the persisted binder, read back through storage. The
+// GUI keeps a by-value CardBinder for the binder it is showing and never re-reads it,
+// so returning the whole entity lets a caller replace its copy wholesale
+// (`binder_ = service.insertBlanks(...)`) instead of patching the fields it happens to
+// know about — which is what keeps a newly added field from being silently dropped on
+// that path.
 class BinderService {
 public:
     using Clock = std::function<Timestamp()>;
@@ -33,15 +41,30 @@ public:
     explicit BinderService(CardBinderRepository& repo, Clock clock = systemClock(),
                            IdGenerator idGenerator = uuidGenerator());
 
-    // Create a binder, optionally scoped to one or more regions (empty = none).
-    // The name is trimmed; a blank name throws BinderError. Both audit stamps are
-    // set to now(). Returns the persisted binder (with its freshly minted id).
-    CardBinder create(std::string name, std::vector<Region> regions);
+    // Create a binder, optionally scoped to one or more regions (empty = none) and
+    // optionally recording the physical album's capacity and pocket grid (nullopt =
+    // not recorded). The name is trimmed; a blank name, a non-positive capacity, or a
+    // grid with a non-positive side throws BinderError. Both audit stamps are set to
+    // now(). Returns the persisted binder (with its freshly minted id).
+    CardBinder create(std::string name, std::vector<Region> regions,
+                      std::optional<int> capacity = std::nullopt,
+                      std::optional<CardBinderPocketGrid> pocketGrid = std::nullopt);
 
-    // Edit an existing binder's name and region set. Trims/validates the name (a
-    // blank name throws BinderError) and bumps updatedAt to now(). Unlike the old
-    // rename, the regions can be changed here — the edit screen exposes both.
-    void update(const CardBinderId& id, std::string name, std::vector<Region> regions);
+    // Edit an existing binder's name, region set and physical layout. Same validation
+    // as create; bumps updatedAt to now(). The binder's blank pockets are NOT part of
+    // this form and are left alone (see CardBinderRepository::update).
+    CardBinder update(const CardBinderId& id, std::string name, std::vector<Region> regions,
+                      std::optional<int> capacity = std::nullopt,
+                      std::optional<CardBinderPocketGrid> pocketGrid = std::nullopt);
+
+    // Leave `blank.blanks` pockets empty immediately before the row its anchor names,
+    // pushing everything after it further along the page — the user-driven page break.
+    // Inserting again at the same anchor widens the existing gap. Throws BinderError on
+    // an anchor that doesn't name exactly one row, or a non-positive count.
+    CardBinder insertBlanks(const CardBinderId& id, const CardBinderBlank& blank);
+
+    // Take those pockets back; a no-op at an anchor that holds none. Same validation.
+    CardBinder removeBlanks(const CardBinderId& id, const CardBinderBlank& blank);
 
     // Stop tracking a binder. Its filed copies are untouched (their binder link
     // is cleared by the database), per the "remove doesn't delete cards" rule.
