@@ -101,6 +101,17 @@ CardBinder BinderService::removeBlanks(const CardBinderId& id, const CardBinderB
     return reread(repo_, id);
 }
 
+CardBinder BinderService::applyMove(const CardBinderId& id, const BinderMovePlan& plan) {
+    if (plan.cardCopyId.empty()) {
+        throw BinderError("a move must name the card it arranges.");
+    }
+    if (plan.placement && plan.placement->cardCopyId != plan.cardCopyId) {
+        throw BinderError("a move's placement must name the same card as the move.");
+    }
+    repo_.arrangeCard(id, plan.cardCopyId, plan.placement, plan.blankSets);
+    return reread(repo_, id);
+}
+
 void BinderService::remove(const CardBinderId& id) { repo_.remove(id); }
 
 std::vector<CardBinder> BinderService::list() { return repo_.listAll(); }

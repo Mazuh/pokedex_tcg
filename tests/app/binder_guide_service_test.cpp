@@ -679,4 +679,260 @@ TEST_F(GuideTest, TheKantoToKalosPageBreakScenario) {
     EXPECT_EQ(indexOfSpecies(after, kQuilladin), chespinAfter + 1);
 }
 
+// --- moved cards (placements) --------------------------------------------------------
+//
+// Like blanks, placements live on the binder value, so these drive them directly.
+
+namespace {
+
+// The row index of the row standing for `copyId`, or -1.
+int indexOfCopy(const std::vector<CardBinderEntry>& entries, const std::string& copyId) {
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        if (entries[i].cardCopyId == copyId) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+// How many rows name `copyId` — every filed card must have exactly one, whatever the
+// arrangement says.
+int rowsForCopy(const std::vector<CardBinderEntry>& entries, const std::string& copyId) {
+    int n = 0;
+    for (const CardBinderEntry& e : entries) {
+        n += e.cardCopyId == copyId ? 1 : 0;
+    }
+    return n;
+}
+
+}  // namespace
+
+// The base case: a species-free card, which naturally lands after every species row,
+// pinned before a species instead.
+TEST_F(GuideTest, PlacedCardMovesToItsAnchorAndLeavesItsNaturalSpot) {
+    CardBinder binder = makeBinder("b1", {Region::Kanto, Region::Kalos});
+    binders.add(binder);
+    copies.add(makeCopy("trainer", std::nullopt, CardOwnership::Owned, "b1"));
+
+    const auto before = guide.buildEntries(binder);
+    EXPECT_EQ(indexOfCopy(before, "trainer"), static_cast<int>(before.size()) - 1);
+
+    binder.cardPlacements = {{.cardCopyId = "trainer", .beforeDexNum = kChespin}};
+    const auto after = guide.buildEntries(binder);
+    EXPECT_EQ(indexOfCopy(after, "trainer"), indexOfSpecies(after, kChespin) - 1);
+    EXPECT_EQ(rowsForCopy(after, "trainer"), 1);  // moved, not duplicated
+    EXPECT_EQ(after.size(), before.size());       // one slot vacated, one taken
+}
+
+// A card pinned before ANOTHER CARD, which is the usual anchor — a move targets one
+// exact sleeve, so it must be able to land between two copies of the same species.
+TEST_F(GuideTest, PlacedCardCanSitBetweenTwoCopiesOfOneSpecies) {
+    CardBinder binder = makeBinder("b1", {Region::Kanto});
+    binders.add(binder);
+    copies.add(makeCopy("pika-a", kPikachu, CardOwnership::Owned, "b1", "2026-07-14T09:00:00Z"));
+    copies.add(makeCopy("pika-b", kPikachu, CardOwnership::Owned, "b1", "2026-07-14T10:00:00Z"));
+    copies.add(makeCopy("trainer", std::nullopt, CardOwnership::Owned, "b1"));
+
+    binder.cardPlacements = {{.cardCopyId = "trainer", .beforeCopyId = "pika-b"}};
+    const auto entries = guide.buildEntries(binder);
+
+    EXPECT_EQ(indexOfCopy(entries, "trainer"), indexOfCopy(entries, "pika-a") + 1);
+    EXPECT_EQ(indexOfCopy(entries, "pika-b"), indexOfCopy(entries, "trainer") + 1);
+}
+
+// The "at the very end" anchor — neither half set. Without it the last pocket would be
+// unreachable, since every other target is phrased as "before some row".
+TEST_F(GuideTest, PlacementWithNoAnchorLandsAfterEveryRow) {
+    CardBinder binder = makeBinder("b1", {Region::Kanto});
+    binders.add(binder);
+    copies.add(makeCopy("pika", kPikachu, CardOwnership::Owned, "b1"));
+
+    binder.cardPlacements = {{.cardCopyId = "pika"}};
+    const auto entries = guide.buildEntries(binder);
+
+    EXPECT_EQ(indexOfCopy(entries, "pika"), static_cast<int>(entries.size()) - 1);
+}
+
+// THE ORDERING RULE, and the reason every target pocket is expressible: at one anchor,
+// moved cards come first (each preceded by its own riders), then that anchor's blanks,
+// then the natural row. So a move re-anchors the blanks that must PRECEDE the card onto
+// the card itself and leaves the rest on the anchor.
+TEST_F(GuideTest, MovedCardsPrecedeTheAnchorsOwnBlanks) {
+    CardBinder binder = makeBinder("b1", {Region::Kanto, Region::Kalos});
+    binders.add(binder);
+    copies.add(makeCopy("trainer", std::nullopt, CardOwnership::Owned, "b1"));
+
+    // One blank riding on the moved card, one left on Chespin: [blank][trainer][blank].
+    binder.pocketBlanks = {{.beforeCopyId = "trainer", .blanks = 1},
+                           {.beforeDexNum = kChespin, .blanks = 1}};
+    binder.cardPlacements = {{.cardCopyId = "trainer", .beforeDexNum = kChespin}};
+
+    const auto entries = guide.buildEntries(binder);
+    const int chespin = indexOfSpecies(entries, kChespin);
+    ASSERT_GT(chespin, 2);
+    EXPECT_TRUE(isBlank(entries[chespin - 1]));                    // stayed on Chespin
+    EXPECT_EQ(entries[chespin - 2].cardCopyId, "trainer");         // the moved card
+    EXPECT_TRUE(isBlank(entries[chespin - 3]));                    // rode on the card
+}
+
+// The screenshot case, end to end: Kanto ends mid-page 17 with two blanks before Chespin,
+// and a Trainer card is moved into the SECOND of them (17·3×3). One blank is consumed and
+// the other re-anchored onto the card, so the card takes that exact pocket and Chespin
+// still opens page 18 at 1×1.
+TEST_F(GuideTest, MovingACardIntoTheSecondBlankOfAGapTakesThatExactPocket) {
+    CardBinder binder = makeBinder("b1", {Region::Kanto, Region::Kalos});
+    binders.add(binder);
+    copies.add(makeCopy("trainer", std::nullopt, CardOwnership::Owned, "b1"));
+
+    binder.pocketBlanks = {{.beforeDexNum = kChespin, .blanks = 2}};
+    const auto gapped = guide.buildEntries(binder);
+    const int chespinGapped = indexOfSpecies(gapped, kChespin);
+    ASSERT_EQ(chespinGapped % 9, 0);  // Chespin opens a page, as the blanks feature left it
+
+    // The move: consume one blank, re-anchor the surviving one onto the card.
+    binder.pocketBlanks = {{.beforeCopyId = "trainer", .blanks = 1}};
+    binder.cardPlacements = {{.cardCopyId = "trainer", .beforeDexNum = kChespin}};
+
+    const auto moved = guide.buildEntries(binder);
+    const int chespin = indexOfSpecies(moved, kChespin);
+    EXPECT_EQ(chespin, chespinGapped);                     // page 18 · 1×1, unmoved
+    EXPECT_EQ(indexOfCopy(moved, "trainer"), chespin - 1);  // page 17 · 3×3
+    EXPECT_TRUE(isBlank(moved[chespin - 2]));              // page 17 · 3×2, still empty
+    EXPECT_EQ(blankCount(moved), 1);                       // one blank was filled
+}
+
+// Placements CHAIN: a card may be pinned before a card that is itself placed, which is
+// how you target a pocket a moved card already holds.
+TEST_F(GuideTest, PlacementsChainThroughAnotherMovedCard) {
+    CardBinder binder = makeBinder("b1", {Region::Kanto, Region::Kalos});
+    binders.add(binder);
+    copies.add(makeCopy("first", std::nullopt, CardOwnership::Owned, "b1"));
+    copies.add(makeCopy("second", std::nullopt, CardOwnership::Owned, "b1"));
+
+    binder.cardPlacements = {{.cardCopyId = "first", .beforeDexNum = kChespin},
+                             {.cardCopyId = "second", .beforeCopyId = "first"}};
+
+    const auto entries = guide.buildEntries(binder);
+    const int chespin = indexOfSpecies(entries, kChespin);
+    EXPECT_EQ(indexOfCopy(entries, "first"), chespin - 1);
+    EXPECT_EQ(indexOfCopy(entries, "second"), chespin - 2);
+}
+
+// Two cards sharing one anchor are ordered by `ordinal`, ascending and NEAREST-LAST — so
+// appending (max + 1) puts the newest arrival closest to the anchor row, which is where a
+// card aimed at that row's own pocket belongs.
+TEST_F(GuideTest, PlacementsSharingAnAnchorRunInOrdinalOrder) {
+    CardBinder binder = makeBinder("b1", {Region::Kanto, Region::Kalos});
+    binders.add(binder);
+    copies.add(makeCopy("early", std::nullopt, CardOwnership::Owned, "b1"));
+    copies.add(makeCopy("late", std::nullopt, CardOwnership::Owned, "b1"));
+
+    binder.cardPlacements = {{.cardCopyId = "late", .beforeDexNum = kChespin, .ordinal = 1},
+                             {.cardCopyId = "early", .beforeDexNum = kChespin, .ordinal = 0}};
+
+    const auto entries = guide.buildEntries(binder);
+    const int chespin = indexOfSpecies(entries, kChespin);
+    EXPECT_EQ(indexOfCopy(entries, "early"), chespin - 2);
+    EXPECT_EQ(indexOfCopy(entries, "late"), chespin - 1);
+}
+
+// An ORPHANED placement — its anchor species isn't listed by this binder — is ignored and
+// the card renders in its natural position. It is never dropped: this guide's contract is
+// that nothing filed here is invisible, so no arrangement may cost the user a card.
+TEST_F(GuideTest, OrphanedPlacementLeavesTheCardInItsNaturalPosition) {
+    CardBinder binder = makeBinder("b1", {Region::Kanto});  // no Kalos, so no Chespin row
+    binders.add(binder);
+    copies.add(makeCopy("trainer", std::nullopt, CardOwnership::Owned, "b1"));
+
+    binder.cardPlacements = {{.cardCopyId = "trainer", .beforeDexNum = kChespin}};
+    const auto entries = guide.buildEntries(binder);
+
+    EXPECT_EQ(rowsForCopy(entries, "trainer"), 1);
+    EXPECT_EQ(indexOfCopy(entries, "trainer"), static_cast<int>(entries.size()) - 1);
+}
+
+// Same for an anchor card that isn't filed in this binder any more.
+TEST_F(GuideTest, PlacementAnchoredToAMissingCardIsIgnored) {
+    CardBinder binder = makeBinder("b1", {Region::Kanto});
+    binders.add(binder);
+    copies.add(makeCopy("trainer", std::nullopt, CardOwnership::Owned, "b1"));
+
+    binder.cardPlacements = {{.cardCopyId = "trainer", .beforeCopyId = "gone"}};
+    const auto entries = guide.buildEntries(binder);
+
+    EXPECT_EQ(rowsForCopy(entries, "trainer"), 1);
+    EXPECT_EQ(indexOfCopy(entries, "trainer"), static_cast<int>(entries.size()) - 1);
+}
+
+// A CYCLE never terminates at a real row, so the fixed point honours neither placement
+// and both cards fall back to natural order — rather than recursing forever or vanishing.
+TEST_F(GuideTest, CircularPlacementsFallBackToNaturalOrder) {
+    CardBinder binder = makeBinder("b1", {Region::Kanto});
+    binders.add(binder);
+    copies.add(makeCopy("a", std::nullopt, CardOwnership::Owned, "b1", "2026-07-14T09:00:00Z"));
+    copies.add(makeCopy("b", std::nullopt, CardOwnership::Owned, "b1", "2026-07-14T10:00:00Z"));
+
+    binder.cardPlacements = {{.cardCopyId = "a", .beforeCopyId = "b"},
+                             {.cardCopyId = "b", .beforeCopyId = "a"}};
+
+    const auto entries = guide.buildEntries(binder);
+    EXPECT_EQ(rowsForCopy(entries, "a"), 1);
+    EXPECT_EQ(rowsForCopy(entries, "b"), 1);
+    EXPECT_LT(indexOfCopy(entries, "a"), indexOfCopy(entries, "b"));  // filed order
+}
+
+// A placement naming both anchor halves points at no single row, and one naming a card
+// filed in another binder isn't ours to honour. Both are dropped like a malformed blank.
+TEST_F(GuideTest, MalformedAndForeignPlacementsAreIgnored) {
+    CardBinder binder = makeBinder("b1", {Region::Kanto});
+    binders.add(binder);
+    copies.add(makeCopy("trainer", std::nullopt, CardOwnership::Owned, "b1"));
+    copies.add(makeCopy("elsewhere", kMew, CardOwnership::Owned, std::nullopt));
+
+    binder.cardPlacements = {
+        {.cardCopyId = "trainer", .beforeDexNum = kPikachu, .beforeCopyId = "x"},
+        {.cardCopyId = "elsewhere", .beforeDexNum = kPikachu},
+    };
+
+    const auto entries = guide.buildEntries(binder);
+    EXPECT_EQ(indexOfCopy(entries, "trainer"), static_cast<int>(entries.size()) - 1);
+    EXPECT_EQ(rowsForCopy(entries, "elsewhere"), 0);  // not filed here at all
+}
+
+// When a species' ONLY copy is moved away, its natural spot emits nothing — not a
+// placeholder. The card is still in the binder and still on the checklist, just on
+// another page; a placeholder would claim a pocket that no longer exists and paginate
+// everything after it wrongly.
+TEST_F(GuideTest, SpeciesWhoseOnlyCopyMovedAwayLeavesNoPlaceholderBehind) {
+    CardBinder binder = makeBinder("b1", {});  // region-less: only filed species are listed
+    binders.add(binder);
+    copies.add(makeCopy("pika", kPikachu, CardOwnership::Owned, "b1"));
+    copies.add(makeCopy("trainer", std::nullopt, CardOwnership::Owned, "b1"));
+
+    binder.cardPlacements = {{.cardCopyId = "pika", .beforeCopyId = "trainer"}};
+    const auto entries = guide.buildEntries(binder);
+
+    ASSERT_EQ(entries.size(), 2u);
+    EXPECT_EQ(entries[0].cardCopyId, "pika");
+    EXPECT_EQ(entries[1].cardCopyId, "trainer");
+    EXPECT_EQ(copyIdsOf(entries, kPikachu), (std::vector<std::string>{"pika"}));
+}
+
+// A blank pinned to a card travels with it — a copy anchor means "immediately before this
+// row" wherever the row sits, which is exactly what lets a move carry its gap along.
+TEST_F(GuideTest, BlankAnchoredToAMovedCardFollowsIt) {
+    CardBinder binder = makeBinder("b1", {Region::Kanto, Region::Kalos});
+    binders.add(binder);
+    copies.add(makeCopy("trainer", std::nullopt, CardOwnership::Owned, "b1"));
+
+    binder.pocketBlanks = {{.beforeCopyId = "trainer", .blanks = 1}};
+    binder.cardPlacements = {{.cardCopyId = "trainer", .beforeDexNum = kChespin}};
+
+    const auto entries = guide.buildEntries(binder);
+    const int trainer = indexOfCopy(entries, "trainer");
+    ASSERT_GT(trainer, 0);
+    EXPECT_TRUE(isBlank(entries[trainer - 1]));
+    EXPECT_EQ(blankCount(entries), 1);
+}
+
 }  // namespace

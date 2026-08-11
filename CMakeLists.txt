@@ -123,6 +123,7 @@ add_library(pokedex_core STATIC
     src/core/app/uuid.cpp
     src/core/app/binder_service.cpp
     src/core/app/binder_guide_service.cpp
+    src/core/app/binder_move_planner.cpp
     src/core/app/pokemon_browse_service.cpp
     src/core/app/card_copy_service.cpp
     src/core/app/wishlist_service.cpp
@@ -175,6 +176,7 @@ qt_add_executable(pokedex_tcg
     src/gui/views/first_run_dialog.cpp
     src/gui/views/binder_edit_page.cpp
     src/gui/views/binder_picker_dialog.cpp
+    src/gui/views/move_card_dialog.cpp
     src/gui/views/main_window.cpp
     src/gui/views/about_dialog.cpp
     src/gui/views/binders_page.cpp
@@ -321,6 +323,7 @@ if(BUILD_TESTING)
         tests/app/install_service_test.cpp
         tests/app/binder_service_test.cpp
         tests/app/binder_guide_service_test.cpp
+        tests/app/binder_move_planner_test.cpp
         tests/app/pokemon_browse_service_test.cpp
         tests/app/card_copy_service_test.cpp
         tests/app/wishlist_service_test.cpp

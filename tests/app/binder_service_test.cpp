@@ -12,6 +12,7 @@
 #include "core/storage/card_binder_repository.h"
 #include "core/storage/codecs.h"
 #include "core/storage/database.h"
+#include "core/storage/statement.h"
 
 namespace {
 
@@ -276,6 +277,100 @@ TEST(BinderServiceTest, MutatingVerbsThrowForAMissingBinder) {
     EXPECT_THROW(f.service.insertBlanks("ghost", CardBinderBlank{.beforeDexNum = 1, .blanks = 1}),
                  std::exception);
     EXPECT_THROW(f.service.update("ghost", "New", {}), std::exception);
+}
+
+// --- moving a card ---------------------------------------------------------------------
+//
+// The move verbs are exercised end to end against a real guide in
+// binder_move_planner_test.cpp; these pin the service's own contract.
+
+// A card must be filed before it can be placed, so these drive the copy row directly
+// rather than pulling in the copy service — the placement's foreign key needs it to exist.
+void fileCopy(Database& db, const char* copyId, const char* binderId) {
+    pokedex::Statement stmt(
+        db,
+        "INSERT INTO card_copy(id,pokemon_dex_num,ref_expansion,ref_language,ref_collector,"
+        "ownership,condition,binder_id,comments,inserted_at,updated_at)"
+        " VALUES(?,25,'MEW','EN','1/1','Owned','NearMint',?,'',"
+        "'2026-07-14T09:00:00Z','2026-07-14T09:00:00Z');");
+    stmt.bindText(1, copyId);
+    stmt.bindText(2, binderId);
+    stmt.step();
+}
+
+TEST(BinderServiceTest, ApplyMoveWritesThePlacementAndItsBlankRunsTogether) {
+    Fixture f;
+    const CardBinder created = f.service.create("Kanto+Kalos", {});
+    fileCopy(f.db, "c1", created.id.c_str());
+    f.service.insertBlanks(created.id, CardBinderBlank{.beforeDexNum = 650, .blanks = 2});
+
+    pokedex::BinderMovePlan plan;
+    plan.cardCopyId = "c1";
+    plan.placement = pokedex::CardBinderPlacement{.cardCopyId = "c1", .beforeDexNum = 650};
+    plan.blankSets = {{.beforeDexNum = 650, .blanks = 0}, {.beforeCopyId = "c1", .blanks = 1}};
+
+    const CardBinder moved = f.service.applyMove(created.id, plan);
+
+    ASSERT_EQ(moved.cardPlacements.size(), 1u);
+    EXPECT_EQ(moved.cardPlacements[0].cardCopyId, "c1");
+    EXPECT_EQ(moved.cardPlacements[0].beforeDexNum, 650);
+    // The species run was cleared and the surviving pocket re-anchored onto the card.
+    ASSERT_EQ(moved.pocketBlanks.size(), 1u);
+    EXPECT_EQ(moved.pocketBlanks[0].beforeCopyId, "c1");
+    EXPECT_EQ(moved.pocketBlanks[0].blanks, 1);
+}
+
+// The load-bearing atomicity guard: a rejected blank set must take the placement down with
+// it, or the binder would record a card moved into a gap that was never opened.
+TEST(BinderServiceTest, ApplyMoveRollsBackWhollyWhenABlankSetIsInvalid) {
+    Fixture f;
+    const CardBinder created = f.service.create("Kanto+Kalos", {});
+    fileCopy(f.db, "c1", created.id.c_str());
+
+    pokedex::BinderMovePlan plan;
+    plan.cardCopyId = "c1";
+    plan.placement = pokedex::CardBinderPlacement{.cardCopyId = "c1", .beforeDexNum = 650};
+    plan.blankSets = {{.beforeDexNum = 650, .beforeCopyId = "c1", .blanks = 1}};  // both anchors
+
+    EXPECT_THROW(f.service.applyMove(created.id, plan), std::exception);
+
+    const CardBinder after = f.service.list().front();
+    EXPECT_TRUE(after.cardPlacements.empty());  // the placement went back too
+    EXPECT_TRUE(after.pocketBlanks.empty());
+}
+
+// A plan with no placement is the reset shape — the card is named by the plan itself.
+TEST(BinderServiceTest, ApplyMoveWithNoPlacementClearsTheCardsPosition) {
+    Fixture f;
+    const CardBinder created = f.service.create("Kanto+Kalos", {});
+    fileCopy(f.db, "c1", created.id.c_str());
+    pokedex::BinderMovePlan placeIt;
+    placeIt.cardCopyId = "c1";
+    placeIt.placement = pokedex::CardBinderPlacement{.cardCopyId = "c1", .beforeDexNum = 650};
+    placeIt.blankSets = {{.beforeCopyId = "c1", .blanks = 2}};
+    f.service.applyMove(created.id, placeIt);
+
+    pokedex::BinderMovePlan reset;
+    reset.cardCopyId = "c1";
+    reset.blankSets = {{.beforeCopyId = "c1", .blanks = 0}};
+    const CardBinder after = f.service.applyMove(created.id, reset);
+
+    EXPECT_TRUE(after.cardPlacements.empty());
+    EXPECT_TRUE(after.pocketBlanks.empty());
+}
+
+TEST(BinderServiceTest, ApplyMoveRejectsAnIncoherentPlan) {
+    Fixture f;
+    const CardBinder created = f.service.create("Kanto+Kalos", {});
+
+    pokedex::BinderMovePlan nameless;  // cardCopyId left empty
+    EXPECT_THROW(f.service.applyMove(created.id, nameless), BinderError);
+
+    // A placement naming a different card than the plan does would arrange the wrong one.
+    pokedex::BinderMovePlan mismatched;
+    mismatched.cardCopyId = "c1";
+    mismatched.placement = pokedex::CardBinderPlacement{.cardCopyId = "c2", .beforeDexNum = 650};
+    EXPECT_THROW(f.service.applyMove(created.id, mismatched), BinderError);
 }
 
 }  // namespace

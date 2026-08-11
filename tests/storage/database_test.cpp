@@ -184,10 +184,10 @@ TEST(DatabaseTest, UpgradesAnExistingV9DatabaseByAddingPriceSuppression) {
                              " VALUES('sv3-125','tcgplayer');"));
 }
 
-// v12/v13 give a binder its optional physical layout and its blank pockets. An existing
-// binder must survive the upgrade with its layout reading "unset" (the 0 sentinel) rather
-// than being handed a fabricated 3×3.
-TEST(DatabaseTest, UpgradesAnExistingV11DatabaseAddingLayoutColumnsAndBlanks) {
+// v12/v13/v14 give a binder its optional physical layout, its blank pockets and its moved
+// cards. An existing binder must survive the upgrade with its layout reading "unset" (the
+// 0 sentinel) rather than being handed a fabricated 3×3, and with no manual arrangement.
+TEST(DatabaseTest, UpgradesAnExistingV11DatabaseAddingLayoutBlanksAndPlacements) {
     Database db(":memory:");
     // The v11 shape by hand (see the note on kSchemaVersion): a v1 card_binder plus the
     // region join table v11 added, holding one binder.
@@ -198,6 +198,13 @@ TEST(DatabaseTest, UpgradesAnExistingV11DatabaseAddingLayoutColumnsAndBlanks) {
         "CREATE TABLE card_binder_region(binder_id TEXT NOT NULL"
         " REFERENCES card_binder(id) ON DELETE CASCADE, region TEXT NOT NULL,"
         " PRIMARY KEY (binder_id, region));");
+    // card_copy has existed since v1 and v14's placement table keys into it, so the
+    // fixture has to stand it up: with foreign_keys ON, ANY write that cascades into
+    // card_binder_placement must resolve that parent, and an absent one fails the whole
+    // statement with "no such table". Only the id column matters here.
+    db.exec(
+        "CREATE TABLE card_copy(id TEXT PRIMARY KEY, binder_id TEXT"
+        " REFERENCES card_binder(id) ON DELETE SET NULL);");
     db.exec(
         "INSERT INTO card_binder(id,name,region,inserted_at,updated_at)"
         " VALUES('b1','Kanto Journey',NULL,'2026-07-14T00:00:00Z','2026-07-14T00:00:00Z');");
@@ -230,9 +237,27 @@ TEST(DatabaseTest, UpgradesAnExistingV11DatabaseAddingLayoutColumnsAndBlanks) {
         db.exec("INSERT INTO card_binder_blank(binder_id,before_dex_num,before_copy_id,blanks)"
                 " VALUES('b1',0,'copy-7',1);"));
 
-    // Removing the binder cascades its blank rows away, as it does its region rows.
+    // card_binder_placement exists, keyed one row per copy per binder: a second placement
+    // for the same card overwrites nothing and is rejected outright (the app upserts).
+    db.exec("INSERT INTO card_copy(id,binder_id) VALUES('c1','b1');");
+    EXPECT_NO_THROW(db.exec(
+        "INSERT INTO card_binder_placement(binder_id,card_copy_id,before_dex_num,"
+        "before_copy_id,ordinal) VALUES('b1','c1',650,'',0);"));
+    EXPECT_ANY_THROW(db.exec(
+        "INSERT INTO card_binder_placement(binder_id,card_copy_id,before_dex_num,"
+        "before_copy_id,ordinal) VALUES('b1','c1',151,'',0);"));
+    // Its card_copy_id carries a real foreign key, so a placement can't name a card that
+    // isn't stored — the difference from a blank's before_copy_id, which may be ''.
+    EXPECT_ANY_THROW(db.exec(
+        "INSERT INTO card_binder_placement(binder_id,card_copy_id,before_dex_num,"
+        "before_copy_id,ordinal) VALUES('b1','ghost',650,'',0);"));
+
+    // Removing the binder cascades its blank AND placement rows away, as it does its
+    // region rows.
     db.exec("DELETE FROM card_binder WHERE id = 'b1';");
-    Statement orphans(db, "SELECT COUNT(*) FROM card_binder_blank;");
+    Statement orphans(db,
+                      "SELECT (SELECT COUNT(*) FROM card_binder_blank)"
+                      " + (SELECT COUNT(*) FROM card_binder_placement);");
     ASSERT_TRUE(orphans.step());
     EXPECT_EQ(orphans.columnInt(0), 0);
 }

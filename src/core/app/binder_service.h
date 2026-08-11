@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "core/app/binder_move_planner.h"
 #include "core/domain/card_binder.h"
 #include "core/domain/region.h"
 #include "core/domain/types.h"
@@ -65,6 +66,15 @@ public:
 
     // Take those pockets back; a no-op at an anchor that holds none. Same validation.
     CardBinder removeBlanks(const CardBinderId& id, const CardBinderBlank& blank);
+
+    // Commit an arrangement worked out by planCardMove or planCardReset: the card's new
+    // placement (or its removal) plus every blank run it rebalances, written as one
+    // transaction. Both verbs commit through here, so there is a single write path.
+    //
+    // The plan is passed whole rather than recomputed here on purpose — the caller has
+    // already shown the user what it will do (BinderMovePlan::shiftedCards), so
+    // re-deriving it might commit something other than what was agreed to.
+    CardBinder applyMove(const CardBinderId& id, const BinderMovePlan& plan);
 
     // Stop tracking a binder. Its filed copies are untouched (their binder link
     // is cleared by the database), per the "remove doesn't delete cards" rule.

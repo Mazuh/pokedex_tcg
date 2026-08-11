@@ -95,7 +95,10 @@ one transaction, `listAll` attaches them in a second pass sorted to canonical en
 pages×pocketsPerPage [the page count isn't recorded], and is never enforced — a stuffed binder is
 real, so the guide displays how full it is and blocks nothing; v13 added `card_binder_blank`
 [`(binder_id, before_dex_num, before_copy_id)` PK, `ON DELETE CASCADE`], the deliberate **empty
-pockets** that let a user control where a page breaks — see the blank-pockets note below),
+pockets** that let a user control where a page breaks — see the blank-pockets note below); v14
+added `card_binder_placement` [`(binder_id, card_copy_id)` PK, `ON DELETE CASCADE` on **both**
+binder and copy], a card pulled OUT of the guide's derived order and pinned before another row —
+the "this goes at page 18, pocket 2×2" gesture; see the moved-cards note below),
 so a fresh DB runs the whole chain and an existing one
 only the tail — bump `kSchemaVersion` and add a step (never edit `kSchemaV1`) when
 the schema changes.
@@ -104,7 +107,11 @@ the schema changes.
 `user_version` back and re-migrate" is no longer a safe way to exercise a step in a test** — the
 replayed `ADD COLUMN` fails as a duplicate, and it can't be undone without `DROP COLUMN`, whose
 availability varies with the system SQLite across the two CI legs. Stand the older shape up BY HAND
-instead (`tests/storage/database_test.cpp`'s v8/v9/v11 tests are the pattern). `storage/` holds
+instead (`tests/storage/database_test.cpp`'s v8/v9/v11 tests are the pattern). **A hand-built
+fixture must also stand up every table a later step's FOREIGN KEY points at**, even one the step
+itself doesn't touch: with `foreign_keys = ON`, any write that cascades into `card_binder_placement`
+must resolve its `card_copy` parent, and an absent one fails the whole statement with "no such
+table" — which is how the v11 fixture broke when v14 landed. `storage/` holds
 workspace resolution, the SQLite `Database` wrapper + schema/migrations, the
 `codecs` (region/ownership/condition enums ↔ tokens, timestamps ↔ ISO-8601),
 and repositories for `CardBinder`, `CardCopy`, and `Wishlist`. The `CardCopy`
@@ -117,17 +124,23 @@ the full CRUD surface: `save` (upsert parent + replace its source set), `find`,
 service), `BinderService` (binder CRUD verbs — `create`/`update` both take a
 `std::vector<Region>` for the multivalued region set plus the optional `capacity` +
 `CardBinderPocketGrid`; `update` replaced the old name-only `rename`; and
-`insertBlanks`/`removeBlanks`, the blank-pocket verbs. **Every mutating verb RETURNS the
+`insertBlanks`/`removeBlanks`, the blank-pocket verbs; and `applyMove`, the SINGLE commit path
+for a manual arrangement — it takes a whole `BinderMovePlan` (from `planCardMove` **or**
+`planCardReset`) and writes the placement, or its removal, plus every blank run it rebalances
+through `CardBinderRepository::arrangeCard` in one transaction. It deliberately does NOT
+re-derive the plan: the caller has already shown the user what it will do, so recomputing could
+commit something other than what was agreed to. **Every mutating verb RETURNS the
 persisted `CardBinder`**, read back through the new `CardBinderRepository::find` — the GUI
 keeps a by-value binder it never re-reads, so returning the whole entity lets a host replace
 its copy wholesale [`binder_ = service.insertBlanks(...)`] instead of patching the fields it
 happens to know about, which is what stops a newly added field from being silently dropped on
-that path), `BinderGuideService`
+that path), `binder_move_planner` (the Qt-free `planCardMove` / `planCardReset` — see the
+moved-cards note below), `BinderGuideService`
 (the `buildBinderEntries` the inferred zone refers to — one row per card FILED in the
 binder [a species' duplicates adjacent in filed order; species-free cards last, since they
 carry no dex number] plus one placeholder row per listed species holding nothing, plus one
-row per **blank pocket** interleaved before the row its anchor names; a row is a
-slot, not a species), `PokemonBrowseService`
+row per **blank pocket** and one row per **moved card** interleaved before the row their
+anchor names; a row is a slot, not a species), `PokemonBrowseService`
 (`listAll` → every catalog species paired with its owned-copy count, the unscoped
 Pokédex browser's data), `CardCopyService` (the copy verbs —
 `create`/`editDetails`/`assignToBinder`/`remove`[soft, with an optional
@@ -705,11 +718,13 @@ Three rules govern the pocket count, and each is load-bearing:
   would renumber itself per search and send the user to the wrong sleeve. The cost is that
   the separators look arbitrary under a filter — accepted, the page number is the part that
   stays meaningful.
-- **Everything holds a pocket EXCEPT a Removed copy.** Read `holdsPocket = !(copy &&
-  isRemoved(*copy))` carefully: a placeholder row (a listed species, sleeve reserved) and a
-  blank row (`copy == nullptr`) both DO hold one. Writing it the tempting other way round
-  (`copy != nullptr && !isRemoved(*copy)`) makes blanks free and breaks the feature outright
-  while every test still passes.
+- **Everything holds a pocket EXCEPT a Removed copy.** This now lives in the domain as
+  `holdsPocket(entry)` (`card_binder_entry.h`, beside `isBlankPocket`) rather than being
+  re-spelled per caller — the guide view renders from it and the move planner counts pockets
+  with it, and a disagreement on any row would land a moved card in the wrong sleeve. Read it
+  carefully: a placeholder row (a listed species, sleeve reserved) and a blank row both DO hold
+  one. Writing the tempting inverse ("has a card and isn't Removed") makes blanks free and
+  breaks the feature outright while every test still passes.
 - **Page/Pocket blank out unless the grid is recorded AND the guide is in natural filed
   order** (`showPockets = perPage > 0 && sortColumn_ < 0`) — under a header sort the rows no
   longer follow the sleeves. The columns stay PRESENT but empty, never `setColumnHidden`:
@@ -749,6 +764,76 @@ After a write the highlight returns to the ANCHOR row, not the blank — so pres
 twice widens the same gap, which is exactly how a page gets padded out. Removing works off the
 row the blank sits before (scan forward to the first row that anchors one), which is sound
 only because the action is gated to filed order.
+
+**Moving a card to a named pocket** (`CardBinderPlacement`, table `card_binder_placement`) is
+the other half of manual arrangement: "this card goes at page 18, pocket 2×2". The **page/pocket
+coordinates are never stored** — they are a rendering of the resolved order, so a stored one
+would go stale the moment anything before it changed. Storage learns only an ANCHOR ("sits
+immediately before that row"), the same idea `CardBinderBlank` uses, and the coordinates are a
+pure translation layer the GUI computes. That is what keeps the feature additive, and what lets
+it be switched off wholesale for a binder with no pocket grid (the Move button just disables,
+like the blank button). Two deliberate differences from a blank's anchor: it prefers
+`beforeCopyId` (a move is about ONE sleeve, so it must land between two copies of a species;
+`beforeDexNum` covers only a placeholder row), and **both anchors unset is legal and means "at
+the very end"** — without it the last pocket is unreachable, since every other target reads
+"before X".
+
+Three rules make the emission work, and the first is the crux:
+
+- **At each anchor, emit moved cards FIRST (each preceded by its own riders), then that
+  anchor's blanks, then the natural row.** This is what makes every target pocket exactly
+  expressible even though `card_binder_blank.blanks` is a COUNT, not a row per pocket: a move
+  rebalances the counts around the card, re-anchoring the blanks that must precede it onto the
+  card itself and leaving the rest on the anchor row. Two blanks before Chespin plus a card
+  moved to 17·3×3 becomes "1 blank on the card, 0 on Chespin"; aimed at 3×2 instead it is "0 and
+  1". Because of this, `card_binder_blank` did NOT have to be rewritten.
+- **Placements CHAIN and are resolved by a fixed point.** A card may anchor to a card that is
+  itself placed — that is how you target a pocket a moved card already holds, and it keeps the
+  newcomer nearest its anchor so `ordinal` is always a plain append (max+1), never a renumber. A
+  placement is honoured only if its anchor chain terminates at a row the guide emits on its own;
+  iterating to a fixed point rejects a CYCLE as well as an orphan. **A rejected placement leaves
+  its copy in natural dex order** — never nothing. The guide's standing contract is that nothing
+  filed here is invisible, so no arrangement, however broken or hand-edited, may cost a card.
+- **A move CANONICALISES every blank run** rather than patching the anchors it touches
+  (`canonicalBlankSets`). Attributing a run by counting rows is only sound if each run has one
+  owner, and by default it doesn't: a copy row can be named BOTH ways, by its own id and by its
+  species' dex number, and blanks recorded either way render in the same stretch ahead of it.
+  Reading one and leaving the other is how a consumed blank comes back. So every run is
+  re-recorded against the exact row it precedes, named by copy id whenever that row has one;
+  only a placeholder keeps a dex-numbered run. Orphaned runs are left strictly alone.
+
+The arithmetic lives in the Qt-free `core/app/binder_move_planner` — `planCardMove(binder, rows,
+copyId, targetPocket)` returns a `BinderMovePlan` (placement + absolute blank runs +
+`projectedRows` + `shiftedCards`), and `planCardReset` the same for giving a position up. It is a
+PLAN, not a write, for two reasons: the GUI has to state the cost before committing, and keeping
+the hardest logic pure is what makes it exhaustively testable. Notes that cost real debugging:
+
+- **The card is taken OUT first, then inserted at the target**, so a pocket names a position in
+  the FINAL arrangement — the physical gesture. Against the current arrangement instead, every
+  forward move lands one pocket short.
+- **`shiftedCards` counts only OTHER cards**, not placeholders or blanks: those are empty
+  sleeves, so shuffling them costs nothing physically, and counting them would cry wolf on every
+  move in a binder that is mostly checklist. The confirmation prompt is skipped entirely at 0 —
+  which is why a card dropped into an empty pocket is silent, as it should be.
+- **A reset is not an undo.** It re-anchors the vacated gap forward exactly as a move does
+  (dropping it only when nothing follows), so the page break survives; but the sleeve the card
+  leaves closes up, and a blank the move consumed does not come back.
+- **`projectedRows` is the anti-drift device.** The planner simulates the arrangement and
+  `buildEntries` emits it — two encodings of one ordering rule.
+  `MoveTest.ProjectedRowsMatchWhatTheGuideActuallyEmits` applies real plans through the real
+  repository and re-reads the guide over a sweep of shapes; every other move test is only as
+  trustworthy as that one. It is empty for a reset, whose landing spot only the guide can derive.
+
+GUI: a second contextual button, **"Move…"**, sits beside "Insert blank" under the table (same
+selection-scoped rule), gated on a recorded grid, natural filed order, and a row that is a real
+non-Removed card. It opens `gui/views/MoveCardDialog` — a modal, justified like
+`BinderPickerDialog`: one short cancellable choice, not record CRUD. It asks for **Page + row ×
+column** rather than a target row because the user is holding the album and knows the sleeve, not
+what is in it; a live "that pocket holds…" line closes that loop, and the caller supplies the row
+labels so it reads exactly like the table's Name column. Capacity, when recorded, caps the page
+range; without it the cap is the last page in use plus one, so a card can always be sent past the
+end. A placed row's Page/Pocket cells carry a "moved here by hand" tooltip — otherwise it is
+indistinguishable from one the dex put there.
 
 **A numeric field is a `QSpinBox`.** `BinderEditPage`'s capacity and rows×columns are the
 first numeric inputs in the app. A spinbox rather than `QLineEdit` + `QIntValidator`: it makes

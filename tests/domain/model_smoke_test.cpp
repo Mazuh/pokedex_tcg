@@ -6,6 +6,7 @@ namespace {
 
 using pokedex::CardBinderEntry;
 using pokedex::CollectionStatus;
+using pokedex::holdsPocket;
 using pokedex::Pokemon;
 using pokedex::Region;
 
@@ -54,6 +55,26 @@ TEST(DomainModelTest, BinderEntryBlankRowNamesNeitherSpeciesNorCopyNorStatus) {
     EXPECT_FALSE(entry.pokemon.has_value());
     EXPECT_FALSE(entry.cardCopyId.has_value());
     EXPECT_FALSE(entry.status.has_value());
+}
+
+// Which rows occupy a physical pocket decides where every page break falls, so the
+// predicate is pinned across all four shapes rather than left to each reader. The
+// interesting cases are the two that hold NO card and still take a sleeve — a
+// placeholder (reserved for that species) and a blank (whose purpose IS to take one).
+TEST(DomainModelTest, EveryRowHoldsAPocketExceptARemovedCopy) {
+    const Pokemon venusaur{.dexNumber = 3, .name = "Venusaur", .region = Region::Kanto};
+
+    EXPECT_TRUE(holdsPocket(CardBinderEntry{}));  // a blank pocket
+    EXPECT_TRUE(holdsPocket(CardBinderEntry{.pokemon = venusaur,
+                                            .status = CollectionStatus::Incomplete}));
+    EXPECT_TRUE(holdsPocket(CardBinderEntry{
+        .pokemon = venusaur, .cardCopyId = "copy-1", .status = CollectionStatus::Completed}));
+    EXPECT_TRUE(holdsPocket(
+        CardBinderEntry{.cardCopyId = "copy-2", .status = CollectionStatus::Incoming}));
+
+    // The one exception: frozen history, listed and grayed but not in the sleeve.
+    EXPECT_FALSE(holdsPocket(CardBinderEntry{
+        .pokemon = venusaur, .cardCopyId = "copy-3", .status = CollectionStatus::Removed}));
 }
 
 // The enum is declared in first-match-wins precedence order; the app relies on

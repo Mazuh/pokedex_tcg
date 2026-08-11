@@ -47,11 +47,15 @@ public:
     //        physical layout, 0 = unset. Capacity is stored, not derived from the grid.
     //   v13 — card_binder_blank (binder_id, before_dex_num, before_copy_id): deliberate empty
     //        pockets, the user-driven page-break mechanism. `blanks` is a count per anchor.
+    //   v14 — card_binder_placement (binder_id, card_copy_id): a card pulled OUT of the
+    //        guide's derived order and pinned immediately before another row — the "this
+    //        goes at page 18, pocket 2×2" gesture. Anchors to a copy by preference (both
+    //        anchors unset = at the very end); `ordinal` orders same-anchor placements.
     //
     // NOTE: from v12 on, a step ALTERs a v1 table, so "migrate a fresh DB, then roll the
     // stamp back and re-migrate" is no longer a safe way to exercise a step in a test — the
     // replayed ADD COLUMN fails as a duplicate. Stand the older shape up by hand instead.
-    static constexpr int kSchemaVersion = 13;
+    static constexpr int kSchemaVersion = 14;
 
     // Open (creating if absent) the database at `path`, or an in-memory database
     // when path == ":memory:". Throws StorageError on failure.

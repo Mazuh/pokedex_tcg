@@ -180,6 +180,16 @@ private:
     // Re-label/enable the blank button for the current selection and guide state. Called
     // wherever either can change: selection, filter, rebuild.
     void updateBlankButtonState();
+    // The other row-scoped action: open MoveCardDialog for the selected card and commit
+    // what it asks for. Gated to natural filed order for the same reason the blank button
+    // is — a pocket coordinate only means anything while the rows follow the sleeves.
+    void moveSelectedCard();
+    // Enable/label the Move button for the current selection and guide state, alongside
+    // updateBlankButtonState() and from the same places.
+    void updateMoveButtonState();
+    // Whether entries_[row] is a card this view can move: a real copy, not a placeholder,
+    // a blank, or Removed frozen history.
+    bool rowIsMovable(int row) const;
     // Re-set the Page column's tooltip for the binder's current grid (it changes under
     // Edit binder, and says something different when no grid is recorded).
     void updatePocketHeaderTooltips();
@@ -207,8 +217,11 @@ private:
     PokemonDetailPanel* detail_;
     QPushButton* refreshPricesButton_;  // "Refresh prices" — bulk re-fetch all filed cards
     QLabel* bulkStatus_;                 // "Refreshing… n/m" progress beside it (hidden when idle)
-    // "Insert blank" / "Remove blank" under the table — the selection-scoped action.
+    // The selection-scoped actions, under the table: "Insert blank" / "Remove blank", and
+    // "Move…" for putting a card in a named pocket. Binder-scoped actions stay in the top
+    // bar (see the placement rule in CLAUDE.md).
     QPushButton* blankButton_;
+    QPushButton* moveButton_;
     // The guide's rows, strictly 1:1 with the table's rows (see the class docstring).
     std::vector<CardBinderEntry> entries_;
     // Header-driven sort state, re-applied on every refresh so it survives a

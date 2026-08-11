@@ -389,6 +389,256 @@ TEST(CardBinderRepositoryTest, AddWritesTheBlankSetItIsGiven) {
     EXPECT_EQ(found->pocketBlanks[0].blanks, 2);
 }
 
+// --- setBlanks: the ABSOLUTE write a move uses -------------------------------------
+
+// It both opens a gap where there was no row and overwrites an existing one, so a
+// caller stating final counts never has to know which case it is in.
+TEST(CardBinderRepositoryTest, SetBlanksWritesTheStatedCountEitherWay) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    repo.add(makeBinder("b1", "Kanto+Kalos", {}, "2026-07-14T09:00:00Z"));
+
+    repo.setBlanks("b1", CardBinderBlank{.beforeDexNum = 650, .blanks = 3});  // creates
+    auto found = repo.find("b1");
+    ASSERT_TRUE(found.has_value());
+    ASSERT_EQ(found->pocketBlanks.size(), 1u);
+    EXPECT_EQ(found->pocketBlanks[0].blanks, 3);
+
+    // Overwrites rather than accumulating — this is what separates it from addBlanks.
+    repo.setBlanks("b1", CardBinderBlank{.beforeDexNum = 650, .blanks = 1});
+    found = repo.find("b1");
+    ASSERT_TRUE(found.has_value());
+    ASSERT_EQ(found->pocketBlanks.size(), 1u);
+    EXPECT_EQ(found->pocketBlanks[0].blanks, 1);
+}
+
+// Zero is a legal count here (and only here): it is how a move that consumed the last
+// pocket of a run closes the gap. The row is dropped rather than left at 0.
+TEST(CardBinderRepositoryTest, SetBlanksToZeroDropsTheAnchorRow) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    repo.add(makeBinder("b1", "Kanto+Kalos", {}, "2026-07-14T09:00:00Z"));
+    repo.addBlanks("b1", CardBinderBlank{.beforeDexNum = 650, .blanks = 2});
+
+    repo.setBlanks("b1", CardBinderBlank{.beforeDexNum = 650, .blanks = 0});
+
+    const auto found = repo.find("b1");
+    ASSERT_TRUE(found.has_value());
+    EXPECT_TRUE(found->pocketBlanks.empty());
+    Statement stmt(db, "SELECT COUNT(*) FROM card_binder_blank;");
+    ASSERT_TRUE(stmt.step());
+    EXPECT_EQ(stmt.columnInt(0), 0);  // dropped, not left at zero
+}
+
+TEST(CardBinderRepositoryTest, SetBlanksRejectsAnUnplaceableAnchorOrNegativeCount) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    repo.add(makeBinder("b1", "Mystery", {}, "2026-07-14T09:00:00Z"));
+
+    EXPECT_THROW(repo.setBlanks("b1", CardBinderBlank{.blanks = 1}), pokedex::StorageError);
+    EXPECT_THROW(repo.setBlanks("b1", CardBinderBlank{.beforeDexNum = 650,
+                                                      .beforeCopyId = "c1",
+                                                      .blanks = 1}),
+                 pokedex::StorageError);
+    EXPECT_THROW(repo.setBlanks("b1", CardBinderBlank{.beforeDexNum = 650, .blanks = -1}),
+                 pokedex::StorageError);
+}
+
+// --- placements ---------------------------------------------------------------------
+
+// A copy filed in b1, needed because card_binder_placement.card_copy_id carries a
+// foreign key into card_copy (unlike a blank's before_copy_id, which may be '').
+void insertCopy(Database& db, const char* id, int dexNum) {
+    Statement stmt(db,
+                   "INSERT INTO card_copy(id,pokemon_dex_num,ref_expansion,ref_language,"
+                   "ref_collector,ownership,condition,binder_id,comments,inserted_at,"
+                   "updated_at) VALUES(?,?,'MEW','EN','1/1','Owned','NearMint','b1','',"
+                   "'2026-07-14T09:00:00Z','2026-07-14T09:00:00Z');");
+    stmt.bindText(1, id);
+    stmt.bindInt(2, dexNum);
+    stmt.step();
+}
+
+// All three anchor shapes round-trip, including the one a blank cannot express: NEITHER
+// half set, meaning "at the very end".
+TEST(CardBinderRepositoryTest, PlacementsRoundTripAllThreeAnchorShapes) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    repo.add(makeBinder("b1", "Kanto+Kalos", {}, "2026-07-14T09:00:00Z"));
+    insertCopy(db, "c1", 25);
+    insertCopy(db, "c2", 26);
+    insertCopy(db, "c3", 0);
+    insertCopy(db, "anchor", 650);
+
+    repo.setPlacement("b1", {.cardCopyId = "c1", .beforeCopyId = "anchor", .ordinal = 1});
+    repo.setPlacement("b1", {.cardCopyId = "c2", .beforeDexNum = 650});
+    repo.setPlacement("b1", {.cardCopyId = "c3"});  // at the very end
+
+    const auto found = repo.find("b1");
+    ASSERT_TRUE(found.has_value());
+    ASSERT_EQ(found->cardPlacements.size(), 3u);
+
+    // Ordered by (before_dex_num, before_copy_id, ordinal): the end sentinel (0,'')
+    // first, then the copy anchor (0,'anchor'), then the dex anchor (650,'').
+    EXPECT_EQ(found->cardPlacements[0].cardCopyId, "c3");
+    EXPECT_FALSE(found->cardPlacements[0].beforeDexNum.has_value());
+    EXPECT_FALSE(found->cardPlacements[0].beforeCopyId.has_value());
+
+    EXPECT_EQ(found->cardPlacements[1].cardCopyId, "c1");
+    EXPECT_EQ(found->cardPlacements[1].beforeCopyId, "anchor");
+    EXPECT_EQ(found->cardPlacements[1].ordinal, 1);
+
+    EXPECT_EQ(found->cardPlacements[2].cardCopyId, "c2");
+    EXPECT_EQ(found->cardPlacements[2].beforeDexNum, 650);
+}
+
+// A copy has at most ONE placement per binder, so re-placing a moved card overwrites
+// its anchor instead of colliding on the primary key or leaving two rows.
+TEST(CardBinderRepositoryTest, SetPlacementReplacesTheCopysPreviousAnchor) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    repo.add(makeBinder("b1", "Kanto+Kalos", {}, "2026-07-14T09:00:00Z"));
+    insertCopy(db, "c1", 25);
+
+    repo.setPlacement("b1", {.cardCopyId = "c1", .beforeDexNum = 650, .ordinal = 2});
+    repo.setPlacement("b1", {.cardCopyId = "c1", .beforeDexNum = 151});
+
+    const auto found = repo.find("b1");
+    ASSERT_TRUE(found.has_value());
+    ASSERT_EQ(found->cardPlacements.size(), 1u);
+    EXPECT_EQ(found->cardPlacements[0].beforeDexNum, 151);
+    EXPECT_EQ(found->cardPlacements[0].ordinal, 0);
+}
+
+TEST(CardBinderRepositoryTest, ClearPlacementReturnsACopyToNaturalOrder) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    repo.add(makeBinder("b1", "Kanto+Kalos", {}, "2026-07-14T09:00:00Z"));
+    insertCopy(db, "c1", 25);
+    repo.setPlacement("b1", {.cardCopyId = "c1", .beforeDexNum = 650});
+
+    repo.clearPlacement("b1", "c1");
+    EXPECT_TRUE(repo.find("b1")->cardPlacements.empty());
+
+    ASSERT_NO_THROW(repo.clearPlacement("b1", "c1"));  // a no-op the second time
+}
+
+TEST(CardBinderRepositoryTest, PlacementVerbsRejectAnUnplaceableRow) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    repo.add(makeBinder("b1", "Mystery", {}, "2026-07-14T09:00:00Z"));
+    insertCopy(db, "c1", 25);
+
+    EXPECT_THROW(repo.setPlacement("b1", {.cardCopyId = ""}), pokedex::StorageError);
+    // Both anchors names no single row — the one combination a placement forbids.
+    EXPECT_THROW(repo.setPlacement("b1", {.cardCopyId = "c1",
+                                          .beforeDexNum = 650,
+                                          .beforeCopyId = "c2"}),
+                 pokedex::StorageError);
+    EXPECT_THROW(repo.setPlacement("b1", {.cardCopyId = "c1", .ordinal = -1}),
+                 pokedex::StorageError);
+}
+
+TEST(CardBinderRepositoryTest, ListSkipsUnplaceablePlacementRows) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    repo.add(makeBinder("b1", "Mystery", {}, "2026-07-14T09:00:00Z"));
+    insertCopy(db, "c1", 25);
+    insertCopy(db, "c2", 26);
+    db.exec(
+        "INSERT INTO card_binder_placement(binder_id,card_copy_id,before_dex_num,"
+        "before_copy_id,ordinal) VALUES('b1','c1',650,'anchor',0);");  // both anchors
+    db.exec(
+        "INSERT INTO card_binder_placement(binder_id,card_copy_id,before_dex_num,"
+        "before_copy_id,ordinal) VALUES('b1','c2',650,'',0);");  // the one good row
+
+    std::vector<CardBinder> binders;
+    ASSERT_NO_THROW(binders = repo.listAll());
+    ASSERT_EQ(binders.size(), 1u);
+    ASSERT_EQ(binders[0].cardPlacements.size(), 1u);
+    EXPECT_EQ(binders[0].cardPlacements[0].cardCopyId, "c2");
+}
+
+// The same load-bearing guard the blank set has: the name/regions/layout form must not
+// clobber a manual arrangement recorded since its binder was read.
+TEST(CardBinderRepositoryTest, UpdateLeavesTheManualArrangementUntouched) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    repo.add(makeBinder("b1", "Kanto+Kalos", {Region::Kanto}, "2026-07-14T09:00:00Z"));
+    insertCopy(db, "c1", 25);
+    repo.addBlanks("b1", CardBinderBlank{.beforeDexNum = 650, .blanks = 2});
+    repo.setPlacement("b1", {.cardCopyId = "c1", .beforeDexNum = 650});
+
+    repo.update("b1", "Renamed", {Region::Kanto, Region::Kalos}, 360,
+                CardBinderPocketGrid{.rows = 3, .columns = 3}, at("2026-07-15T12:00:00Z"));
+
+    const auto found = repo.find("b1");
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(found->name, "Renamed");
+    ASSERT_EQ(found->pocketBlanks.size(), 1u);
+    EXPECT_EQ(found->pocketBlanks[0].blanks, 2);
+    ASSERT_EQ(found->cardPlacements.size(), 1u);
+    EXPECT_EQ(found->cardPlacements[0].cardCopyId, "c1");
+}
+
+TEST(CardBinderRepositoryTest, AddWritesThePlacementsItIsGiven) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    repo.add(makeBinder("b1", "Host", {}, "2026-07-14T09:00:00Z"));
+    insertCopy(db, "c1", 25);
+    // A second binder, so the copy that b2's placement names already exists.
+    CardBinder b2 = makeBinder("b2", "Restored", {}, "2026-07-14T10:00:00Z");
+    b2.cardPlacements = {{.cardCopyId = "c1", .beforeDexNum = 650, .ordinal = 1}};
+    repo.add(b2);
+
+    const auto found = repo.find("b2");
+    ASSERT_TRUE(found.has_value());
+    ASSERT_EQ(found->cardPlacements.size(), 1u);
+    EXPECT_EQ(found->cardPlacements[0].beforeDexNum, 650);
+    EXPECT_EQ(found->cardPlacements[0].ordinal, 1);
+}
+
+// Unlike a blank's before_copy_id (which may be '' and so carries no key), a
+// placement's card_copy_id references card_copy — so hard-deleting the card takes its
+// placement with it rather than leaving an inert row behind.
+TEST(CardBinderRepositoryTest, HardDeletingACopyCascadesItsPlacement) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    repo.add(makeBinder("b1", "Kanto+Kalos", {}, "2026-07-14T09:00:00Z"));
+    insertCopy(db, "c1", 25);
+    repo.setPlacement("b1", {.cardCopyId = "c1", .beforeDexNum = 650});
+
+    db.exec("DELETE FROM card_copy WHERE id = 'c1';");
+
+    EXPECT_TRUE(repo.find("b1")->cardPlacements.empty());
+}
+
+TEST(CardBinderRepositoryTest, RemoveCascadesPlacementRows) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    repo.add(makeBinder("b1", "Kanto+Kalos", {}, "2026-07-14T09:00:00Z"));
+    insertCopy(db, "c1", 25);
+    repo.setPlacement("b1", {.cardCopyId = "c1", .beforeDexNum = 650});
+
+    repo.remove("b1");
+
+    Statement stmt(db, "SELECT COUNT(*) FROM card_binder_placement;");
+    ASSERT_TRUE(stmt.step());
+    EXPECT_EQ(stmt.columnInt(0), 0);
+}
+
 TEST(CardBinderRepositoryTest, RemoveDeletesTheRow) {
     Database db(":memory:");
     db.migrate();

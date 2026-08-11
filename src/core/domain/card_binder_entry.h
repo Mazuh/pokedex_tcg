@@ -45,4 +45,32 @@ struct CardBinderEntry {
     std::optional<CollectionStatus> status;  // nullopt = a blank pocket: nothing to report
 };
 
+// Whether this row occupies a physical pocket in the album — the predicate that
+// decides which rows the page/pocket count advances over, and so where every page
+// break falls.
+//
+// READ IT CAREFULLY: everything holds a pocket EXCEPT a Removed copy. That row stays
+// listed and grayed as frozen history, but the card is not in the sleeve, so counting
+// it would push every card after it one pocket along and misreport the page for the
+// whole rest of the binder. The two row kinds that hold NO card do still hold a
+// pocket, deliberately: a PLACEHOLDER (a listed species whose sleeve is reserved for
+// it) and a BLANK (a pocket whose entire purpose is to occupy space).
+//
+// Writing the tempting inverse — "has a card and isn't Removed" — makes blanks free
+// and breaks paging outright while every test still passes, which is exactly why this
+// lives in one shared place rather than being spelled out at each use: the guide view
+// renders from it and the move planner counts pockets with it, and the two must agree
+// on every row or a move would land a card in the wrong sleeve.
+inline bool holdsPocket(const CardBinderEntry& entry) {
+    return !(entry.status && *entry.status == CollectionStatus::Removed);
+}
+
+// Whether this row is a pocket the user deliberately left empty — the fourth shape
+// above, naming neither a species nor a card. Shared rather than re-spelled per caller
+// because a blank is the one row kind with no identity of its own: the guide view, the
+// move planner and the blank button all recognise it purely by this shape.
+inline bool isBlankPocket(const CardBinderEntry& entry) {
+    return !entry.pokemon && !entry.cardCopyId;
+}
+
 }  // namespace pokedex

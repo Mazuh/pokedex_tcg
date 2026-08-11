@@ -248,6 +248,45 @@ CREATE TABLE card_binder_blank (
 );
 )sql";
 
+// v13 → v14: MOVED CARDS — per binder, "this card sits immediately before that row".
+// The guide's order is otherwise wholly derived (species by dex, a species' copies in
+// filed order, species-free cards last), which leaves no way to express the gesture a
+// collector arranging a real album makes: "this one goes at page 18, pocket 2×2".
+//
+// The page/pocket coordinates are NOT stored. They are a rendering of the resolved
+// order, so a stored coordinate would go stale the moment anything before it changed;
+// an anchor survives every such edit. That is also what lets the GUI treat coordinates
+// as a pure translation layer on top and disable them entirely for a binder that never
+// recorded a pocket grid.
+//
+// Anchoring mirrors card_binder_blank with two deliberate differences. It anchors to a
+// COPY by preference (before_copy_id) rather than a species, because a move is about one
+// exact sleeve and must be able to land between the second and third copy of a species;
+// before_dex_num covers only the placeholder-row case, which has no card to name. And
+// BOTH halves unset is legal here, meaning "at the very end" — without it the last
+// pocket would be unreachable, since every other target is expressed as "before X".
+//
+// card_copy_id, unlike before_copy_id, is never '' — so it CAN carry a foreign key, and
+// does: a hard-deleted copy takes its placement with it rather than leaving an inert row.
+// Blanks anchored to that copy still orphan, which is the accepted, tested behaviour.
+//
+// `ordinal` orders the placements sharing one anchor, ascending and emitted nearest-last,
+// so a card aimed at the anchor row's own pocket appends (max + 1) and nothing is ever
+// renumbered. A placement may anchor to a copy that is itself placed — that is how you
+// target a pocket a moved card already holds — so placements chain; the guide resolves
+// that with a fixed-point pass and drops any placement whose anchor never resolves,
+// leaving the copy in its natural position rather than making it invisible.
+constexpr char kMigrationV14[] = R"sql(
+CREATE TABLE card_binder_placement (
+  binder_id       TEXT    NOT NULL REFERENCES card_binder(id) ON DELETE CASCADE,
+  card_copy_id    TEXT    NOT NULL REFERENCES card_copy(id)   ON DELETE CASCADE,
+  before_dex_num  INTEGER NOT NULL DEFAULT 0,
+  before_copy_id  TEXT    NOT NULL DEFAULT '',
+  ordinal         INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (binder_id, card_copy_id)
+);
+)sql";
+
 }  // namespace
 
 Database::Database(const std::filesystem::path& path) {
@@ -368,6 +407,9 @@ void Database::migrate() {
         }
         if (from < 13) {
             exec(kMigrationV13);
+        }
+        if (from < 14) {
+            exec(kMigrationV14);
         }
         setUserVersion(kSchemaVersion);
     });

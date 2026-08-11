@@ -70,6 +70,39 @@ void requireWellFormedBlank(const CardBinderBlank& blank) {
     }
 }
 
+// setBlanks accepts a count of 0 (the "no gap left" write a move makes when it takes the
+// last pocket of a run), which the add/remove pair reject — hence its own check rather
+// than requireWellFormedBlank.
+void requireBlankAnchor(const CardBinderBlank& blank) {
+    if (blank.beforeDexNum.has_value() == blank.beforeCopyId.has_value() || blank.blanks < 0) {
+        throw StorageError(
+            "a blank run must name exactly one anchor (a species or a card) and a "
+            "non-negative pocket count");
+    }
+}
+
+// A placement's anchor, unlike a blank's, may be EMPTY — that is the "at the very end"
+// case. What it must never be is both halves at once, which names no single row.
+void requireWellFormedPlacement(const CardBinderPlacement& placement) {
+    if (placement.cardCopyId.empty()) {
+        throw StorageError("a placement must name the card it places");
+    }
+    if (placement.beforeDexNum.has_value() && placement.beforeCopyId.has_value()) {
+        throw StorageError(
+            "a placement sits before at most one row — a species or a card, not both");
+    }
+    if (placement.ordinal < 0) {
+        throw StorageError("a placement's ordinal must not be negative");
+    }
+}
+
+// Bind a placement's anchor pair, mirroring bindBlankAnchor. Both halves unset encodes
+// as (0, '') — legal here, and read back as "at the very end".
+void bindPlacementAnchor(Statement& stmt, int first, const CardBinderPlacement& placement) {
+    stmt.bindInt(first, placement.beforeDexNum.value_or(kUnsetLayout));
+    stmt.bindText(first + 1, placement.beforeCopyId.value_or(std::string{}));
+}
+
 // Read the parent columns of one card_binder row, in the order the two SELECTs below
 // spell them. The child sets are attached separately (see attachChildren).
 CardBinder readBinderRow(Statement& stmt) {
@@ -144,6 +177,39 @@ void attachChildren(Database& db, std::vector<CardBinder>& binders,
         binders[it->second].pocketBlanks.push_back(blank);
     }
 
+    // Ordered by (anchor, ordinal) so the placements sharing an anchor come back in the
+    // sequence the guide emits them — the reader relies on ordinal order and sorting
+    // here saves it from re-sorting per anchor.
+    Statement placements(db,
+                         "SELECT binder_id, card_copy_id, before_dex_num, before_copy_id,"
+                         " ordinal FROM card_binder_placement" +
+                             where + " ORDER BY before_dex_num, before_copy_id, ordinal;");
+    if (scopeId != nullptr) {
+        placements.bindText(1, *scopeId);
+    }
+    while (placements.step()) {
+        const auto it = indexById.find(placements.columnText(0));
+        if (it == indexById.end()) {
+            continue;  // orphan placement row (shouldn't happen; CASCADE prevents it)
+        }
+        CardBinderPlacement placement;
+        placement.cardCopyId = placements.columnText(1);
+        const int dexNum = placements.columnInt(2);
+        const std::string beforeCopyId = placements.columnText(3);
+        if (placement.cardCopyId.empty() || (dexNum > kUnsetLayout && !beforeCopyId.empty())) {
+            continue;  // unplaceable row — keep the binder, drop the placement
+        }
+        // Neither anchor set is the legal "at the very end" case, so this is an
+        // if/else-if rather than the blank decode's exhaustive if/else.
+        if (dexNum > kUnsetLayout) {
+            placement.beforeDexNum = dexNum;
+        } else if (!beforeCopyId.empty()) {
+            placement.beforeCopyId = beforeCopyId;
+        }
+        placement.ordinal = placements.columnInt(4);
+        binders[it->second].cardPlacements.push_back(placement);
+    }
+
     // Keep each binder's regions in canonical (enum) order so display/sorting is
     // stable regardless of insertion or row order.
     for (CardBinder& binder : binders) {
@@ -173,8 +239,8 @@ void CardBinderRepository::add(const CardBinder& binder) {
         stmt.step();
 
         insertRegions(db_, binder.id, binder.pokemonRegions);
-        // Unlike update(), add() takes the whole entity, so it writes the blank set too
-        // and the struct round-trips. A freshly created binder simply has none.
+        // Unlike update(), add() takes the whole entity, so it writes the manual
+        // arrangement too and the struct round-trips. A freshly created binder has none.
         for (const CardBinderBlank& blank : binder.pocketBlanks) {
             requireWellFormedBlank(blank);
             Statement insert(db_,
@@ -183,6 +249,18 @@ void CardBinderRepository::add(const CardBinder& binder) {
             insert.bindText(1, binder.id);
             bindBlankAnchor(insert, 2, blank);
             insert.bindInt(4, blank.blanks);
+            insert.step();
+        }
+        for (const CardBinderPlacement& placement : binder.cardPlacements) {
+            requireWellFormedPlacement(placement);
+            Statement insert(db_,
+                             "INSERT INTO card_binder_placement(binder_id, card_copy_id,"
+                             " before_dex_num, before_copy_id, ordinal)"
+                             " VALUES(?, ?, ?, ?, ?);");
+            insert.bindText(1, binder.id);
+            insert.bindText(2, placement.cardCopyId);
+            bindPlacementAnchor(insert, 3, placement);
+            insert.bindInt(5, placement.ordinal);
             insert.step();
         }
     });
@@ -265,6 +343,80 @@ void CardBinderRepository::removeBlanks(const CardBinderId& id, const CardBinder
         bindBlankAnchor(prune, 2, blank);
         prune.step();
     });
+}
+
+void CardBinderRepository::setBlanks(const CardBinderId& id, const CardBinderBlank& blank) {
+    requireBlankAnchor(blank);
+    // Deliberately ONE statement either way, so this composes inside arrangeCard's
+    // transaction (Database::transaction is not reentrant). A count of 0 is a delete
+    // rather than a stored zero the reader would have to skip.
+    if (blank.blanks == 0) {
+        Statement stmt(db_,
+                       "DELETE FROM card_binder_blank"
+                       " WHERE binder_id = ? AND before_dex_num = ? AND before_copy_id = ?;");
+        stmt.bindText(1, id);
+        bindBlankAnchor(stmt, 2, blank);
+        stmt.step();
+        return;
+    }
+    // Upsert to the stated count rather than accumulating, so a caller can open a gap and
+    // resize one with the same verb, and a run that has no row yet is created by the same
+    // statement that would have updated it.
+    Statement stmt(db_,
+                   "INSERT INTO card_binder_blank(binder_id, before_dex_num,"
+                   " before_copy_id, blanks) VALUES(?, ?, ?, ?)"
+                   " ON CONFLICT(binder_id, before_dex_num, before_copy_id)"
+                   " DO UPDATE SET blanks = excluded.blanks;");
+    stmt.bindText(1, id);
+    bindBlankAnchor(stmt, 2, blank);
+    stmt.bindInt(4, blank.blanks);
+    stmt.step();
+}
+
+void CardBinderRepository::arrangeCard(const CardBinderId& id, const CardCopyId& copyId,
+                                       const std::optional<CardBinderPlacement>& placement,
+                                       const std::vector<CardBinderBlank>& blankSets) {
+    // One transaction: a move is a placement PLUS the blank runs it rebalances, and a
+    // half-applied move would leave the album described wrongly — a gap opened with no
+    // card in it, or a card moved with the gap it came from still recorded.
+    db_.transaction([&] {
+        if (placement) {
+            setPlacement(id, *placement);
+        } else {
+            clearPlacement(id, copyId);
+        }
+        for (const CardBinderBlank& blank : blankSets) {
+            setBlanks(id, blank);
+        }
+    });
+}
+
+void CardBinderRepository::setPlacement(const CardBinderId& id,
+                                        const CardBinderPlacement& placement) {
+    requireWellFormedPlacement(placement);
+    // One placement per copy per binder, so re-placing an already-moved card overwrites
+    // its anchor rather than colliding on the primary key. A single statement, so no
+    // transaction is needed.
+    Statement stmt(db_,
+                   "INSERT INTO card_binder_placement(binder_id, card_copy_id,"
+                   " before_dex_num, before_copy_id, ordinal) VALUES(?, ?, ?, ?, ?)"
+                   " ON CONFLICT(binder_id, card_copy_id)"
+                   " DO UPDATE SET before_dex_num = excluded.before_dex_num,"
+                   " before_copy_id = excluded.before_copy_id, ordinal = excluded.ordinal;");
+    stmt.bindText(1, id);
+    stmt.bindText(2, placement.cardCopyId);
+    bindPlacementAnchor(stmt, 3, placement);
+    stmt.bindInt(5, placement.ordinal);
+    stmt.step();
+}
+
+void CardBinderRepository::clearPlacement(const CardBinderId& id, const CardCopyId& copyId) {
+    Statement stmt(db_,
+                   "DELETE FROM card_binder_placement"
+                   " WHERE binder_id = ? AND card_copy_id = ?;");
+    stmt.bindText(1, id);
+    stmt.bindText(2, copyId);
+    stmt.step();
 }
 
 std::optional<CardBinder> CardBinderRepository::find(const CardBinderId& id) {
