@@ -517,7 +517,16 @@ when used, and the LLM's reading is never the silent source of a saved copy's id
 permission** is handled: `startCamera()` gates on
 `qApp->checkPermission/requestPermission(QCameraPermission{})` and shows every state IN the screen
 (waiting / denied-with-a-Settings-hint / no-camera), rather than the silent `qt.permissions` log
-line users can't see. The `if(APPLE)` block does TWO build-side things — BOTH required, missing
+line users can't see. That whole block is **conditionally compiled**: `<QPermissions>` is a Qt
+6.5+ header (Ubuntu CI's `qt6-base-dev` is 6.4 — an unguarded include is a hard `fatal error:
+QPermissions: No such file or directory` there), and even on 6.5+ Qt only builds the API on the
+platforms that HAVE such a gate. So the include is version-gated (`QT_VERSION_CHECK(6, 5, 0)`)
+and the calls feature-gated behind the file-local `POKEDEX_HAS_CAMERA_PERMISSION`
+(= `QT_CONFIG(permissions)`, which cannot itself be tested on 6.4 — an undefined
+`QT_FEATURE_permissions` makes `QT_CONFIG` a preprocessor divide-by-zero, hence the two-step
+guard); where neither holds there is nothing to ask for and the camera just opens. Any other
+new Qt 6.5+ API needs the same treatment or a bump of CI's Qt. The `if(APPLE)` block does TWO
+build-side things — BOTH required, missing
 either silently auto-denies (no prompt, no Settings entry, just a log line): (1) the macOS build is
 a real **`.app` bundle** (`MACOSX_BUNDLE` + `cmake/macos/Info.plist.in` → a `Contents/Info.plist`
 with `NSCameraUsageDescription`, ad-hoc-signed with id `com.mazuh.pokedex-tcg`) — Qt's handler reads

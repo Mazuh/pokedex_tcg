@@ -14,7 +14,6 @@
 #include <QLineEdit>
 #include <QMediaCaptureSession>
 #include <QMediaDevices>
-#include <QPermissions>
 #include <QPixmap>
 #include <QPushButton>
 #include <QResizeEvent>
@@ -24,6 +23,19 @@
 #include <QString>
 #include <QVBoxLayout>
 #include <QVideoWidget>
+#include <QtGlobal>
+
+// The camera permission gate is macOS's, and the API for it is doubly optional: it only
+// exists from Qt 6.5 (Ubuntu CI still ships 6.4, where <QPermissions> is not a header at
+// all), and even then Qt only builds it on the platforms that HAVE such a gate — so the
+// include is version-gated and the calls feature-gated. Where neither holds there is
+// nothing to ask for and the camera simply opens.
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+#include <QPermissions>
+#define POKEDEX_HAS_CAMERA_PERMISSION QT_CONFIG(permissions)
+#else
+#define POKEDEX_HAS_CAMERA_PERMISSION 0
+#endif
 
 #include <optional>
 #include <string>
@@ -309,6 +321,7 @@ void ScanCardView::startCamera() {
         return;
     }
 
+#if POKEDEX_HAS_CAMERA_PERMISSION
     // macOS/iOS gate camera access behind a permission. Without asking, the camera just
     // fails to a log line the user never sees ("Access to camera not granted"), so check
     // the permission first and, when it isn't decided yet, request it (which shows the
@@ -342,6 +355,7 @@ void ScanCardView::startCamera() {
                    "Privacy & Security ▸ Camera, then return to this screen."));
             return;
     }
+#endif
 
     openCamera();
 }
