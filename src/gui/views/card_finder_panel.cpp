@@ -52,6 +52,17 @@ QString setEntryLabel(const CardSetInfo& s) {
     return code.isEmpty() ? name : QStringLiteral("%1 — %2").arg(code, name);
 }
 
+// Whether two result sets are the same printings in the same order. The card id is the
+// row's identity (it already keys the thumbnail map), so comparing the id sequence is
+// what decides whether a reply changes anything the user can see — deliberately NOT a
+// full payload comparison, since a re-fetched row's prices may differ while the row
+// itself, and the user's pick of it, are unchanged.
+bool sameCandidateIds(const std::vector<CardCandidate>& a, const std::vector<CardCandidate>& b) {
+    return a.size() == b.size() &&
+           std::equal(a.begin(), a.end(), b.begin(),
+                      [](const CardCandidate& x, const CardCandidate& y) { return x.id == y.id; });
+}
+
 }  // namespace
 
 CardFinderPanel::CardFinderPanel(CardSearchService& search, int dexNumber,
@@ -228,11 +239,25 @@ void CardFinderPanel::onPrintingsReady(std::uint64_t requestId, int dexNumber,
     }
     loading_ = false;
     failed_ = false;
+    // The SAME printings, in the same order, mean nothing on screen needs to change —
+    // so leave the rows, the scroll position, the loaded thumbnails and above all the
+    // PICKED card alone. Re-running an equivalent search is routine rather than
+    // exceptional: picking a set from the completer replaces the typed "cri" with
+    // "Chaos Rising", which narrows to the same set and returns the same list. The
+    // unconditional rebuild below then dropped the pick (and the card image chosen with
+    // it) behind the user's back, and the only cure was to click the very same row
+    // again. Identity is the id sequence, not the payload: a fresher reply for a row
+    // already on screen is still that row.
+    if (!candidates_.empty() && sameCandidateIds(candidates_, cards)) {
+        candidates_ = cards;  // same ids in the same order → selectedIndex_ still valid
+        updateStatus();
+        return;
+    }
     candidates_ = cards;
     loadedCount_ = 0;
     itemById_.clear();
     printings_->clear();
-    clearPreview();  // fresh results → no card selected yet
+    clearPreview();  // genuinely different results → no card selected yet
     fillViewport();
     updateStatus();
 }
@@ -457,8 +482,24 @@ void CardFinderPanel::rebuildSetCompleter() {
                         const QString name = QString::fromStdString(s.name);
                         const QString code = QString::fromStdString(s.ptcgoCode);
                         const QString clean = name.isEmpty() ? code : name;
+                        // What is listed may ALREADY be exactly this set's printings —
+                        // the usual case, since the user typed a filter that resolved
+                        // here ("cri" → CRI) and picked a card from what came back. Then
+                        // re-searching is pure cost: a request against an API that fails
+                        // most of them, and a failure would clear the list and the pick
+                        // with it. Judged from the rows themselves (every one from this
+                        // set), which is the only thing that can be checked here — the
+                        // service, not the panel, resolves a filter to sets.
+                        const bool alreadyThisSet =
+                            !loading_ && !candidates_.empty() &&
+                            std::all_of(candidates_.begin(), candidates_.end(),
+                                        [&s](const CardCandidate& c) { return c.setId == s.id; });
                         searchField_->setText(clean);  // replace the decorated entry
-                        searchWith(clean);
+                        if (alreadyThisSet) {
+                            lastQuery_ = clean;  // keep Retry aligned with the shown text
+                        } else {
+                            searchWith(clean);
+                        }
                         return;
                     }
                 }
