@@ -121,9 +121,12 @@ repo now carries the full CRUD surface — `add`, `find`, `listAll`, `update`
 the full CRUD surface: `save` (upsert parent + replace its source set), `find`,
 `listAll`, `remove`, and `wishedDexNums` (the "Wished" status read). `app/` holds
 `install_service`, `uuid` (`newUuidV4`, the shared id minter used by every
-service), `BinderService` (binder CRUD verbs — `create`/`update` both take a
-`std::vector<Region>` for the multivalued region set plus the optional `capacity` +
-`CardBinderPocketGrid`; `update` replaced the old name-only `rename`; and
+service), `BinderService` (binder CRUD verbs — `create` takes a `std::vector<Region>` for
+the multivalued region set plus the optional `capacity` + `CardBinderPocketGrid`, while
+`update` takes the name, layout AND regions — but the regions may only CHANGE while the
+binder is still empty [see the checklist note below; `canChangeRegions` is the query behind
+the edit page's enabled/disabled checkboxes, and passing the current regions is never a
+change]; `update` replaced the old name-only `rename`; and
 `insertBlanks`/`removeBlanks`, the blank-pocket verbs; and `applyMove`, the SINGLE commit path
 for a manual arrangement — it takes a whole `BinderMovePlan` (from `planCardMove` **or**
 `planCardReset`) and writes the placement, or its removal, plus every blank run it rebalances
@@ -136,11 +139,16 @@ its copy wholesale [`binder_ = service.insertBlanks(...)`] instead of patching t
 happens to know about, which is what stops a newly added field from being silently dropped on
 that path), `binder_move_planner` (the Qt-free `planCardMove` / `planCardReset` — see the
 moved-cards note below), `BinderGuideService`
-(the `buildBinderEntries` the inferred zone refers to — one row per card FILED in the
-binder [a species' duplicates adjacent in filed order; species-free cards last, since they
-carry no dex number] plus one placeholder row per listed species holding nothing, plus one
-row per **blank pocket** and one row per **moved card** interleaved before the row their
-anchor names; a row is a slot, not a species), `PokemonBrowseService`
+(the `buildBinderEntries` the inferred zone refers to — the binder's CHECKLIST (one row per
+card filed against a species in one of the binder's regions, duplicates adjacent in filed
+order, plus a placeholder row for every reserved slot holding nothing) followed by the
+EXTRAS (everything the checklist doesn't claim, in filed order), with one row per **blank
+pocket** and one per **moved card** interleaved before the row their anchor names; a row is
+a slot, not a species — see the reserved-slots note below. It also exposes the free function
+`listedSpecies(binder, rows)` [the checklist itself, for the GUI's Listed stat] and
+`placeholderStatusFor(binderId, dexNum)` [the verdict a placeholder would carry, published
+for the move planner, which must project one but can't reach the wishlist]),
+`PokemonBrowseService`
 (`listAll` → every catalog species paired with its owned-copy count, the unscoped
 Pokédex browser's data), `CardCopyService` (the copy verbs —
 `create`/`editDetails`/`assignToBinder`/`remove`[soft, with an optional
@@ -348,8 +356,13 @@ sticky `setAddMode`/`setWishlistVisible` are set PER ROW [a species-free row swi
 grayed, has a blank Prices cell, and is inert on double-click. Its top bar carries a **"Add a
 card"** button — the species-free add page locked to this binder, always available since a
 Trainer card has no row to start from; the species add flow is unchanged. Header stats are four
-tooltipped labels: `Listed` [distinct species — NOT `entries_.size()` any more] · `Captured`
-[species with ≥1 Owned copy filed here] · `Cards` [Owned copies filed here; duplicates and
+tooltipped labels: `Listed` [the CHECKLIST — `listedSpecies(binder_, entries_)`, NOT
+`entries_.size()` and NOT the distinct species among the rows, since an extra carries a
+species and a row without the binder ever reserving it a slot] · `Captured` [checklist slots
+that are FILLED: a listed species with ≥1 Owned copy row that is `!placedByHand`.
+Deliberately not `ownedCountsByDex_`'s key set, which counts a species owned anywhere in the
+binder — a card moved out to the extras leaves its slot reading Missing, and the figure above
+it has to agree with the row] · `Cards` [Owned copies filed here; duplicates and
 non-Pokémon cards each count — rendered as "Cards 42 of 360 (12%)" when the binder records a
 capacity, and deliberately UNCLAMPED, since an over-full album is exactly what the figure
 exists to reveal] · market value. Its first two columns, `Page` and `Pocket`, say where a row
@@ -700,6 +713,59 @@ ctest --test-dir build --output-on-failure
   not the user's — two instances writing the same DB also contend on SQLite's
   file lock.
 
+**The checklist and the extras: what a binder reserves a pocket for.** A binder's guide is
+two runs, and every ordering rule below depends on which one a row is in.
+
+The **checklist** is derived from the binder's REGIONS alone (`listedSpecies`): Kanto +
+Kalos + Paldea = 151 + 72 + 120 = 343 slots, whatever is filed. Filing a card can never add
+a slot and moving one can never take one away — which is the whole point, since a collector
+plans a physical album around a fixed pocket count and a slot that appeared or vanished
+would repaginate everything after it. So:
+
+- **A copy whose species is outside the binder's regions goes to the EXTRAS**, not into the
+  dex run. Its species stays a legal ANCHOR though (`anchorableDex` = the checklist plus every
+  extras species), and its dex-anchored blanks and placements are emitted once, ahead of the
+  first extras card of that species — deliberately before the `placed` skip, so the gap still
+  lands somewhere even if that card was itself pinned elsewhere. An anchor that renders
+  nowhere is not merely invisible: `canonicalBlankSets` only spares a run whose anchor names
+  no row AT ALL, so the next move would delete the record for good. A Johto card in a Kanto+Kalos+Paldea album used to wedge in at #200 — between
+  Mew and Chespin — and shove ~192 pockets along; now it lands after #1025 with the
+  Trainer/Energy cards. Extras keep filed order (`inserted_at, rowid`) and are arranged by
+  hand from there.
+- **A reserved slot stays reserved whenever nothing is OCCUPYING it**, falling back to a
+  placeholder rather than emitting nothing. "Occupying" is `holdsPocket`, not "has a row":
+  a soft-Removed copy keeps its row as frozen history but holds no pocket, so a species whose
+  every copy was removed shows the history row AND a placeholder beside it. Counting rows
+  instead silently dropped a pocket on the app's ordinary delete. That is what makes two cards sharing a dex
+  number expressible: Kanto Tauros and Paldean Tauros are both #128 (the catalog is one
+  entry per number — no regional forms), so pinning the Paldean one to the extras leaves
+  #128 reading Missing until the Kanto print fills it. Note the album then holds one MORE
+  card-sized pocket than before, which is correct — the Pokédex sleeve is being kept free.
+- **Both rules are off for a REGION-LESS binder**, which has no checklist to derive and
+  lists only what is filed in it. There a species does stop being listed once its last copy
+  moves away, since it was never a reserved slot. The single `reserved` flag in
+  `buildEntries` (`= !binder.pokemonRegions.empty()`) carries both jobs, and is only sound
+  because the partition guarantees every `dexNums` member is region-listed when regions
+  exist — keep the two together.
+
+Because the checklist is load-bearing, **a binder's regions can only change while it is
+still EMPTY** — no cards filed, no blanks, no placements (`CardBinderRepository::hasContents`
+gates it inside the same transaction as the write; `BinderService::canChangeRegions` is what
+`BinderEditPage` asks to enable or disable its checkboxes). Re-scoping an album that already
+holds cards has no sound answer — where does a newly added second region begin, with 200
+cards filed against the first? — and would orphan every blank and placement recorded against
+the old layout. An empty binder has none of that to lose, so a scope typed wrong at creation
+stays correctable instead of forcing a delete-and-refile (which would unassign every card via
+`ON DELETE SET NULL`). Passing the regions a binder already has is never a change, so an
+ordinary rename of a filled binder still goes through.
+
+`CardBinderEntry::placedByHand` is the guide's published verdict on whether a row sits where
+the derivation put it or where the user did. It exists because the view (its "moved here by
+hand" tooltip), the stats (`Captured`) and the move planner (whether a move vacates a slot)
+all need it, and re-deriving it from `binder.cardPlacements` skips the honoured/orphaned/
+cyclic resolution — counting a card whose orphaned placement left it in natural order as
+placed. Read the flag; never rebuild it.
+
 **A binder's physical layout: pages, pockets, and blanks.** A binder optionally records
 what the album physically IS — its `capacity` (an int) and its `pocketGrid`
 (`CardBinderPocketGrid{rows, columns}`) — both edited on `BinderEditPage` and shown as two
@@ -744,9 +810,9 @@ the GUI mints for any row that has a species, since it survives that card being 
 re-added and works on a species not owned yet) or `beforeCopyId` (one exact card, for a
 species-free row with no dex number to name it). `blanks` is a COUNT per anchor, not a row per
 pocket — blanks at one anchor are indistinguishable, so a row-per-pocket table would need a
-synthetic ordinal purely to permit duplicates. An ORPHANED blank (region un-scoped, copy
-deleted or moved away) simply emits nothing; `buildEntries` stays read-only and never prunes
-it, so restoring the region restores the layout. A blank guide row is `CardBinderEntry` with
+synthetic ordinal purely to permit duplicates. An ORPHANED blank (copy deleted or refiled
+elsewhere — regions can no longer be un-scoped) simply emits nothing; `buildEntries` stays
+read-only and never prunes it, so re-filing the card restores the layout. A blank guide row is `CardBinderEntry` with
 BOTH optionals unset and `status == nullopt` — which is why `status` is now
 `std::optional<CollectionStatus>` (an empty pocket has no collection verdict, and it composes
 with `compareOptional` so blanks sink in the Status sort in both directions). `BinderView`'s
@@ -776,7 +842,10 @@ like the blank button). Two deliberate differences from a blank's anchor: it pre
 `beforeCopyId` (a move is about ONE sleeve, so it must land between two copies of a species;
 `beforeDexNum` covers only a placeholder row), and **both anchors unset is legal and means "at
 the very end"** — without it the last pocket is unreachable, since every other target reads
-"before X".
+"before X". A card pinned that way is emitted after the natural extras, so **cards filed
+LATER land before it** and its pocket number creeps by one each time. That drift is accepted
+and deliberate, not a bug to fix: any anchor-relative model has it, since there is no row
+after the last one to name, and the user can simply Move the newcomer too.
 
 Three rules make the emission work, and the first is the crux:
 
@@ -803,14 +872,28 @@ Three rules make the emission work, and the first is the crux:
   only a placeholder keeps a dex-numbered run. Orphaned runs are left strictly alone.
 
 The arithmetic lives in the Qt-free `core/app/binder_move_planner` — `planCardMove(binder, rows,
-copyId, targetPocket)` returns a `BinderMovePlan` (placement + absolute blank runs +
-`projectedRows` + `shiftedCards`), and `planCardReset` the same for giving a position up. It is a
-PLAN, not a write, for two reasons: the GUI has to state the cost before committing, and keeping
-the hardest logic pure is what makes it exhaustively testable. Notes that cost real debugging:
+copyId, targetPocket, placeholderStatusFor)` returns a `BinderMovePlan` (placement + absolute
+blank runs + `projectedRows` + `shiftedCards`), and `planCardReset` the same for giving a position
+up. It is a PLAN, not a write, for two reasons: the GUI has to state the cost before committing,
+and keeping the hardest logic pure is what makes it exhaustively testable. Notes that cost real
+debugging:
 
 - **The card is taken OUT first, then inserted at the target**, so a pocket names a position in
   the FINAL arrangement — the physical gesture. Against the current arrangement instead, every
   forward move lands one pocket short.
+- **Taking a card off a reserved slot SUBSTITUTES a placeholder rather than deleting the row**
+  (`vacatesReservedSlot`), so the projection matches what the guide will emit. Every clause of
+  that predicate earns its place: only a scoped binder reserves slots; only a `!placedByHand` row
+  is holding one (an already-pinned card left its placeholder behind on the earlier move, and a
+  second would invent a pocket); a species outside the regions is an extra, never a slot; and a
+  sibling copy still in natural order means the slot is not vacant. Knock-on effects: the vacated
+  gap always survives (`gapSurvives || vacatesSlot` — there is now a row for it to sit before),
+  and `shiftedCards` needs no change, since a substitution moves nothing.
+- **The placeholder's STATUS comes from the caller** (`PlaceholderStatusFn`, defaulting to
+  Incomplete). The planner is pure and the verdict needs the wishlist plus the other binders, so
+  `BinderView` passes `BinderGuideService::placeholderStatusFor(binder_.id, dex)`. Pass the
+  binder id, never `{}` — `ownedElsewhere("")` excludes nothing, so a species owned right here
+  reads as Elsewhere, which is silently wrong rather than obviously so.
 - **`shiftedCards` counts only OTHER cards**, not placeholders or blanks: those are empty
   sleeves, so shuffling them costs nothing physically, and counting them would cry wolf on every
   move in a binder that is mostly checklist. The confirmation prompt is skipped entirely at 0 —
@@ -818,11 +901,21 @@ the hardest logic pure is what makes it exhaustively testable. Notes that cost r
 - **A reset is not an undo.** It re-anchors the vacated gap forward exactly as a move does
   (dropping it only when nothing follows), so the page break survives; but the sleeve the card
   leaves closes up, and a blank the move consumed does not come back.
+- **A move carries the card's RIDERS** (`ridersOf` — everything pinned before it, transitively,
+  plus each rider's own gap). The guide emits them wherever their anchor goes, so a projection
+  that reinserts the moved card alone describes an arrangement that never happens and
+  under-reports `shiftedCards`. The convoy is the run immediately ahead of the card, after its
+  own blanks (which stay behind for whatever now follows).
 - **`projectedRows` is the anti-drift device.** The planner simulates the arrangement and
   `buildEntries` emits it — two encodings of one ordering rule.
   `MoveTest.ProjectedRowsMatchWhatTheGuideActuallyEmits` applies real plans through the real
   repository and re-reads the guide over a sweep of shapes; every other move test is only as
   trustworthy as that one. It is empty for a reset, whose landing spot only the guide can derive.
+  It has a REGION-SCOPED sibling (`…WhenAMoveVacatesAReservedSlot`) because the original sweep
+  uses a region-less binder and so can never exercise the placeholder substitution at all — when
+  adding an emission rule, check which sweep can actually reach it. The sibling compares statuses
+  as well as row order, so a projection can't pass by getting the sequence right and the
+  substituted placeholder's verdict wrong.
 
 GUI: a second contextual button, **"Move…"**, sits beside "Insert blank" under the table (same
 selection-scoped rule), gated on a recorded grid, natural filed order, and a row that is a real
@@ -868,11 +961,13 @@ for CRUD.** Creating/editing a record is done on a full page pushed onto the hos
 `QStackedWidget` with a Back top bar — not a `QDialog` or a `QInputDialog`. Binder
 create/edit is the canonical example: the reusable `BinderEditPage`
 (`gui/views/binder_edit_page`, create + edit modes over `BinderService`; a name field
-plus a **checkbox per region** — the region set is multivalued) is pushed
+plus a **checkbox per region** — the region set is multivalued, and in EDIT mode the
+checkboxes are shown but disabled, with a muted note saying why: regions are fixed at
+creation, see the checklist note above) is pushed
 by **both** hosts — `BindersPage` (its "New…" / "Edit…" buttons) and `BinderView`
 (an "Edit binder" button beside "Refresh prices" in the guide's top bar) — and on
 Back each host re-reads the binder(s) from storage (`BinderView` also re-sets its
-heading and recomputes the guide, since a region change alters the species list).
+heading and recomputes the guide, since a capacity or grid change repages it).
 This replaced the old `BinderEditorDialog` modal and the rename `QInputDialog`. The one menu bar lives on `MainWindow` (attached via `layout->setMenuBar`,
 since the shell is a plain `QWidget`, not a `QMainWindow`); its single "About"
 `QAction` carries `QAction::AboutRole` so macOS relocates it into the application

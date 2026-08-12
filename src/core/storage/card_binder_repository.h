@@ -30,9 +30,18 @@ public:
     void add(const CardBinder& binder);
 
     // Overwrite the fields the binder's edit form owns — name, region set, physical
-    // layout, and the updatedAt stamp — in a transaction: bump the row, then replace
-    // its whole card_binder_region set. Throws StorageError when no binder has that
-    // id (a caller error, not a no-op).
+    // layout, and the updatedAt stamp. Throws StorageError when no binder has that id (a
+    // caller error, not a no-op).
+    //
+    // The REGION SET may only change while the binder is still EMPTY (see hasContents).
+    // Its regions decide which species the guide reserves a slot for, so re-scoping an
+    // album that already holds cards re-derives every page break underneath the blanks and
+    // moves arranged against the old layout — and there is no sound answer to "where does
+    // the newly added region begin" with cards already filed. An empty binder has no such
+    // layout to invalidate, which is what leaves a mistyped scope correctable instead of
+    // forcing a delete-and-refile. Requesting a change on a non-empty binder throws
+    // StorageError; passing the regions it already has is always fine. The check and the
+    // write share one transaction, so the two can't race.
     //
     // It deliberately takes the individual fields rather than a CardBinder, and it
     // NEVER touches card_binder_blank or card_binder_placement: the binder's manual
@@ -43,6 +52,11 @@ public:
     void update(const CardBinderId& id, const std::string& name,
                 const std::vector<Region>& regions, std::optional<int> capacity,
                 const std::optional<CardBinderPocketGrid>& pocketGrid, Timestamp updatedAt);
+
+    // Whether anything is filed in or arranged about this binder — a card, a blank pocket,
+    // or a moved card. The gate on re-scoping above, and what the edit page asks so it can
+    // enable or disable the region checkboxes.
+    bool hasContents(const CardBinderId& id);
 
     // Delete a binder row. Because card_copy.binder_id is ON DELETE SET NULL, any
     // copies filed under it survive with their binder association cleared — the

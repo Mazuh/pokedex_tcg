@@ -51,12 +51,25 @@ public:
                       std::optional<int> capacity = std::nullopt,
                       std::optional<CardBinderPocketGrid> pocketGrid = std::nullopt);
 
-    // Edit an existing binder's name, region set and physical layout. Same validation
-    // as create; bumps updatedAt to now(). The binder's blank pockets are NOT part of
-    // this form and are left alone (see CardBinderRepository::update).
+    // Edit an existing binder's name, region set and physical layout. Same validation as
+    // create; bumps updatedAt to now(). The binder's blank pockets are NOT part of this
+    // form and are left alone (see CardBinderRepository::update).
+    //
+    // The REGIONS may only change while the binder is still EMPTY. They decide which
+    // species get a reserved slot, and hence where every page break falls, so re-scoping
+    // an album that already holds cards has no sound answer (where would a newly added
+    // second region begin, with 200 cards already filed against the first?) and would
+    // orphan the blanks and moves arranged against the old layout. An empty binder has
+    // none of that to lose, so a scope typed wrong at creation stays correctable rather
+    // than forcing a delete-and-refile. Requesting a change on a non-empty binder throws;
+    // passing the regions it already has always succeeds.
     CardBinder update(const CardBinderId& id, std::string name, std::vector<Region> regions,
                       std::optional<int> capacity = std::nullopt,
                       std::optional<CardBinderPocketGrid> pocketGrid = std::nullopt);
+
+    // Whether this binder's regions can still be changed — nothing filed in or arranged
+    // about it yet. The edit page asks so it can enable or disable its region checkboxes.
+    bool canChangeRegions(const CardBinderId& id);
 
     // Leave `blank.blanks` pockets empty immediately before the row its anchor names,
     // pushing everything after it further along the page — the user-driven page break.

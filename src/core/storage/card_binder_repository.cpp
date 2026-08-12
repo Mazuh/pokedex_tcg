@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <set>
 #include <string>
 #include <unordered_map>
 
@@ -266,14 +267,27 @@ void CardBinderRepository::add(const CardBinder& binder) {
     });
 }
 
+bool CardBinderRepository::hasContents(const CardBinderId& id) {
+    // One query rather than three round trips; any hit at all means "not empty".
+    Statement stmt(db_,
+                   "SELECT EXISTS(SELECT 1 FROM card_copy WHERE binder_id = ?)"
+                   "     + EXISTS(SELECT 1 FROM card_binder_blank WHERE binder_id = ?)"
+                   "     + EXISTS(SELECT 1 FROM card_binder_placement WHERE binder_id = ?);");
+    stmt.bindText(1, id);
+    stmt.bindText(2, id);
+    stmt.bindText(3, id);
+    return stmt.step() && stmt.columnInt(0) > 0;
+}
+
 void CardBinderRepository::update(const CardBinderId& id, const std::string& name,
                                   const std::vector<Region>& regions,
                                   std::optional<int> capacity,
                                   const std::optional<CardBinderPocketGrid>& pocketGrid,
                                   Timestamp updatedAt) {
     db_.transaction([&] {
-        // All the parent's editable fields in ONE statement — Database::transaction is
-        // not reentrant, and there is no reason to split them.
+        // All the parent's own fields in ONE statement — Database::transaction is not
+        // reentrant, and there is no reason to split them. The blank and placement sets are
+        // deliberately untouched here; see the declaration.
         Statement stmt(db_,
                        "UPDATE card_binder SET name = ?, capacity = ?, pocket_rows = ?,"
                        " pocket_columns = ?, updated_at = ? WHERE id = ?;");
@@ -285,17 +299,43 @@ void CardBinderRepository::update(const CardBinderId& id, const std::string& nam
         stmt.bindText(6, id);
         stmt.step();
         if (db_.changes() == 0) {
-            // No row matched — editing a binder that isn't there is a caller error,
-            // not a silent success. Throwing rolls the transaction back.
+            // No row matched — editing a binder that isn't there is a caller error, not a
+            // silent success. Throwing rolls the transaction back.
             throw StorageError("no binder with id: " + id);
         }
 
-        // Replace the whole region set: clear the old rows, then re-insert. The blank
-        // set is deliberately untouched here — see the declaration.
+        // Re-scoping is allowed only while the binder is empty. Compare against what is
+        // stored so that saving the edit form with its regions unchanged — which is what
+        // every edit of a filled binder does — is never mistaken for a change.
+        std::vector<Region> current;
+        {
+            Statement read(db_,
+                           "SELECT region FROM card_binder_region WHERE binder_id = ?;");
+            read.bindText(1, id);
+            while (read.step()) {
+                try {
+                    current.push_back(regionFromText(read.columnText(0)));
+                } catch (const StorageError&) {
+                    // Unknown token — same tolerance listAll has. It can only make the
+                    // stored set look SMALLER, so at worst a hand-edited row is treated
+                    // as a change and refused on a non-empty binder, never silently
+                    // rewritten.
+                }
+            }
+        }
+        const std::set<Region> was(current.begin(), current.end());
+        const std::set<Region> wants(regions.begin(), regions.end());
+        if (was == wants) {
+            return;
+        }
+        if (hasContents(id)) {
+            throw StorageError(
+                "a binder's regions can only be changed while it is still empty");
+        }
+
         Statement clear(db_, "DELETE FROM card_binder_region WHERE binder_id = ?;");
         clear.bindText(1, id);
         clear.step();
-
         insertRegions(db_, id, regions);
     });
 }

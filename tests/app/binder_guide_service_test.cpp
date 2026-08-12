@@ -43,6 +43,7 @@ using pokedex::WishlistRepository;
 constexpr int kBulbasaur = 1;
 constexpr int kPikachu = 25;
 constexpr int kMew = 151;
+constexpr int kTauros = 128;      // shared by the Kanto and Paldean forms — one dex slot
 constexpr int kMisdreavus = 200;  // Johto — used to test out-of-region filed copies
 
 Timestamp at(const char* iso) { return pokedex::timestampFromIso(iso); }
@@ -200,15 +201,28 @@ TEST_F(GuideTest, OwnedCopyInAnotherBinderReadsElsewhere) {
 // A Removed copy still carries this binder's id, so it keeps its own row here
 // (frozen history is filed history) — the status no longer comes from a
 // species-level fallback but from that copy itself.
-TEST_F(GuideTest, RemovedCopyInBinderReadsRemoved) {
+// A Removed copy keeps its row as frozen history, but it holds NO pocket — the card is
+// not in the sleeve. So the reserved slot is empty and still needs its placeholder beside
+// the history, or soft-removing one card (the app's ordinary delete) would quietly take a
+// pocket out of the album and renumber every page after it.
+TEST_F(GuideTest, RemovedCopyKeepsItsHistoryRowAndReopensTheSlot) {
     const CardBinder binder = makeBinder("b1", {Region::Kanto});
     binders.add(binder);
     copies.add(makeCopy("c1", kPikachu, CardOwnership::Removed, "b1"));
 
     const auto entries = guide.buildEntries(binder);
-    EXPECT_EQ(entries.size(), 151u);
-    EXPECT_EQ(statusOf(entries, kPikachu), CollectionStatus::Removed);
-    EXPECT_EQ(copyIdsOf(entries, kPikachu), std::vector<std::string>{"c1"});
+    EXPECT_EQ(entries.size(), 152u);  // 151 slots + the history row, which holds no pocket
+    EXPECT_EQ(statusesOf(entries, kPikachu),
+              (std::vector<CollectionStatus>{CollectionStatus::Removed,
+                                             CollectionStatus::Incomplete}));
+    EXPECT_EQ(copyIdsOf(entries, kPikachu), (std::vector<std::string>{"c1", ""}));
+
+    // The pocket count — what the Page/Pocket columns actually number — is untouched.
+    int pockets = 0;
+    for (const CardBinderEntry& e : entries) {
+        pockets += pokedex::holdsPocket(e) ? 1 : 0;
+    }
+    EXPECT_EQ(pockets, 151);
 }
 
 // Precedence: Wished outranks Elsewhere. Both are species-level verdicts, so this
@@ -226,7 +240,11 @@ TEST_F(GuideTest, WishedOutranksElsewhere) {
 
 // A copy filed in the binder for an out-of-region species must still appear —
 // filed cards are never hidden by the region filter. One copy, so one extra row.
-TEST_F(GuideTest, OutOfRegionFiledCopyAppearsInRowSet) {
+//
+// It appears in the EXTRAS at the end, though, not wedged into the dex run at #200:
+// a Johto card is not part of a Kanto album's Pokédex sequence, and inserting it there
+// would push every later species along by a pocket for as long as it stayed filed.
+TEST_F(GuideTest, OutOfRegionFiledCopyLandsInTheExtrasNotTheDexRun) {
     const CardBinder binder = makeBinder("b1", {Region::Kanto});
     binders.add(binder);
     copies.add(makeCopy("c1", kMisdreavus, CardOwnership::Owned, "b1"));
@@ -234,6 +252,10 @@ TEST_F(GuideTest, OutOfRegionFiledCopyAppearsInRowSet) {
     const auto entries = guide.buildEntries(binder);
     ASSERT_EQ(entries.size(), 152u);  // 151 Kanto + Misdreavus
     EXPECT_EQ(statusOf(entries, kMisdreavus), CollectionStatus::Completed);
+    // Past every Kanto row, so Kanto still ends where it always did.
+    EXPECT_EQ(entries.back().cardCopyId, "c1");
+    ASSERT_TRUE(entries[150].pokemon.has_value());
+    EXPECT_EQ(entries[150].pokemon->dexNumber, kMew);
 }
 
 // A multi-region binder lists the union of every scoped region's species, in dex
@@ -411,17 +433,20 @@ TEST_F(GuideTest, WishedSpeciesWithACopyFiledHereShowsTheCopyNotTheWish) {
 // surfaces for it — including when the copy filed here is Removed. That signal was
 // a property of the old one-row-per-species fold; a per-copy row set has no place
 // to put it.
-TEST_F(GuideTest, SpeciesOwnedElsewhereWithACopyFiledHereShowsOnlyTheCopyRow) {
+TEST_F(GuideTest, SpeciesOwnedElsewhereWithOnlyARemovedCopyHereShowsBothRows) {
     const CardBinder binder = makeBinder("b1", {Region::Kanto});
     binders.add(binder);
     binders.add(makeBinder("b2", {}));
     copies.add(makeCopy("c1", kPikachu, CardOwnership::Owned, "b2"));    // elsewhere
     copies.add(makeCopy("c2", kPikachu, CardOwnership::Removed, "b1"));  // filed here
 
+    // The Removed row is history; the reopened slot beside it reports the species-level
+    // verdict, which here is Elsewhere (a live copy sits in b2).
     const auto entries = guide.buildEntries(binder);
     EXPECT_EQ(statusesOf(entries, kPikachu),
-              std::vector<CollectionStatus>{CollectionStatus::Removed});
-    EXPECT_EQ(copyIdsOf(entries, kPikachu), std::vector<std::string>{"c2"});
+              (std::vector<CollectionStatus>{CollectionStatus::Removed,
+                                             CollectionStatus::Elsewhere}));
+    EXPECT_EQ(copyIdsOf(entries, kPikachu), (std::vector<std::string>{"c2", ""}));
 }
 
 // CONTRACT, not a regression — the sharpest instance of the rule above, and the one most
@@ -429,16 +454,18 @@ TEST_F(GuideTest, SpeciesOwnedElsewhereWithACopyFiledHereShowsOnlyTheCopyRow) {
 // removed, shows just that Removed copy row. The Wished placeholder is gone because the
 // species does have something filed here; the want itself is still recorded, and the
 // wishlist surfaces it.
-TEST_F(GuideTest, WishedSpeciesWithOnlyARemovedCopyFiledHereShowsOnlyTheRemovedRow) {
+TEST_F(GuideTest, WishedSpeciesWithOnlyARemovedCopyShowsHistoryAndTheReopenedSlot) {
     const CardBinder binder = makeBinder("b1", {Region::Kanto});
     binders.add(binder);
     addWish(kPikachu);
     copies.add(makeCopy("c1", kPikachu, CardOwnership::Removed, "b1"));
 
+    // Same shape, with the wish winning the reopened slot's verdict.
     const auto entries = guide.buildEntries(binder);
     EXPECT_EQ(statusesOf(entries, kPikachu),
-              std::vector<CollectionStatus>{CollectionStatus::Removed});
-    EXPECT_EQ(copyIdsOf(entries, kPikachu), std::vector<std::string>{"c1"});
+              (std::vector<CollectionStatus>{CollectionStatus::Removed,
+                                             CollectionStatus::Wished}));
+    EXPECT_EQ(copyIdsOf(entries, kPikachu), (std::vector<std::string>{"c1", ""}));
 }
 
 // A dex number with no species in the catalog (a hand-edited row) has no species
@@ -899,10 +926,140 @@ TEST_F(GuideTest, MalformedAndForeignPlacementsAreIgnored) {
     EXPECT_EQ(rowsForCopy(entries, "elsewhere"), 0);  // not filed here at all
 }
 
-// When a species' ONLY copy is moved away, its natural spot emits nothing — not a
-// placeholder. The card is still in the binder and still on the checklist, just on
-// another page; a placeholder would claim a pocket that no longer exists and paginate
-// everything after it wrongly.
+// THE TAUROS CASE. Kanto Tauros and Paldean Tauros are both dex #128, so filing both
+// groups them into one slot. Pinning one elsewhere is how the user says which card the
+// Pokédex slot is for — and the slot it leaves stays RESERVED, reading as uncollected
+// again rather than vanishing. That is what keeps a scoped binder's pocket count fixed
+// no matter what gets moved.
+TEST_F(GuideTest, MovingAReservedSpeciesOnlyCopyLeavesAPlaceholderInItsSlot) {
+    CardBinder binder = makeBinder("b1", {Region::Kanto});
+    binders.add(binder);
+    copies.add(makeCopy("paldean-tauros", kTauros, CardOwnership::Owned, "b1"));
+
+    const auto before = guide.buildEntries(binder);
+    ASSERT_EQ(before.size(), 151u);
+    EXPECT_EQ(copyIdsOf(before, kTauros), (std::vector<std::string>{"paldean-tauros"}));
+
+    binder.cardPlacements = {{.cardCopyId = "paldean-tauros"}};  // no anchor: the very end
+    const auto after = guide.buildEntries(binder);
+
+    // The checklist still holds its 151 slots — #128 simply reads as uncollected again —
+    // and the card now occupies a pocket of its own in the extras. So the binder holds one
+    // MORE card-sized pocket than before, which is exactly right: the Pokédex sleeve is
+    // being kept free for the Kanto print, and the Paldean one is filed past the run.
+    ASSERT_EQ(after.size(), 152u);
+    EXPECT_EQ(pokedex::listedSpecies(binder, after).size(), 151u);
+    EXPECT_EQ(copyIdsOf(after, kTauros), (std::vector<std::string>{"", "paldean-tauros"}));
+    EXPECT_EQ(statusOf(after, kTauros), CollectionStatus::Incomplete);
+    EXPECT_EQ(after.back().cardCopyId, "paldean-tauros");
+}
+
+// …and with a second card in the slot, there is nothing to reserve: the remaining copy
+// holds it, so no placeholder appears beside it.
+TEST_F(GuideTest, MovingOneOfTwoCopiesLeavesTheOtherHoldingTheSlot) {
+    CardBinder binder = makeBinder("b1", {Region::Kanto});
+    binders.add(binder);
+    copies.add(makeCopy("kanto-tauros", kTauros, CardOwnership::Owned, "b1",
+                        "2026-07-14T09:00:00Z"));
+    copies.add(makeCopy("paldean-tauros", kTauros, CardOwnership::Owned, "b1",
+                        "2026-07-14T10:00:00Z"));
+
+    binder.cardPlacements = {{.cardCopyId = "paldean-tauros"}};
+    const auto entries = guide.buildEntries(binder);
+
+    ASSERT_EQ(entries.size(), 152u);  // 151 slots + the extra card at the end
+    EXPECT_EQ(copyIdsOf(entries, kTauros),
+              (std::vector<std::string>{"kanto-tauros", "paldean-tauros"}));
+    EXPECT_EQ(entries.back().cardCopyId, "paldean-tauros");
+}
+
+// A reserved slot is reserved even when its copy was pinned only a pocket or two away,
+// which is the case a "did any copy survive" shortcut would get wrong.
+TEST_F(GuideTest, AReservedSlotVacatedByAShortMoveStillShowsAPlaceholder) {
+    CardBinder binder = makeBinder("b1", {Region::Kanto});
+    binders.add(binder);
+    copies.add(makeCopy("pika", kPikachu, CardOwnership::Owned, "b1"));
+
+    binder.cardPlacements = {{.cardCopyId = "pika", .beforeDexNum = kBulbasaur}};
+    const auto entries = guide.buildEntries(binder);
+
+    ASSERT_EQ(entries.size(), 152u);
+    EXPECT_EQ(entries[0].cardCopyId, "pika");  // pinned ahead of Bulbasaur
+    EXPECT_EQ(copyIdsOf(entries, kPikachu), (std::vector<std::string>{"pika", ""}));
+}
+
+// The extras keep filed order among themselves — species-free cards and out-of-region
+// species copies alike, with no derived ordering to prefer between them.
+TEST_F(GuideTest, ExtrasKeepFiledOrderRegardlessOfKind) {
+    const CardBinder binder = makeBinder("b1", {Region::Kanto});
+    binders.add(binder);
+    copies.add(makeCopy("trainer", std::nullopt, CardOwnership::Owned, "b1",
+                        "2026-07-14T09:00:00Z"));
+    copies.add(makeCopy("johto-card", kMisdreavus, CardOwnership::Owned, "b1",
+                        "2026-07-14T10:00:00Z"));
+    copies.add(makeCopy("energy", std::nullopt, CardOwnership::Owned, "b1",
+                        "2026-07-14T11:00:00Z"));
+
+    const auto entries = guide.buildEntries(binder);
+    ASSERT_EQ(entries.size(), 154u);
+    EXPECT_EQ(entries[151].cardCopyId, "trainer");
+    EXPECT_EQ(entries[152].cardCopyId, "johto-card");
+    EXPECT_EQ(entries[153].cardCopyId, "energy");
+}
+
+// placedByHand is the guide's own verdict, published so the view and the move planner
+// don't each re-derive it from the placement list — a re-derivation counts the orphaned
+// and circular arrangements below as honoured, which they are not.
+TEST_F(GuideTest, PlacedByHandMarksOnlyTheHonouredPlacements) {
+    CardBinder binder = makeBinder("b1", {Region::Kanto});
+    binders.add(binder);
+    copies.add(makeCopy("pika", kPikachu, CardOwnership::Owned, "b1"));
+    copies.add(makeCopy("mew", kMew, CardOwnership::Owned, "b1"));
+
+    binder.cardPlacements = {
+        {.cardCopyId = "pika", .beforeDexNum = kBulbasaur},   // honoured
+        {.cardCopyId = "mew", .beforeDexNum = kMisdreavus},   // orphan: not a listed slot
+    };
+    const auto entries = guide.buildEntries(binder);
+
+    for (const CardBinderEntry& e : entries) {
+        if (e.cardCopyId == "pika") {
+            EXPECT_TRUE(e.placedByHand);
+        } else if (e.cardCopyId == "mew") {
+            EXPECT_FALSE(e.placedByHand) << "an orphaned placement is not honoured";
+        } else {
+            EXPECT_FALSE(e.placedByHand);  // placeholders and blanks are never pinned
+        }
+    }
+}
+
+TEST_F(GuideTest, ListedSpeciesIsTheRegionChecklistNotTheRowSpecies) {
+    const CardBinder binder = makeBinder("b1", {Region::Kanto, Region::Kalos, Region::Paldea});
+    binders.add(binder);
+    copies.add(makeCopy("johto-card", kMisdreavus, CardOwnership::Owned, "b1"));
+
+    const auto entries = guide.buildEntries(binder);
+    // 151 + 72 + 120 = 343 slots, and the Johto extra is NOT one of them even though it
+    // carries a species and has a row.
+    EXPECT_EQ(pokedex::listedSpecies(binder, entries).size(), 343u);
+    EXPECT_EQ(entries.size(), 344u);
+}
+
+TEST_F(GuideTest, ListedSpeciesOfARegionlessBinderIsWhateverItHolds) {
+    const CardBinder binder = makeBinder("b1", {});
+    binders.add(binder);
+    copies.add(makeCopy("pika", kPikachu, CardOwnership::Owned, "b1"));
+    copies.add(makeCopy("trainer", std::nullopt, CardOwnership::Owned, "b1"));
+
+    const auto entries = guide.buildEntries(binder);
+    EXPECT_EQ(pokedex::listedSpecies(binder, entries),
+              (std::set<PokemonDexNum>{kPikachu}));
+}
+
+// The region-less exception to the reserved-slot rule: with no regions there is no
+// checklist, so a species is listed only because a card is filed under it. Move that
+// card away and the species simply stops being listed — a placeholder would be claiming
+// a slot the binder never reserved.
 TEST_F(GuideTest, SpeciesWhoseOnlyCopyMovedAwayLeavesNoPlaceholderBehind) {
     CardBinder binder = makeBinder("b1", {});  // region-less: only filed species are listed
     binders.add(binder);
@@ -916,6 +1073,41 @@ TEST_F(GuideTest, SpeciesWhoseOnlyCopyMovedAwayLeavesNoPlaceholderBehind) {
     EXPECT_EQ(entries[0].cardCopyId, "pika");
     EXPECT_EQ(entries[1].cardCopyId, "trainer");
     EXPECT_EQ(copyIdsOf(entries, kPikachu), (std::vector<std::string>{"pika"}));
+}
+
+// A page break the user pinned ahead of a species that has since become an EXTRA (it is
+// out of region, so it no longer has a checklist slot) travels to the extras with it,
+// rather than silently ceasing to render. Load-bearing: a run that renders nowhere is one
+// a later move would canonicalise out of existence, destroying the record for good.
+TEST_F(GuideTest, ADexAnchoredBlankOnAnExtrasSpeciesTravelsToTheExtras) {
+    CardBinder binder = makeBinder("b1", {Region::Kanto});
+    binders.add(binder);
+    copies.add(makeCopy("johto", kMisdreavus, CardOwnership::Owned, "b1"));
+    binder.pocketBlanks = {{.beforeDexNum = kMisdreavus, .blanks = 1}};
+
+    const auto entries = guide.buildEntries(binder);
+
+    ASSERT_EQ(entries.size(), 153u);  // 151 slots + the gap + the card
+    EXPECT_TRUE(isBlank(entries[151]));
+    EXPECT_EQ(entries[152].cardCopyId, "johto");
+}
+
+// The same for a placement: an out-of-region species is still a name a move can anchor to.
+TEST_F(GuideTest, APlacementAnchoredToAnExtrasSpeciesIsStillHonoured) {
+    CardBinder binder = makeBinder("b1", {Region::Kanto});
+    binders.add(binder);
+    copies.add(makeCopy("johto", kMisdreavus, CardOwnership::Owned, "b1",
+                        "2026-07-14T09:00:00Z"));
+    copies.add(makeCopy("trainer", std::nullopt, CardOwnership::Owned, "b1",
+                        "2026-07-14T10:00:00Z"));
+    binder.cardPlacements = {{.cardCopyId = "trainer", .beforeDexNum = kMisdreavus}};
+
+    const auto entries = guide.buildEntries(binder);
+
+    ASSERT_EQ(entries.size(), 153u);
+    EXPECT_EQ(entries[151].cardCopyId, "trainer");  // pinned ahead of the Johto card
+    EXPECT_EQ(entries[152].cardCopyId, "johto");
+    EXPECT_TRUE(entries[151].placedByHand);
 }
 
 // A blank pinned to a card travels with it — a copy anchor means "immediately before this

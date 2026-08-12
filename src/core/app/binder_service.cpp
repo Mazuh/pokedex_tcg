@@ -89,6 +89,8 @@ CardBinder BinderService::update(const CardBinderId& id, std::string name,
     return reread(repo_, id);
 }
 
+bool BinderService::canChangeRegions(const CardBinderId& id) { return !repo_.hasContents(id); }
+
 CardBinder BinderService::insertBlanks(const CardBinderId& id, const CardBinderBlank& blank) {
     requireBlank(blank);
     repo_.addBlanks(id, blank);

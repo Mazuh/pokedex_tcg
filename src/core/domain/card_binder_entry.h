@@ -39,10 +39,17 @@ namespace pokedex {
 // It carries just the verdict plus the identity of the copy it stands for. For
 // the copy's own fields (printing, condition, prices) or the wishlist sources,
 // the app looks those entities up itself.
+// It also records whether this row is where the derivation put it or where the USER did.
+// That verdict is the guide's to make, not a caller's: a placement is honoured only if its
+// anchor chain terminates (see BinderGuideService), so re-deriving it from a binder's
+// CardBinderPlacement list — as both the view and the move planner would otherwise have to —
+// counts an orphaned or circular arrangement as honoured and quietly disagrees with the rows
+// on screen. Publishing the resolved answer is what keeps the three in step.
 struct CardBinderEntry {
     std::optional<Pokemon> pokemon;        // nullopt = a species-free card, or a blank
     std::optional<CardCopyId> cardCopyId;  // nullopt = a species placeholder, or a blank
     std::optional<CollectionStatus> status;  // nullopt = a blank pocket: nothing to report
+    bool placedByHand = false;  // this copy was pinned to this pocket, not derived into it
 };
 
 // Whether this row occupies a physical pocket in the album — the predicate that

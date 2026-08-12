@@ -119,6 +119,18 @@ void BinderEditPage::build(const std::optional<CardBinder>& existing) {
         connect(box, &QSpinBox::valueChanged, this, &BinderEditPage::updatePocketHint);
     }
 
+    // Shown only when editing a binder that already holds something: the regions are
+    // locked then, and silently disabled checkboxes would read as a bug rather than a rule.
+    const bool regionsLockedNow = editing && !service_.canChangeRegions(existing->id);
+    auto* regionsLocked = new QLabel(
+        tr("This binder's regions are settled now that it holds cards — its pages are laid "
+           "out from them, and the empty pockets and moved cards you arranged are recorded "
+           "against that layout. They can still be changed while a binder is empty."),
+        this);
+    regionsLocked->setWordWrap(true);
+    regionsLocked->setEnabled(false);  // muted: a hint, not content
+    regionsLocked->setVisible(regionsLockedNow);
+
     if (editing) {
         nameEdit_->setText(QString::fromStdString(existing->name));
         for (std::size_t i = 0; i < kRegions.size(); ++i) {
@@ -126,6 +138,10 @@ void BinderEditPage::build(const std::optional<CardBinder>& existing) {
                                           existing->pokemonRegions.end(),
                                           kRegions[i]) != existing->pokemonRegions.end();
             regionChecks_[i]->setChecked(scoped);
+            // Still readable when locked — which regions a binder covers is worth seeing
+            // on the edit page. BinderService::update enforces the rule itself; this is
+            // only the affordance matching it.
+            regionChecks_[i]->setEnabled(!regionsLockedNow);
         }
         capacityEdit_->setValue(existing->capacity.value_or(0));
         if (existing->pocketGrid) {
@@ -143,6 +159,9 @@ void BinderEditPage::build(const std::optional<CardBinder>& existing) {
     form->setLabelAlignment(Qt::AlignLeft | Qt::AlignTop);
     form->addRow(tr("Name"), nameEdit_);
     form->addRow(tr("Regions"), regionsBox);
+    if (regionsLockedNow) {
+        form->addRow(QString(), regionsLocked);
+    }
     form->addRow(tr("Capacity"), capacityEdit_);
     form->addRow(tr("Pocket grid"), gridBox);
 
@@ -204,8 +223,11 @@ void BinderEditPage::submit() {
             persisted = service_.create(name.toStdString(), regions, capacity, enteredGrid());
             showToast(this, tr("Binder “%1” created.").arg(name));
         } else {
-            persisted =
-                service_.update(editingId_, name.toStdString(), regions, capacity, enteredGrid());
+            // The regions go through unchanged when the checkboxes are locked, which the
+            // service accepts as a no-op; only an actually different set on an empty
+            // binder rewrites them.
+            persisted = service_.update(editingId_, name.toStdString(), regions, capacity,
+                                        enteredGrid());
             showToast(this, tr("Binder “%1” saved.").arg(name));
         }
     } catch (const std::exception& e) {

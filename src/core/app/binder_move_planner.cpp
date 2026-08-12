@@ -7,6 +7,7 @@
 #include <set>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace pokedex {
 
@@ -72,6 +73,58 @@ CardBinderBlank anchorOf(const CardBinderEntry& row) {
         anchor.beforeDexNum = row.pokemon->dexNumber;
     }
     return anchor;
+}
+
+// Whether taking `source` out empties a RESERVED Pokédex slot — in which case the guide
+// leaves a placeholder holding that sleeve rather than closing it up, and the projection
+// has to do the same or it will mispage everything downstream (see BinderGuideService).
+//
+// Every clause earns its place. Only a region-scoped binder reserves slots at all. Only a
+// row sitting in its natural position is holding one — a card already pinned elsewhere
+// left its placeholder behind on the earlier move, and substituting a second would
+// invent a pocket. And a species outside the binder's regions is an extra, never a slot,
+// even though its row carries a species like any other.
+bool vacatesReservedSlot(const CardBinder& binder, std::span<const CardBinderEntry> rows,
+                         int source) {
+    const CardBinderEntry& src = rows[source];
+    if (binder.pokemonRegions.empty() || !src.pokemon || src.placedByHand) {
+        return false;
+    }
+    const auto& regions = binder.pokemonRegions;
+    if (std::find(regions.begin(), regions.end(), src.pokemon->region) == regions.end()) {
+        return false;
+    }
+    for (int i = 0; i < rowCount(rows); ++i) {
+        if (i == source || !rows[i].cardCopyId || rows[i].placedByHand) {
+            continue;
+        }
+        if (rows[i].pokemon && rows[i].pokemon->dexNumber == src.pokemon->dexNumber) {
+            return false;  // a sibling copy stays behind to hold the slot
+        }
+    }
+    return true;
+}
+
+// Every card that RIDES on `copyId` — pinned before it, or before something pinned before
+// it, transitively. The guide emits a placement's riders ahead of it wherever it goes
+// (emitBefore recurses), so they travel with the card and the projection must carry them
+// too; leaving them behind projects an arrangement that never happens and under-reports
+// how many cards actually change sleeve.
+std::unordered_set<CardCopyId> ridersOf(const CardBinder& binder, const CardCopyId& copyId) {
+    std::unordered_set<CardCopyId> riders;
+    for (bool grew = true; grew;) {
+        grew = false;
+        for (const CardBinderPlacement& p : binder.cardPlacements) {
+            if (!p.beforeCopyId || riders.contains(p.cardCopyId)) {
+                continue;
+            }
+            if (*p.beforeCopyId == copyId || riders.contains(*p.beforeCopyId)) {
+                riders.insert(p.cardCopyId);
+                grew = true;
+            }
+        }
+    }
+    return riders;
 }
 
 // Each card's pocket number, for the before/after comparison shiftedCards reports.
@@ -182,7 +235,8 @@ std::vector<CardBinderBlank> canonicalBlankSets(const CardBinder& binder,
 
 BinderMovePlan planCardMove(const CardBinder& binder,
                             std::span<const CardBinderEntry> currentRows,
-                            const CardCopyId& copyId, int targetPocket) {
+                            const CardCopyId& copyId, int targetPocket,
+                            const PlaceholderStatusFn& placeholderStatusFor) {
     if (targetPocket < 0) {
         throw BinderMoveError("a target pocket cannot be negative");
     }
@@ -198,19 +252,59 @@ BinderMovePlan planCardMove(const CardBinder& binder,
     // arrangement rather than the current one — the physical gesture, and what keeps a
     // forward move from landing one pocket short.
     //
+    // Taking it out of a reserved slot leaves a PLACEHOLDER in the sleeve instead of
+    // closing it up, so the checklist keeps its length whatever the user rearranges.
+    const bool vacatesSlot = vacatesReservedSlot(binder, currentRows, source);
+    CardBinderEntry vacated;
+    if (vacatesSlot) {
+        vacated.pokemon = currentRows[source].pokemon;
+        vacated.status = placeholderStatusFor
+                             ? placeholderStatusFor(currentRows[source].pokemon->dexNumber)
+                             : CollectionStatus::Incomplete;
+    }
+
     // The blank pockets it was riding on stay where they are: they are deliberate empty
     // sleeves, and the card leaving shouldn't close a gap the user opened. They end up
     // immediately before whatever now follows, and are re-anchored to it below. The
     // exception is a card at the very END of the guide: there is no following row to
     // re-anchor to, and a run of empty pockets after the last card describes nothing, so
-    // those are dropped.
-    const bool gapSurvives = firstRealFrom(currentRows, source + 1) < rowCount(currentRows);
+    // those are dropped. A vacated slot is itself that following row, so its gap always
+    // survives.
+    const bool gapSurvives =
+        vacatesSlot || firstRealFrom(currentRows, source + 1) < rowCount(currentRows);
     const int strandedBlanks = gapSurvives ? 0 : blanksBefore(currentRows, source);
+
+    // The cards riding on this one sit immediately ahead of it — after any rider's own gap,
+    // but BEFORE the moved card's own blanks, which stay behind for whatever now follows.
+    // Walk back over that run so the whole convoy moves as a unit.
+    const std::unordered_set<CardCopyId> riders = ridersOf(binder, copyId);
+    const int riderEnd = source - blanksBefore(currentRows, source);
+    int riderStart = riderEnd;
+    while (riderStart > 0) {
+        const CardBinderEntry& prev = currentRows[riderStart - 1];
+        if (!prev.cardCopyId || !riders.contains(*prev.cardCopyId)) {
+            break;
+        }
+        // A rider's own gap belongs to the rider, so it comes along.
+        riderStart = (riderStart - 1) - blanksBefore(currentRows, riderStart - 1);
+    }
+    const auto inConvoy = [&](int i) {
+        return i == source || (i >= riderStart && i < riderEnd);
+    };
 
     std::vector<CardBinderEntry> reduced;
     reduced.reserve(currentRows.size());
     for (int i = 0; i < rowCount(currentRows); ++i) {
-        if (i == source || (i >= source - strandedBlanks && i < source)) {
+        if (i == source) {
+            if (vacatesSlot) {
+                reduced.push_back(vacated);
+            }
+            continue;
+        }
+        if (inConvoy(i)) {
+            continue;
+        }
+        if (i >= source - strandedBlanks && i < source) {
             continue;
         }
         reduced.push_back(currentRows[i]);
@@ -222,11 +316,19 @@ BinderMovePlan planCardMove(const CardBinder& binder,
     const bool replacesBlank =
         insertAt < rowCount(reduced) && isBlankPocket(reduced[insertAt]);
 
+    // The convoy lands as one: the riders in their existing order, then the card itself.
+    const auto pushConvoy = [&](std::vector<CardBinderEntry>& out) {
+        for (int i = riderStart; i < riderEnd; ++i) {
+            out.push_back(currentRows[i]);
+        }
+        out.push_back(currentRows[source]);
+    };
+
     BinderMovePlan plan;
-    plan.projectedRows.reserve(reduced.size() + 1);
+    plan.projectedRows.reserve(reduced.size() + (riderEnd - riderStart) + 1);
     for (int i = 0; i < rowCount(reduced); ++i) {
         if (i == insertAt) {
-            plan.projectedRows.push_back(currentRows[source]);
+            pushConvoy(plan.projectedRows);
             if (replacesBlank) {
                 continue;
             }
@@ -234,7 +336,7 @@ BinderMovePlan planCardMove(const CardBinder& binder,
         plan.projectedRows.push_back(reduced[i]);
     }
     if (insertAt >= rowCount(reduced)) {
-        plan.projectedRows.push_back(currentRows[source]);
+        pushConvoy(plan.projectedRows);
     }
 
     // The card sits immediately before the first NON-blank row after it: the blanks in

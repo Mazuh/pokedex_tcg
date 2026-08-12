@@ -219,7 +219,7 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
            "file it in this binder."));
     connect(addCardButton, &QPushButton::clicked, this, &BinderView::openAddCard);
     auto* editBinderButton = new QPushButton(tr("Edit binder"), this);
-    editBinderButton->setToolTip(tr("Change this binder's name or region."));
+    editBinderButton->setToolTip(tr("Change this binder's name or physical size."));
     connect(editBinderButton, &QPushButton::clicked, this, &BinderView::openEditBinder);
     refreshPricesButton_ = new QPushButton(tr("Refresh prices"), this);
     refreshPricesButton_->setToolTip(
@@ -267,12 +267,13 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     statsLayout->setContentsMargins(0, 0, 0, 0);
     statsLayout->setSpacing(0);
     listedStat_ = new QLabel(statsRow);
-    listedStat_->setToolTip(tr("Pokémon species this binder lists: every species in its "
-                               "regions, plus any other species with a card filed here."));
+    listedStat_->setToolTip(tr("Pokémon species this binder reserves a pocket for: every "
+                               "species in its regions. Cards filed here that fall outside "
+                               "them are extras and don't add to this."));
     capturedStat_ = new QLabel(statsRow);
-    capturedStat_->setToolTip(tr("How many of those species have at least one owned card "
-                                 "filed in this binder, and what share of the listed "
-                                 "species that is."));
+    capturedStat_->setToolTip(tr("How many of those reserved pockets hold an owned card, "
+                                 "and what share of the listed species that is. A card you "
+                                 "moved out of its Pokédex pocket leaves it uncollected."));
     cardsStat_ = new QLabel(statsRow);
     cardsStat_->setToolTip(tr("Card copies physically filed in this binder right now. "
                               "Duplicates count separately and Trainer/Energy cards are "
@@ -487,11 +488,12 @@ void BinderView::refresh() {
     }
     filedCopies_ = std::move(filed);
 
-    // Index by id (for copyFor) and count the Owned copies per species (for the Captured
-    // stat and the panel's "N copies" line) in one pass over the fresh list. The count is
-    // bounded to the catalog exactly as buildEntries bounds its species rows — otherwise a
-    // copy carrying a dex number with no species (which buildEntries routes to the
-    // species-free tail) would raise "Captured" above "Listed" and print >100%.
+    // Index by id (for copyFor) and count the Owned copies per species (for the detail
+    // panel's "N copies" line) in one pass over the fresh list. This map is a per-species
+    // total over the whole binder and is deliberately NOT what "Captured" counts — that
+    // reads the rows, so that a card moved out of its Pokédex slot leaves the slot reading
+    // as uncollected instead of still counting toward it. The count stays bounded to the
+    // catalog exactly as buildEntries bounds its species rows.
     copyIndexById_.clear();
     copyIndexById_.reserve(filedCopies_.size());
     ownedCountsByDex_.clear();
@@ -585,20 +587,41 @@ void BinderView::loadCachedPrices() {
 }
 
 void BinderView::updateStats(const std::vector<CardCopy>& filedCopies) {
-    // Listed = every SPECIES the guide lists — no longer entries_.size(), since a species
-    // with several copies filed here now contributes several rows. Captured = species with
-    // at least one Owned copy filed here, which is exactly ownedCountsByDex_'s key set.
-    // Counting CollectionStatus::Completed rows would miscount now that a species can carry
-    // Completed, Incoming and Removed rows at once.
-    std::unordered_set<int> listedSpecies;
-    listedSpecies.reserve(entries_.size());
+    // Listed = the binder's CHECKLIST: the species it holds a reserved slot for. Not the
+    // distinct species among the rows — an extra filed here (a Johto card in a Kanto
+    // album) carries a species and a row without the binder ever reserving a slot for it,
+    // so counting rows would push a 343-species checklist to 344 the moment one was filed.
+    const std::set<PokemonDexNum> checklist = pokedex::listedSpecies(binder_, entries_);
+    // With no rows there is nothing to report on. refresh() empties entries_ when the guide
+    // fails to load, and a region-derived checklist would otherwise happily announce
+    // "Listed 151 · Captured 0 (0%)" over a table that shows nothing — reading as a binder
+    // full of uncollected species rather than one that could not be opened.
+    const int listed = entries_.empty() ? 0 : static_cast<int>(checklist.size());
+
+    // Captured = checklist slots that are FILLED — a listed species with at least one
+    // Owned copy sitting in its own slot. Deliberately not ownedCountsByDex_'s key set,
+    // which counts a species owned anywhere in this binder: a card the user pulled out of
+    // its Pokédex slot and filed among the extras leaves that slot reading as uncollected,
+    // and the figure above it has to agree with what the row says. Counting
+    // CollectionStatus::Completed rows instead would miscount too, now that a species can
+    // carry Completed, Incoming and Removed rows at once.
+    // The placedByHand exclusion applies only where slots are RESERVED. A region-less
+    // binder emits no placeholder when a card is pinned elsewhere, so excluding it there
+    // would drop the species from the count with nothing standing in for it — the binder
+    // would read "Listed 1 · Captured 0" over a single Owned card.
+    const bool reserved = !binder_.pokemonRegions.empty();
+    std::unordered_set<int> filledSlots;
     for (const CardBinderEntry& entry : entries_) {
-        if (entry.pokemon) {
-            listedSpecies.insert(entry.pokemon->dexNumber);
+        if (!entry.pokemon || !entry.cardCopyId || (reserved && entry.placedByHand)) {
+            continue;
+        }
+        const CardCopy* copy = copyFor(entry);
+        if (copy != nullptr && copy->ownership == CardOwnership::Owned &&
+            checklist.contains(entry.pokemon->dexNumber)) {
+            filledSlots.insert(entry.pokemon->dexNumber);
         }
     }
-    const int listed = static_cast<int>(listedSpecies.size());
-    const int captured = static_cast<int>(ownedCountsByDex_.size());
+    const int captured = static_cast<int>(filledSlots.size());
 
     // Cards = physical copies in the sleeves right now: every Owned copy filed here,
     // duplicates counted separately and species-free cards included. Deliberately NOT a
@@ -701,12 +724,6 @@ void BinderView::repopulate() {
         // sleeves.
         const QBrush removedForeground =
             table_->palette().brush(QPalette::Disabled, QPalette::Text);
-        // The cards the user placed by hand, so their Page/Pocket cells can say so. Built
-        // once per rebuild rather than searched per row — a binder can hold hundreds.
-        std::unordered_set<std::string> placedCopyIds;
-        for (const CardBinderPlacement& placement : binder_.cardPlacements) {
-            placedCopyIds.insert(placement.cardCopyId);
-        }
         int pocket = 0;  // 0-based sleeve position; advances only for rows that hold one
         for (int i = 0; i < static_cast<int>(entries_.size()); ++i) {
             const CardBinderEntry& entry = entries_[i];
@@ -739,7 +756,11 @@ void BinderView::repopulate() {
             // A card sitting somewhere its Pokédex number didn't put it says so on hover —
             // otherwise its row is indistinguishable from one that fell there naturally,
             // and the user has no way to tell what they arranged from what the dex did.
-            if (entry.cardCopyId && placedCopyIds.contains(*entry.cardCopyId)) {
+            //
+            // Read from the row rather than re-derived from binder_.cardPlacements: only
+            // the guide knows which placements it actually honoured, so a local rebuild
+            // would badge a card whose orphaned placement left it in natural order anyway.
+            if (entry.placedByHand) {
                 const QString moved = tr("Moved to this pocket by hand. Use “Move…” to "
                                          "change it or return it to Pokédex order.");
                 page->setToolTip(moved);
@@ -1377,9 +1398,11 @@ void BinderView::moveSelectedCard() {
         rowLabels.push_back(rowLabel(entry, copyFor(entry)));
     }
 
-    const bool placed =
-        std::any_of(binder_.cardPlacements.begin(), binder_.cardPlacements.end(),
-                    [&copyId](const CardBinderPlacement& p) { return p.cardCopyId == copyId; });
+    // Read the guide's verdict, never the raw placement records: a placement whose anchor
+    // no longer emits is rejected, so the row sits in natural order with no "moved by hand"
+    // badge — and offering "Return to natural order" for it would have the dialog
+    // contradict the table about the same row.
+    const bool placed = entries_[row].placedByHand;
 
     MoveCardDialog dialog(binder_, entries_, rowLabels, copyId,
                           rowLabel(entries_[row], copyFor(entries_[row])), placed, this);
@@ -1392,8 +1415,34 @@ void BinderView::moveSelectedCard() {
             binder_ = binders_.applyMove(binder_.id, planCardReset(binder_, entries_, copyId));
             showToast(this, tr("Card returned to Pokédex order."));
         } else {
+            // Aiming at the pocket the card already occupies is a no-op, and must stay one.
+            // The dialog pre-fills the card's CURRENT position, so pressing Move without
+            // touching the spinboxes is an easy accident — and it is not harmless: taking
+            // the card off a reserved slot opens a placeholder there, so "move it where it
+            // already is" would silently grow the binder by a pocket and shift every card
+            // after it along.
+            int pocket = 0;
+            for (const CardBinderEntry& entry : entries_) {
+                if (!holdsPocket(entry)) {
+                    continue;
+                }
+                if (entry.cardCopyId == copyId) {
+                    break;
+                }
+                ++pocket;
+            }
+            if (pocket == dialog.targetPocket()) {
+                showToast(this, tr("That card is already in that pocket."));
+                return;
+            }
+            // The lookup lets the planner project the placeholder a vacated Pokédex slot
+            // leaves behind with the verdict the guide will actually give it — it reads
+            // the wishlist and the other binders, which a pure planner can't.
             const BinderMovePlan plan =
-                planCardMove(binder_, entries_, copyId, dialog.targetPocket());
+                planCardMove(binder_, entries_, copyId, dialog.targetPocket(),
+                             [this](PokemonDexNum dex) {
+                                 return guide_.placeholderStatusFor(binder_.id, dex);
+                             });
             // Only ask when something actually has to be re-sleeved. A card dropped into
             // an empty pocket displaces nothing, and prompting there would train the user
             // to click through the warning that matters.
@@ -1434,7 +1483,7 @@ void BinderView::openEditBinder() {
     auto* page = new BinderEditPage(binders_, binder_);
     // The page hands the whole persisted binder back on save, so binder_ is replaced in
     // place — no storage re-read. On Back, refresh() rebuilds the guide from the updated
-    // binder_ (a region change alters which species it lists, a grid change repages it);
+    // binder_ (a grid or capacity change repages it; the regions can't change);
     // on a plain cancel, binder_ is unchanged and refresh() is a harmless recompute.
     connect(page, &BinderEditPage::saved, this, [this](const CardBinder& updated) {
         // Replace the whole value rather than patching field by field: this view never

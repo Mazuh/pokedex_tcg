@@ -25,7 +25,10 @@ class BinderService;
 // the same form.
 //
 // The region is multivalued — a binder may span several regions — so it is picked
-// with a checkbox per region rather than a single-select combo.
+// with a checkbox per region rather than a single-select combo. It is picked ONCE:
+// in edit mode the checkboxes are shown but disabled, because a binder's regions
+// decide which species get a reserved pocket and hence where every page break falls
+// (BinderService::update doesn't accept them at all).
 //
 // It also records the album's optional PHYSICAL layout: how many cards it holds
 // (capacity) and the shape of one page (rows × columns of pockets), which is what lets

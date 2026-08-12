@@ -85,7 +85,6 @@ TEST(BinderServiceTest, UpdateChangesNameAndBumpsUpdatedAtOnly) {
     const CardBinder created = f.service.create("Old", {Region::Kanto});
 
     f.now = at("2026-07-20T15:00:00Z");
-    // Keep the regions the same; only the name changes here.
     f.service.update(created.id, "New", {Region::Kanto});
 
     const auto binders = f.service.list();
@@ -96,21 +95,29 @@ TEST(BinderServiceTest, UpdateChangesNameAndBumpsUpdatedAtOnly) {
     EXPECT_EQ(binders[0].pokemonRegions, (std::vector<Region>{Region::Kanto}));
 }
 
-TEST(BinderServiceTest, UpdateCanChangeTheRegions) {
+// A binder's regions are settled at create() and update() has no way to touch them.
+// They decide which species get a reserved slot and hence where every page break falls,
+// so re-scoping an album that already holds cards has no sound answer — where would a
+// newly added second region begin, with 200 cards filed against the first? — and would
+// orphan the blanks and moves arranged against the old layout.
+TEST(BinderServiceTest, UpdateCanRescopeAnEmptyBinderButNotAFilledOne) {
     Fixture f;
     const CardBinder created = f.service.create("Old", {Region::Kanto});
+    EXPECT_TRUE(f.service.canChangeRegions(created.id));
 
-    f.service.update(created.id, "Old", {Region::Johto, Region::Hoenn});
-    auto binders = f.service.list();
-    ASSERT_EQ(binders.size(), 1u);
-    // listAll returns regions in canonical (enum) order regardless of input order.
-    EXPECT_EQ(binders[0].pokemonRegions,
-              (std::vector<Region>{Region::Johto, Region::Hoenn}));
+    // Empty: a scope typed wrong at creation is still correctable.
+    const CardBinder rescoped = f.service.update(created.id, "New", {Region::Johto});
+    EXPECT_EQ(rescoped.pokemonRegions, (std::vector<Region>{Region::Johto}));
 
-    // And they can be cleared back to none.
-    f.service.update(created.id, "Old", {});
-    binders = f.service.list();
-    EXPECT_TRUE(binders[0].pokemonRegions.empty());
+    // Arrange something against that layout and the regions settle.
+    f.service.insertBlanks(created.id, CardBinderBlank{.beforeDexNum = 200, .blanks = 1});
+    EXPECT_FALSE(f.service.canChangeRegions(created.id));
+    EXPECT_THROW(f.service.update(created.id, "New", {Region::Hoenn}), std::exception);
+
+    // But an ordinary rename, carrying the same regions through, still goes in.
+    const CardBinder renamed = f.service.update(created.id, "Renamed", {Region::Johto});
+    EXPECT_EQ(renamed.name, "Renamed");
+    EXPECT_EQ(renamed.pokemonRegions, (std::vector<Region>{Region::Johto}));
 }
 
 TEST(BinderServiceTest, UpdateRejectsBlank) {

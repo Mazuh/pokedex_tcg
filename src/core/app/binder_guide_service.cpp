@@ -66,6 +66,37 @@ CollectionStatus placeholderStatus(PokemonDexNum dexNum,
 
 }  // namespace
 
+std::set<PokemonDexNum> listedSpecies(const CardBinder& binder,
+                                      std::span<const CardBinderEntry> rows) {
+    std::set<PokemonDexNum> listed;
+    if (binder.pokemonRegions.empty()) {
+        // No regions to derive a checklist from, so the rows ARE the checklist. Safe here
+        // precisely because such a binder files nothing as an extra: with no scope to fall
+        // outside of, every species-bearing row is one it lists.
+        for (const CardBinderEntry& row : rows) {
+            if (row.pokemon) {
+                listed.insert(row.pokemon->dexNumber);
+            }
+        }
+        return listed;
+    }
+    const std::set<Region> scoped(binder.pokemonRegions.begin(), binder.pokemonRegions.end());
+    for (const Pokemon& pokemon : pokemonCatalog()) {
+        if (scoped.contains(pokemon.region)) {
+            listed.insert(pokemon.dexNumber);
+        }
+    }
+    return listed;
+}
+
+CollectionStatus BinderGuideService::placeholderStatusFor(const CardBinderId& binderId,
+                                                          PokemonDexNum dexNum) {
+    const std::vector<PokemonDexNum> elsewhereList = copies_.ownedElsewhere(binderId);
+    const std::vector<PokemonDexNum> wishedList = wishlist_.wishedDexNums();
+    return placeholderStatus(dexNum, {elsewhereList.begin(), elsewhereList.end()},
+                             {wishedList.begin(), wishedList.end()});
+}
+
 std::vector<CardBinderEntry> BinderGuideService::buildEntries(const CardBinder& binder) {
     const std::vector<CardCopy> copiesInBinder = copies_.listByBinder(binder.id);
     const std::vector<PokemonDexNum> elsewhereList = copies_.ownedElsewhere(binder.id);
@@ -93,30 +124,17 @@ std::vector<CardBinderEntry> BinderGuideService::buildEntries(const CardBinder& 
         }
     }
 
-    // Partition the filed copies once. The repository returns them in filed order
-    // (inserted_at, rowid), so push_back preserves that within a species, and the
-    // std::map keeps the species themselves dex-ordered. A copy whose dex number
-    // doesn't resolve in the catalog joins the species-free tail rather than being
-    // dropped: this guide's contract is that nothing filed here is invisible.
-    // The pointers reference copiesInBinder, which outlives this whole function.
-    std::map<PokemonDexNum, std::vector<const CardCopy*>> copiesByDex;
-    std::vector<const CardCopy*> tail;
-    std::unordered_map<CardCopyId, const CardCopy*> copyById;
-    for (const CardCopy& copy : copiesInBinder) {
-        copyById.emplace(copy.id, &copy);
-        if (copy.pokemonDexNum && speciesAt(*copy.pokemonDexNum, catalog) != nullptr) {
-            copiesByDex[*copy.pokemonDexNum].push_back(&copy);
-        } else {
-            tail.push_back(&copy);
-        }
-    }
-
-    // The ordered species set: every species in any of the binder's regions,
-    // unioned with any species that has a copy filed here. std::set keeps it
-    // dex-ordered and deduplicated (a filed in-region species, or a species shared
-    // across two scoped regions, appears once).
+    // The CHECKLIST: the species this binder holds a slot for, dex-ordered and deduplicated
+    // by std::set (a species shared across two scoped regions appears once). It is derived
+    // from the binder's regions ALONE, so that filing or moving a card can never add a slot
+    // or take one away — which is what makes an album's pocket count stable enough to plan
+    // a physical layout around.
+    //
+    // A binder with no regions recorded is the exception: it has no checklist to derive, so
+    // it falls back to listing whatever is filed in it (below).
+    const bool reserved = !binder.pokemonRegions.empty();
     std::set<PokemonDexNum> dexNums;
-    if (!binder.pokemonRegions.empty()) {
+    if (reserved) {
         const std::set<Region> scoped(binder.pokemonRegions.begin(),
                                       binder.pokemonRegions.end());
         for (const Pokemon& pokemon : catalog) {
@@ -125,8 +143,56 @@ std::vector<CardBinderEntry> BinderGuideService::buildEntries(const CardBinder& 
             }
         }
     }
-    for (const auto& filed : copiesByDex) {
-        dexNums.insert(filed.first);
+
+    // Partition the filed copies against that checklist. The repository returns them in
+    // filed order (inserted_at, rowid), so push_back preserves that within a species, and
+    // the std::map keeps the species themselves dex-ordered.
+    //
+    // Everything the checklist does NOT claim goes to the tail — the EXTRAS area at the end
+    // of the binder. That covers a card depicting no species, a copy whose dex number
+    // doesn't resolve, and a species outside the binder's regions: a Johto card in a
+    // Kanto+Kalos album is not part of that album's Pokédex run, and wedging it in at #152
+    // would shove every later region along by a pocket. Extras carry no dex ordering anyone
+    // asked for, so they keep filed order and are arranged by hand from there.
+    //
+    // The pointers reference copiesInBinder, which outlives this whole function.
+    std::map<PokemonDexNum, std::vector<const CardCopy*>> copiesByDex;
+    std::vector<const CardCopy*> tail;
+    std::unordered_map<CardCopyId, const CardCopy*> copyById;
+    for (const CardCopy& copy : copiesInBinder) {
+        copyById.emplace(copy.id, &copy);
+        const bool onChecklist = copy.pokemonDexNum &&
+                                 speciesAt(*copy.pokemonDexNum, catalog) != nullptr &&
+                                 (!reserved || dexNums.contains(*copy.pokemonDexNum));
+        if (onChecklist) {
+            copiesByDex[*copy.pokemonDexNum].push_back(&copy);
+        } else {
+            tail.push_back(&copy);
+        }
+    }
+    // The region-less fallback: with nothing to derive a checklist from, what is filed here
+    // IS the checklist. Every such species resolved in the catalog above, so the emit loop's
+    // guard below still holds.
+    if (!reserved) {
+        for (const auto& filed : copiesByDex) {
+            dexNums.insert(filed.first);
+        }
+    }
+
+    // Every dex number a blank or a placement may name and still be honoured: the checklist,
+    // PLUS the species of any card that landed in the extras. An out-of-region species has
+    // no checklist slot, but it does have a row, and the user may well have pinned a page
+    // break ahead of it back when it sat in the dex run. Dropping those anchors would make
+    // the gap silently stop rendering — and worse, would let a later move CANONICALISE it
+    // away for good (canonicalBlankSets only spares a run whose anchor names no row at all).
+    // Honouring them instead carries the layout across with the card.
+    std::set<PokemonDexNum> anchorableDex = dexNums;
+    std::set<PokemonDexNum> extrasSpecies;
+    for (const CardCopy* copy : tail) {
+        if (copy->pokemonDexNum && speciesAt(*copy->pokemonDexNum, catalog) != nullptr) {
+            anchorableDex.insert(*copy->pokemonDexNum);
+            extrasSpecies.insert(*copy->pokemonDexNum);
+        }
     }
 
     // The cards the user pulled OUT of this derived order and pinned before some other
@@ -163,7 +229,7 @@ std::vector<CardBinderEntry> BinderGuideService::buildEntries(const CardBinder& 
             }
             bool anchorEmits = true;  // neither anchor set: the end, which always exists
             if (placement->beforeDexNum) {
-                anchorEmits = dexNums.contains(*placement->beforeDexNum);
+                anchorEmits = anchorableDex.contains(*placement->beforeDexNum);
             } else if (placement->beforeCopyId) {
                 const CardCopyId& anchor = *placement->beforeCopyId;
                 anchorEmits = copyById.contains(anchor) &&
@@ -225,11 +291,11 @@ std::vector<CardBinderEntry> BinderGuideService::buildEntries(const CardBinder& 
     // One row for one filed copy, wherever it ends up sitting. Deriving the species from
     // the copy rather than from the loop it was reached through means a moved card and a
     // naturally ordered one can't be built differently.
-    const auto pushCopyRow = [&entries, catalog](const CardCopy& copy) {
+    const auto pushCopyRow = [&entries, &placed, catalog](const CardCopy& copy) {
         const Pokemon* species =
             copy.pokemonDexNum ? speciesAt(*copy.pokemonDexNum, catalog) : nullptr;
         entries.push_back({species != nullptr ? std::optional<Pokemon>(*species) : std::nullopt,
-                           copy.id, statusOfCopy(copy.ownership)});
+                           copy.id, statusOfCopy(copy.ownership), placed.contains(copy.id)});
     };
 
     // Everything the user arranged to sit immediately before one row, in the order that
@@ -280,34 +346,59 @@ std::vector<CardBinderEntry> BinderGuideService::buildEntries(const CardBinder& 
         // ahead of a species the user doesn't own a card of yet, which is the whole point
         // of pushing the next region onto a fresh page before collecting it.
         emitBeforeDex(dexNum);
+        // One row per filed copy, in filed order — the copies themselves are what this
+        // species has to say about this binder. A copy MOVED elsewhere is skipped here and
+        // emitted at its anchor instead.
+        //
+        // `holding` counts only the copies actually OCCUPYING the sleeve, which is not the
+        // same as the rows emitted: a soft-Removed copy keeps a row as frozen history but
+        // holds no pocket (holdsPocket), so a species whose every copy was removed has an
+        // empty sleeve and still needs its placeholder. Counting rows instead silently
+        // dropped a reserved pocket on the app's ordinary delete, renumbering the Page and
+        // Pocket columns for the whole rest of the binder.
+        int holding = 0;
         const auto bucket = copiesByDex.find(dexNum);
-        if (bucket == copiesByDex.end()) {
+        if (bucket != copiesByDex.end()) {
+            for (const CardCopy* copy : bucket->second) {
+                if (placed.contains(copy->id)) {
+                    continue;
+                }
+                emitBefore(copy->id);
+                pushCopyRow(*copy);
+                holding += holdsPocket(entries.back()) ? 1 : 0;
+            }
+        }
+        // A RESERVED slot stays reserved whatever the user files or moves. If nothing sits
+        // in it — the species is uncollected, or its every copy was pinned to some other
+        // pocket — it shows as a placeholder rather than vanishing, so the checklist keeps
+        // a constant pocket count and the pages after it never shift underfoot.
+        //
+        // Moving a species' last copy out therefore reads as "that sleeve is empty again",
+        // which is the point: two cards sharing a dex number (Kanto and Paldean Tauros both
+        // being #128) are one Pokédex slot and two physical cards, and pinning one of them
+        // elsewhere is exactly how the user says which is which.
+        //
+        // A region-less binder has no reserved slots — its species are listed only because
+        // a card is filed under them — so there the species simply stops being listed.
+        if (holding == 0 && reserved) {
             entries.push_back({pokemon, std::nullopt,
                                placeholderStatus(dexNum, ownedElsewhere, wished)});
-            continue;
-        }
-        // One row per filed copy, in filed order, and NO placeholder — the copies
-        // themselves are what this species has to say about this binder.
-        //
-        // A copy MOVED elsewhere is skipped here and emitted at its anchor instead; its
-        // sleeve collapses rather than leaving a hole, which is what makes the rest of the
-        // binder slide up by one as it physically would. If every copy of the species was
-        // moved away, this species contributes no row at all here — deliberately, and NOT
-        // a placeholder: the card is still in the binder and still on the checklist, just
-        // at the page the user put it on. A placeholder would claim a pocket that no
-        // longer exists and paginate everything after it wrongly.
-        for (const CardCopy* copy : bucket->second) {
-            if (placed.contains(copy->id)) {
-                continue;
-            }
-            emitBefore(copy->id);
-            pushCopyRow(*copy);
         }
     }
 
-    // Species-free cards last: they carry no dex number, so there is nowhere among
-    // the species rows to sort them.
+    // The EXTRAS, last: cards the checklist doesn't claim, in filed order. A dex-anchored
+    // blank or move on one of their species travels here with them (see anchorableDex),
+    // emitted once, ahead of the first card of that species.
+    std::set<PokemonDexNum> extrasAnchorsDone;
     for (const CardCopy* copy : tail) {
+        // Ahead of the `placed` skip on purpose: if this species' only extras card was
+        // itself pinned somewhere else, its dex-anchored gap still needs a home, and the
+        // extras are where that species now belongs. Leaving it unemitted would let the
+        // next move canonicalise it out of existence.
+        if (copy->pokemonDexNum && extrasSpecies.contains(*copy->pokemonDexNum) &&
+            extrasAnchorsDone.insert(*copy->pokemonDexNum).second) {
+            emitBeforeDex(*copy->pokemonDexNum);
+        }
         if (placed.contains(copy->id)) {
             continue;
         }

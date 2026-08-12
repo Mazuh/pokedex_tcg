@@ -101,38 +101,81 @@ TEST(CardBinderRepositoryTest, UpdateThrowsForMissingId) {
     Database db(":memory:");
     db.migrate();
     CardBinderRepository repo(db);
-    EXPECT_THROW(
-        repo.update("ghost", "New", {}, std::nullopt, std::nullopt, at("2026-07-15T12:00:00Z")),
-        pokedex::StorageError);
+    EXPECT_THROW(repo.update("ghost", "New", {}, std::nullopt, std::nullopt,
+                             at("2026-07-15T12:00:00Z")),
+                 pokedex::StorageError);
 }
 
-TEST(CardBinderRepositoryTest, UpdateChangesNameRegionsAndStamp) {
+TEST(CardBinderRepositoryTest, UpdateChangesNameAndStamp) {
     Database db(":memory:");
     db.migrate();
     CardBinderRepository repo(db);
     repo.add(makeBinder("b1", "Old Name", {}, "2026-07-14T09:00:00Z"));
 
-    repo.update("b1", "New Name", {Region::Kanto, Region::Johto}, std::nullopt, std::nullopt,
-                at("2026-07-15T12:00:00Z"));
+    repo.update("b1", "New Name", {}, std::nullopt, std::nullopt, at("2026-07-15T12:00:00Z"));
 
-    auto binders = repo.listAll();
+    const auto binders = repo.listAll();
     ASSERT_EQ(binders.size(), 1u);
     EXPECT_EQ(binders[0].name, "New Name");
-    EXPECT_EQ(binders[0].pokemonRegions,
-              (std::vector<Region>{Region::Kanto, Region::Johto}));
     EXPECT_EQ(binders[0].updatedAt, at("2026-07-15T12:00:00Z"));
     EXPECT_EQ(binders[0].insertedAt, at("2026-07-14T09:00:00Z"));  // untouched
+}
 
-    // A second update replaces the whole set — here, down to a single region.
-    repo.update("b1", "New Name", {Region::Hoenn}, std::nullopt, std::nullopt,
-                at("2026-07-16T12:00:00Z"));
-    binders = repo.listAll();
-    EXPECT_EQ(binders[0].pokemonRegions, (std::vector<Region>{Region::Hoenn}));
+// A binder's regions are chosen once, at add(), and update() cannot reach them. They
+// decide which species get a reserved slot and hence where every page falls, so
+// re-scoping a binder that already holds cards would re-derive the whole layout under
+// the blanks and moves the user arranged against it.
+// While a binder is still EMPTY its regions are just a setting, so a scope typed wrong at
+// creation stays correctable.
+TEST(CardBinderRepositoryTest, UpdateCanChangeTheRegionsOfAnEmptyBinder) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    repo.add(makeBinder("b1", "Kanto Journey", {Region::Kanto}, "2026-07-14T09:00:00Z"));
 
-    // And it can be cleared back to none.
-    repo.update("b1", "New Name", {}, std::nullopt, std::nullopt, at("2026-07-17T12:00:00Z"));
-    binders = repo.listAll();
-    EXPECT_TRUE(binders[0].pokemonRegions.empty());
+    repo.update("b1", "Johto Journey", {Region::Johto}, std::nullopt, std::nullopt,
+                at("2026-07-15T12:00:00Z"));
+
+    const auto found = repo.find("b1");
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(found->pokemonRegions, (std::vector<Region>{Region::Johto}));
+}
+
+// Once anything is filed in or arranged about it, the regions are settled: they decide
+// which species get a reserved slot and hence where every page falls, so re-deriving them
+// would move the pages out from under the blanks and moves recorded against them.
+TEST(CardBinderRepositoryTest, UpdateRefusesToRescopeABinderThatHoldsSomething) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    repo.add(makeBinder("b1", "Kanto Journey", {Region::Kanto}, "2026-07-14T09:00:00Z"));
+    repo.addBlanks("b1", CardBinderBlank{.beforeDexNum = 25, .blanks = 1});
+
+    EXPECT_THROW(repo.update("b1", "Renamed", {Region::Johto}, std::nullopt, std::nullopt,
+                             at("2026-07-15T12:00:00Z")),
+                 pokedex::StorageError);
+
+    // …and the refusal rolls back the whole edit rather than half-applying the name.
+    const auto found = repo.find("b1");
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(found->name, "Kanto Journey");
+    EXPECT_EQ(found->pokemonRegions, (std::vector<Region>{Region::Kanto}));
+
+    // Saving the SAME regions is not a change, so an ordinary rename still works.
+    repo.update("b1", "Renamed", {Region::Kanto}, std::nullopt, std::nullopt,
+                at("2026-07-15T12:00:00Z"));
+    EXPECT_EQ(repo.find("b1")->name, "Renamed");
+}
+
+TEST(CardBinderRepositoryTest, HasContentsSeesCardsBlanksAndPlacements) {
+    Database db(":memory:");
+    db.migrate();
+    CardBinderRepository repo(db);
+    repo.add(makeBinder("b1", "Empty", {}, "2026-07-14T09:00:00Z"));
+    EXPECT_FALSE(repo.hasContents("b1"));
+
+    repo.addBlanks("b1", CardBinderBlank{.beforeDexNum = 25, .blanks = 1});
+    EXPECT_TRUE(repo.hasContents("b1"));
 }
 
 // The album's physical layout round-trips through add/listAll. A binder that records
@@ -363,8 +406,8 @@ TEST(CardBinderRepositoryTest, UpdateLeavesTheBlankSetUntouched) {
     repo.add(makeBinder("b1", "Kanto+Kalos", {Region::Kanto}, "2026-07-14T09:00:00Z"));
     repo.addBlanks("b1", CardBinderBlank{.beforeDexNum = 650, .blanks = 2});
 
-    repo.update("b1", "Renamed", {Region::Kanto, Region::Kalos}, 360,
-                CardBinderPocketGrid{.rows = 3, .columns = 3}, at("2026-07-15T12:00:00Z"));
+    repo.update("b1", "Renamed", {Region::Kanto}, 360, CardBinderPocketGrid{.rows = 3, .columns = 3},
+                at("2026-07-15T12:00:00Z"));
 
     const auto found = repo.find("b1");
     ASSERT_TRUE(found.has_value());
@@ -578,8 +621,8 @@ TEST(CardBinderRepositoryTest, UpdateLeavesTheManualArrangementUntouched) {
     repo.addBlanks("b1", CardBinderBlank{.beforeDexNum = 650, .blanks = 2});
     repo.setPlacement("b1", {.cardCopyId = "c1", .beforeDexNum = 650});
 
-    repo.update("b1", "Renamed", {Region::Kanto, Region::Kalos}, 360,
-                CardBinderPocketGrid{.rows = 3, .columns = 3}, at("2026-07-15T12:00:00Z"));
+    repo.update("b1", "Renamed", {Region::Kanto}, 360, CardBinderPocketGrid{.rows = 3, .columns = 3},
+                at("2026-07-15T12:00:00Z"));
 
     const auto found = repo.find("b1");
     ASSERT_TRUE(found.has_value());

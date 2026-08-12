@@ -13,6 +13,7 @@
 #include "core/domain/card_ownership.h"
 #include "core/domain/card_reference.h"
 #include "core/domain/region.h"
+#include "core/domain/wishlist.h"
 #include "core/storage/card_binder_repository.h"
 #include "core/storage/card_copy_repository.h"
 #include "core/storage/codecs.h"
@@ -81,11 +82,25 @@ struct MoveTest : ::testing::Test {
         copies.add(copy);
     }
 
+    void wish(PokemonDexNum dex) {
+        pokedex::Wishlist w;
+        w.pokemonDexNum = dex;
+        w.sources = {"ebay"};
+        w.insertedAt = at("2026-07-14T09:00:00Z");
+        w.updatedAt = w.insertedAt;
+        wishlist.save(w);
+    }
+
     std::vector<CardBinderEntry> rows() { return guide.buildEntries(binder); }
 
-    // Plan a move against the binder's current guide.
+    // Plan a move against the binder's current guide, handing the planner the same
+    // placeholder verdict the guide itself would reach — otherwise a projected placeholder
+    // for a wished species would carry the wrong status and the anti-drift check below
+    // would fail on a difference that isn't a real disagreement about ORDER.
     BinderMovePlan plan(const std::string& copyId, int targetPocket) {
-        return planCardMove(binder, rows(), copyId, targetPocket);
+        return planCardMove(binder, rows(), copyId, targetPocket, [this](PokemonDexNum dex) {
+            return guide.placeholderStatusFor(binder.id, dex);
+        });
     }
 
     // Commit a plan and pick the updated binder back up, exactly as the GUI does.
@@ -108,6 +123,16 @@ struct MoveTest : ::testing::Test {
     }
 
     std::vector<std::string> layoutNow() { return layout(rows()); }
+
+    // The rows' verdicts, so a projection can't match on order alone while getting a
+    // substituted placeholder's status wrong.
+    static std::vector<int> statuses(const std::vector<CardBinderEntry>& entries) {
+        std::vector<int> out;
+        for (const CardBinderEntry& e : entries) {
+            out.push_back(e.status ? static_cast<int>(*e.status) : -1);
+        }
+        return out;
+    }
 
     // How many pockets the arrangement occupies. It SHRINKS as moves consume blanks, so a
     // target past the end clamps to a moving figure.
@@ -163,6 +188,158 @@ TEST_F(MoveTest, ProjectedRowsMatchWhatTheGuideActuallyEmits) {
                 << "moving " << copyId << " to pocket " << pocket;
         }
     }
+}
+
+// The same check over a REGION-SCOPED binder, where the reserved Pokédex slots are in
+// play. This is the shape the sweep above can't reach: a region-less binder lists only
+// what it holds, so taking a card out of its species never leaves a placeholder behind,
+// and the projection never has to grow a row where one was removed.
+//
+// Bulbasaur is wished, so the substituted placeholder's status is exercised too — a
+// projection that always guessed Incomplete would pass every other case here.
+TEST_F(MoveTest, ProjectedRowsMatchTheGuideWhenAMoveVacatesAReservedSlot) {
+    openBinder({Region::Kanto});
+    wish(1);              // Bulbasaur — a placeholder verdict that isn't Incomplete
+    file("bulba", 1);     // its only copy: moving it must leave the slot reserved
+    file("pika", 25);
+    file("mew", 151);
+    file("trainer", std::nullopt, 12);
+    binder = service.insertBlanks("b1", {.beforeDexNum = 25, .blanks = 2});
+
+    for (const std::string& copyId : {"bulba", "trainer", "pika", "mew"}) {
+        for (int pocket = 0; pocket < 10; ++pocket) {
+            const BinderMovePlan p = plan(copyId, pocket);
+            apply(p);
+            const auto actual = rows();
+            EXPECT_EQ(layout(p.projectedRows), layout(actual))
+                << "moving " << copyId << " to pocket " << pocket;
+            EXPECT_EQ(statuses(p.projectedRows), statuses(actual))
+                << "moving " << copyId << " to pocket " << pocket;
+            ASSERT_EQ(pocketOf(actual, copyId), std::min(pocket, pocketCount(actual) - 1))
+                << "moving " << copyId << " to pocket " << pocket;
+        }
+    }
+    // The checklist never lost a slot along the way, however much was shuffled.
+    EXPECT_EQ(pokedex::listedSpecies(binder, rows()).size(), 151u);
+}
+
+// A move must never DELETE a page break recorded against a species that has become an
+// extra. canonicalBlankSets only spares a run whose anchor names no row at all, so this
+// held only once the guide started emitting those anchors in the extras.
+TEST_F(MoveTest, AMoveDoesNotDestroyAPageBreakRecordedOnAnExtrasSpecies) {
+    openBinder({Region::Kanto});
+    file("kanto", 25);
+    file("johto", 200);  // out of region: an extra
+    binder = service.insertBlanks("b1", {.beforeDexNum = 200, .blanks = 2});
+    const auto blanksNow = [this] {
+        int n = 0;
+        for (const CardBinderEntry& e : rows()) {
+            n += pokedex::isBlankPocket(e) ? 1 : 0;
+        }
+        return n;
+    };
+    ASSERT_EQ(blanksNow(), 2);
+
+    apply(plan("kanto", 0));
+
+    EXPECT_EQ(blanksNow(), 2) << "the user's gap must survive an unrelated move";
+}
+
+// --- riders --------------------------------------------------------------------------
+
+// A card pinned before another RIDES on it: the guide emits it wherever its anchor goes.
+// So moving the anchor has to carry the whole convoy, both in the projection and in the
+// shiftedCards figure the user is warned with.
+TEST_F(MoveTest, MovingACardCarriesTheCardsPinnedToIt) {
+    openBinder();
+    file("a", 1);
+    file("b", 25);
+    file("c", 100);
+
+    apply(plan("c", 0));  // c pins itself before a
+    apply(plan("b", 0));  // b pins itself before c — b is now c's rider
+    ASSERT_EQ(layoutNow(), (std::vector<std::string>{"b", "c", "a"}));
+
+    const BinderMovePlan p = plan("c", 2);
+    apply(p);
+
+    // b came along, so the projection must say so — and it must match reality.
+    EXPECT_EQ(layout(p.projectedRows), layoutNow());
+    EXPECT_EQ(layoutNow(), (std::vector<std::string>{"a", "b", "c"}));
+    // Both a and b changed sleeve, so the user is warned about two cards, not one.
+    EXPECT_EQ(p.shiftedCards, 2);
+}
+
+// --- reserved slots ------------------------------------------------------------------
+
+// How many rows stand for `dex` with no card in them.
+int placeholdersFor(const std::vector<CardBinderEntry>& entries, PokemonDexNum dex) {
+    int n = 0;
+    for (const CardBinderEntry& e : entries) {
+        if (e.pokemon && e.pokemon->dexNumber == dex && !e.cardCopyId) {
+            ++n;
+        }
+    }
+    return n;
+}
+
+// Pulling a card off its Pokédex slot and dropping it into a blank is a pure swap: the
+// blank is consumed, the slot it left becomes a placeholder, and NOTHING else changes
+// pocket. So the user is not prompted — there is nothing to warn about.
+TEST_F(MoveTest, MovingACardOffItsReservedSlotIntoABlankShiftsNothing) {
+    openBinder({Region::Kanto});
+    file("pika", 25);
+    binder = service.insertBlanks("b1", {.beforeDexNum = 1, .blanks = 1});
+
+    const std::size_t before = rows().size();
+    const BinderMovePlan p = plan("pika", 0);  // the blank, right at the front
+    EXPECT_EQ(p.shiftedCards, 0);
+    apply(p);
+
+    const auto after = rows();
+    EXPECT_EQ(pocketOf(after, "pika"), 0);
+    EXPECT_EQ(placeholdersFor(after, 25), 1);  // #25's sleeve is held open
+    // One blank spent, one placeholder gained — the album is exactly as full as it was.
+    EXPECT_EQ(after.size(), before);
+}
+
+// A card that is ALREADY pinned left its placeholder behind on the first move. Moving it
+// again must not mint a second one — that would invent a pocket out of nothing, and every
+// later move would compound it.
+TEST_F(MoveTest, MovingAnAlreadyPlacedCardDoesNotMintASecondPlaceholder) {
+    openBinder({Region::Kanto});
+    file("pika", 25);
+
+    apply(plan("pika", 0));
+    ASSERT_EQ(placeholdersFor(rows(), 25), 1);
+
+    apply(plan("pika", 40));
+    const auto after = rows();
+    EXPECT_EQ(placeholdersFor(after, 25), 1);
+    EXPECT_EQ(pocketOf(after, "pika"), 40);
+    EXPECT_EQ(after.size(), 152u);  // 151 slots + the card, however often it is moved
+}
+
+// A gap in front of the LAST row is normally dropped when that row leaves: empty pockets
+// trailing off the end of a binder describe nothing. But a vacated slot leaves a
+// placeholder standing in that spot, so there is still a row for the gap to sit in front
+// of, and the user's page break survives.
+TEST_F(MoveTest, AGapBeforeTheLastCardSurvivesWhenItsSlotStaysReserved) {
+    openBinder({Region::Kanto});
+    file("mew", 151);  // the final row of a Kanto binder
+    binder = service.insertBlanks("b1", {.beforeCopyId = "mew", .blanks = 1});
+    ASSERT_EQ(rows().size(), 152u);  // 151 species + the blank
+
+    apply(plan("mew", 0));
+
+    const auto after = rows();
+    int blanks = 0;
+    for (const CardBinderEntry& e : after) {
+        blanks += pokedex::isBlankPocket(e) ? 1 : 0;
+    }
+    EXPECT_EQ(blanks, 1) << "the page break in front of #151 must not be swept away";
+    EXPECT_EQ(placeholdersFor(after, 151), 1);
+    EXPECT_EQ(pocketOf(after, "mew"), 0);
 }
 
 // --- landing on a blank --------------------------------------------------------------

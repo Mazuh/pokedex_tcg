@@ -1,11 +1,13 @@
 #pragma once
 
+#include <functional>
 #include <span>
 #include <stdexcept>
 #include <vector>
 
 #include "core/domain/card_binder.h"
 #include "core/domain/card_binder_entry.h"
+#include "core/domain/collection_status.h"
 #include "core/domain/types.h"
 
 namespace pokedex {
@@ -72,9 +74,21 @@ struct BinderMovePlan {
 // If the target pocket holds a blank, the blank is consumed — the card takes that exact
 // sleeve and nothing after it moves. A target past the last row places the card at the
 // very end. Throws BinderMoveError on the invalid inputs listed above.
+//
+// Moving a card OFF a reserved Pokédex slot it was the last one holding leaves a
+// placeholder behind rather than closing the sleeve up (see BinderGuideService), so the
+// projection has to grow one too. `placeholderStatusFor` supplies that row's status,
+// which the planner cannot work out for itself — the verdict depends on the wishlist and
+// on copies in other binders, both storage reads, and this stays a pure function. Omit it
+// and the projected placeholder reads Incomplete, which is right whenever the species is
+// neither wished nor owned elsewhere; the GUI passes
+// BinderGuideService::placeholderStatusFor so the projection matches the guide exactly.
+using PlaceholderStatusFn = std::function<CollectionStatus(PokemonDexNum)>;
+
 BinderMovePlan planCardMove(const CardBinder& binder,
                             std::span<const CardBinderEntry> currentRows,
-                            const CardCopyId& copyId, int targetPocket);
+                            const CardCopyId& copyId, int targetPocket,
+                            const PlaceholderStatusFn& placeholderStatusFor = {});
 
 // Work out how to give `copyId` up to derived order again.
 //
