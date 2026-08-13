@@ -1,5 +1,6 @@
 #include <QApplication>
 #include <QDialog>
+#include <QIcon>
 #include <QMessageBox>
 #include <QString>
 
@@ -34,6 +35,10 @@
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
+    // Window/taskbar icon, from the Qt resource built out of assets/icon-256.png (see
+    // CMakeLists). Cosmetic on macOS — the Dock reads the bundle's .icns instead — but
+    // it is what the Linux build and the window manager have to go on.
+    app.setWindowIcon(QIcon(QStringLiteral(":/assets/icon-256.png")));
 
     std::optional<pokedex::Workspace> workspace;
     try {

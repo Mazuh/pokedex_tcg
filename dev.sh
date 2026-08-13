@@ -36,8 +36,18 @@ case "$cmd" in
         # macOS builds a .app bundle (for camera permission); run its inner binary so the
         # app is recognized as the bundle (NSBundle/TCC) while stdout stays in the terminal
         # for dev logs. Elsewhere it's a plain binary.
-        APP="$BUILD/pokedex_tcg.app/Contents/MacOS/pokedex_tcg"
-        [ -x "$APP" ] || APP="$BUILD/pokedex_tcg"
+        # Found by globbing rather than by name: CMake owns the app name ("Pokédex TCG by
+        # Mazuh.app" — see the if(APPLE) block in CMakeLists.txt), and the binary is located
+        # by looking inside Contents/MacOS rather than deriving it from the bundle's name,
+        # so neither a rename nor a directory/executable split needs an edit here.
+        APP=""
+        for bundle in "$BUILD"/*.app; do
+            [ -d "$bundle" ] || continue
+            for exe in "$bundle"/Contents/MacOS/*; do
+                [ -x "$exe" ] && [ -f "$exe" ] && APP="$exe"
+            done
+        done
+        [ -n "$APP" ] || APP="$BUILD/pokedex_tcg"
         "$APP"
         ;;
     build)

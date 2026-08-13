@@ -67,6 +67,7 @@ src/
 tests/                  mirrors src/core (domain/ storage/ app/)
 data/                   seed National Pokédex reference catalog shipped
                           with the app (distinct from the user's workspace)
+assets/                 app artwork (the icon masters — see "App icon" below)
 docs/                   design notes / decisions (optional)
 CMakeLists.txt          single top-level build file
 ```
@@ -606,7 +607,8 @@ app never appears in System Settings ▸ Camera — we tried and abandoned that 
 **`qt_import_plugins(pokedex_tcg INCLUDE Qt6::QDarwinCameraPermissionPlugin)`** — brew's Qt is STATIC
 so the permission plugin is a `.a` that must be explicitly imported (Qt doesn't auto-import them),
 else `QCameraPermission` has no handler ("Could not find permission plugin"). Because it's a bundle,
-the binary is `build/pokedex_tcg.app/Contents/MacOS/pokedex_tcg`: **dev.sh** runs that inner path
+the binary is `build/<app>.app/Contents/MacOS/<app>` — where `<app>` is `POKEDEX_APP_NAME`,
+today "Pokédex TCG by Mazuh" (see the app-name note below): **dev.sh** runs that inner path
 (bundle-recognized, logs still in the terminal), **install.sh**/CMake install the whole `.app` + a
 `pokedex` symlink into it, README points at the `.app`. Reset the grant with `tccutil reset Camera
 com.mazuh.pokedex-tcg` (after first launch). The captured frame is not persisted — see
@@ -697,8 +699,9 @@ cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH="$(brew --prefix qt)"
 # Build
 cmake --build build
 
-# Run the app
-./build/pokedex_tcg
+# Run the app (macOS: the bundle is named as the Dock shows it — quote the path;
+# elsewhere it's a plain ./build/pokedex_tcg)
+"./build/Pokédex TCG by Mazuh.app/Contents/MacOS/Pokedex TCG by Mazuh"
 
 # Run tests
 ctest --test-dir build --output-on-failure
@@ -1037,6 +1040,72 @@ their `repopulate()`'s by-identity selection restore to keep the user's place;
 expensive. Don't gate the binder guide on `revision()`: its Status column also derives
 from the wishlist (which has no revision counter), and a revision stamp on a failed load
 would latch an empty guide. The guide has no ctor load — the first `showEvent` does it.
+
+**App icon.** `assets/icon.png` is the ONE master every icon derives from — 1024×1024
+RGBA with the artwork centered at ~80% of the canvas (a transparent ~10% margin on every
+side, the macOS convention; the raw delivered artwork, kept as `assets/icon-source.png`,
+was 1254px and nearly edge-to-edge, so it was re-canvased). Two consumers, and the split
+is deliberate:
+
+- The **macOS `.app` icon** is generated at BUILD time (`cmake/macos/GenerateIcns.cmake`,
+  run from the `if(APPLE)` block) — `sips` renders each size into an `.iconset`, `iconutil`
+  packs it into `Contents/Resources/pokedex_tcg.icns`. Generated rather than checked in so
+  it can't drift from the master, following the `pokedex_version_header` precedent; both
+  tools ship with macOS, so this adds no dependency (and is why it's macOS-only).
+  `MACOSX_BUNDLE_ICON_FILE` and the plist's `CFBundleIconFile` must name the SAME file or
+  the Dock silently falls back to the generic executable icon.
+- The **window/taskbar icon** is `assets/icon-256.png`, embedded via `qt_add_resources` and
+  set once in `main.cpp` (`:/assets/icon-256.png`). A Qt resource, not a file read at
+  runtime, so it needs no install-path resolution. The 256px derivative is CHECKED IN
+  because the downscale tools are macOS-only and the Linux CI leg has to build it too —
+  regenerate it with `sips -Z 256 assets/icon.png --out assets/icon-256.png` if the master
+  ever changes.
+
+Note the icon is a free-form shaped object on transparency, not a Big Sur squircle — a
+deliberate style call. Anything new derived from the master keeps the 80% framing, and any
+redraw has to survive 16×16 (Finder list view), which is what governs how much detail the
+artwork can carry.
+
+**The app's presented name is the .app's FILE name.** The Dock and Finder label a macOS
+app with its bundle's file name and deliberately IGNORE `CFBundleDisplayName` when the two
+disagree — an anti-spoofing rule, so no plist key can rename an app on its own. Presenting
+this one as "Pokédex TCG by Mazuh" is therefore a rename: `POKEDEX_APP_NAME` in the
+`if(APPLE)` block feeds `OUTPUT_NAME` (bundle + inner executable), `CFBundleDisplayName`,
+and the installed `pokedex` symlink's target, so those four can't drift apart. Four
+consequences worth remembering:
+
+- **The .app directory is accented; the executable inside is not** — `POKEDEX_APP_NAME`
+  ("Pokédex TCG by Mazuh") vs `POKEDEX_EXE_NAME` ("Pokedex TCG by Mazuh"), and the split is
+  load-bearing. `codesign` matches `CFBundleExecutable` to the on-disk file bytewise and
+  mishandles a non-ASCII executable name: it stops recognising the binary as the bundle's
+  main executable, seals it as *nested code*, then signs it — so the recorded cdhash is
+  stale on arrival and `codesign --verify` fails forever with "a sealed resource is missing
+  or invalid", which is the seal TCC attributes the camera grant to. Spaces are fine; the
+  accent alone breaks it. A directory name, by contrast, isn't covered by the signature.
+- **CMake can't express that split, so the app is BUILT staged and PUBLISHED copied.**
+  `OUTPUT_NAME` names both the bundle and the binary, so the target builds under the ASCII
+  name into `build/stage/` and a POST_BUILD step copies it to `build/<accented>.app` and
+  re-signs. Three details are deliberate: it's a COPY, not a rename (CMake writes
+  `Contents/Info.plist` at GENERATE time, so moving the bundle leaves the next incremental
+  link with a plist-less bundle — "bundle format unrecognized", no camera permission, no
+  icon; also verified is that the staged bundle staying put is what keeps ninja from
+  re-linking on every build); the destination is wiped before copying, so a file dropped
+  from the bundle can't linger; and the built bundle is left on CMake's own path so Qt's
+  Info.plist post-processing (it adds `CFBundleDevelopmentRegion` and normalises the file)
+  keeps working — hand-assembling the bundle would forfeit that. `build/*.app` therefore
+  matches only the published bundle, which is what the scripts glob for.
+- **`CFBundleName` is a DIFFERENT, shorter name** ("Pokédex TCG"). It titles the menu-bar
+  application menu, where Apple wants ≤16 characters — so the long name in the Dock and the
+  short accented one in the menu bar are both deliberate, not an inconsistency to "fix".
+- **The macOS binary path now contains spaces.** Quote it everywhere. `dev.sh` and
+  `install.sh` locate it by GLOBBING `"$BUILD"/*.app` and then scanning `Contents/MacOS/`
+  for the executable, rather than deriving either name from the other — so a future rename
+  (or a directory/executable split) needs no script edits; only the Linux fallback
+  (`$BUILD/pokedex_tcg`, the plain target name — the rename is APPLE-scoped) is spelled out.
+- **Verify a name change by reading the Dock, not the plist.** `osascript -e 'tell
+  application "System Events" to tell process "Dock" to get name of every UI element of
+  list 1'` reports the label the user actually sees; `lsappinfo` and `plutil -p` both
+  reported the *intended* name while the Dock still showed the old one.
 
 **GUI navigation.** The app is a macOS-style shell: `MainWindow` has a left
 sidebar (a `QListWidget` source list, Finder/Settings-style) selecting sections

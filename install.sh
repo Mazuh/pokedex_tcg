@@ -43,8 +43,17 @@ fi
 # pointing at the built binary — they paste one line and still get `pokedex`.
 # macOS builds a .app bundle; point the alias at its inner binary (running that path
 # still resolves the bundle, so camera permission works). Elsewhere it's a plain binary.
-BIN="$BUILD/pokedex_tcg.app/Contents/MacOS/pokedex_tcg"
-[ -x "$BIN" ] || BIN="$BUILD/pokedex_tcg"
+# Globbed, not hardcoded: CMake owns the app name ("Pokédex TCG by Mazuh.app" — see the
+# if(APPLE) block in CMakeLists.txt), so look inside Contents/MacOS for the binary rather
+# than deriving one name from the other.
+BIN=""
+for bundle in "$BUILD"/*.app; do
+    [ -d "$bundle" ] || continue
+    for exe in "$bundle"/Contents/MacOS/*; do
+        [ -x "$exe" ] && [ -f "$exe" ] && BIN="$exe"
+    done
+done
+[ -n "$BIN" ] || BIN="$BUILD/pokedex_tcg"
 case "${SHELL:-}" in
     *zsh)  rc="~/.zshrc" ;;
     *bash) rc="~/.bashrc" ;;

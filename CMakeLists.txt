@@ -250,6 +250,17 @@ qt_add_executable(pokedex_tcg
     src/gui/services/assistant_service.cpp
 )
 target_link_libraries(pokedex_tcg PRIVATE pokedex_core pokedex_warnings pokedex_sanitizers Qt6::Widgets Qt6::Network Qt6::Multimedia Qt6::MultimediaWidgets)
+
+# --- App icon ----------------------------------------------------------------
+# assets/icon.png is the 1024x1024 master every icon is derived from; keep it the
+# only place the artwork lives. Two consumers:
+#   * the window/taskbar icon (QApplication::setWindowIcon, main.cpp), embedded as
+#     a Qt resource so it needs no install path and works on every platform — the
+#     256px derivative is checked in because the downscale tools are macOS-only;
+#   * the macOS .app bundle icon (.icns), generated below.
+qt_add_resources(pokedex_tcg "appicon"
+    PREFIX "/"
+    FILES assets/icon-256.png)
 # The generated gui/version.h is under the build tree; make it includable and
 # ensure it's (re)generated before the GUI compiles.
 add_dependencies(pokedex_tcg pokedex_version_header)
@@ -275,21 +286,101 @@ if(APPLE)
     #      only exist at runtime when explicitly imported; Qt does NOT auto-import them
     #      (opt-in, each needs a usage description). Without this the camera plugin is
     #      absent and QCameraPermission has no handler at all.
-    # (This is why ./build/pokedex_tcg is now ./build/pokedex_tcg.app on macOS — dev.sh /
-    # install.sh / README launch the bundle accordingly.)
+    # (This is why ./build/pokedex_tcg is now a .app on macOS — dev.sh / install.sh /
+    # README launch the bundle accordingly.)
+    #
+    # The bundle's FILE NAME is what the Dock and Finder label the app with — macOS
+    # deliberately ignores CFBundleDisplayName when the two disagree (an anti-spoofing
+    # rule: an app can't claim a name its file doesn't have). So presenting the app as
+    # "Pokédex TCG by Mazuh" means renaming the bundle, not adding a plist key; verified
+    # by reading the Dock's own accessibility labels, which is the only thing that
+    # actually reports the label the user sees (lsappinfo and plutil both report the
+    # *intended* name while the Dock still shows the old one).
+    #
+    # The .app DIRECTORY carries the accent; the executable inside deliberately does not.
+    # codesign matches CFBundleExecutable to the file on disk bytewise and mishandles a
+    # non-ASCII executable name: it stops recognising the binary as the bundle's main
+    # executable, seals it as *nested code* in CodeResources, and then signs it — so the
+    # cdhash it recorded is stale the instant it is written and every later
+    # `codesign --verify` fails with "a sealed resource is missing or invalid". That seal
+    # is not cosmetic: it is what TCC attributes the camera grant to. Spaces are fine; the
+    # accent alone breaks it (both were tested in isolation). A directory name, by
+    # contrast, is not covered by the signature at all — which is what makes the split
+    # below work.
+    #
+    # CMake derives both names from OUTPUT_NAME and can't split them, so the app is built
+    # under the ASCII name into build/stage and PUBLISHED as a copy under the accented one
+    # (see the POST_BUILD step). Copy, not rename: CMake writes Contents/Info.plist at
+    # GENERATE time, so moving the bundle away leaves the next incremental link with a
+    # plist-less bundle ("bundle format unrecognized" — no camera permission, no icon).
+    # Keeping the built bundle where CMake expects it also means Qt's own Info.plist
+    # post-processing keeps working untouched, which hand-assembling a bundle would forfeit.
+    #
+    # All of this is APPLE-scoped, so the Linux build keeps its plain, script-friendly
+    # `pokedex_tcg`. CFBundleName stays the SHORT "Pokédex TCG": that one titles the
+    # menu-bar application menu, where Apple wants <=16 characters.
+    set(POKEDEX_APP_NAME "Pokédex TCG by Mazuh")  # the published .app — what the Dock shows
+    set(POKEDEX_EXE_NAME "Pokedex TCG by Mazuh")  # the binary inside — ASCII, for codesign
+    set(POKEDEX_APP_BUNDLE "${CMAKE_BINARY_DIR}/${POKEDEX_APP_NAME}.app")
     set_target_properties(pokedex_tcg PROPERTIES
+        OUTPUT_NAME "${POKEDEX_EXE_NAME}"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/stage"
         MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_BUNDLE_NAME "Pokedex TCG"
+        MACOSX_BUNDLE_BUNDLE_NAME "Pokédex TCG"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.mazuh.pokedex-tcg"
-        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/cmake/macos/Info.plist.in")
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/cmake/macos/Info.plist.in"
+        MACOSX_BUNDLE_ICON_FILE "pokedex_tcg.icns")
     qt_import_plugins(pokedex_tcg INCLUDE Qt6::QDarwinCameraPermissionPlugin)
+
+    # Pack the icon master into Contents/Resources/pokedex_tcg.icns (the name
+    # MACOSX_BUNDLE_ICON_FILE above puts in CFBundleIconFile — the two must agree, or
+    # the Dock silently shows the generic executable icon). Generated at build time
+    # from assets/icon.png rather than checked in, so the .icns can never drift from
+    # the master; the file is added to the target's sources purely so CMake copies it
+    # into the bundle (MACOSX_PACKAGE_LOCATION) and knows to run the command.
+    set(POKEDEX_ICNS "${CMAKE_BINARY_DIR}/generated/pokedex_tcg.icns")
+    add_custom_command(
+        OUTPUT "${POKEDEX_ICNS}"
+        COMMAND ${CMAKE_COMMAND}
+            -DSOURCE_ICON=${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.png
+            -DICONSET_DIR=${CMAKE_BINARY_DIR}/generated/pokedex_tcg.iconset
+            -DOUTPUT_FILE=${POKEDEX_ICNS}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/macos/GenerateIcns.cmake
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.png"
+                "${CMAKE_CURRENT_SOURCE_DIR}/cmake/macos/GenerateIcns.cmake"
+        COMMENT "Generating the macOS app icon (.icns)"
+        VERBATIM)
+    target_sources(pokedex_tcg PRIVATE "${POKEDEX_ICNS}")
+    set_source_files_properties("${POKEDEX_ICNS}" PROPERTIES
+        MACOSX_PACKAGE_LOCATION Resources
+        GENERATED TRUE)
+    # A bundle resource is only an ORDER-ONLY dependency of the compiles, so editing the
+    # icon alone re-copies the .icns without re-linking — and the ad-hoc codesign below is
+    # a POST_BUILD step on the link edge, so it would not re-run either. The bundle would
+    # then carry a signature sealing the OLD resource, and `codesign --verify` fails with
+    # "a sealed resource is missing or invalid" — the very signature TCC uses to remember
+    # the camera grant. Putting the icon on the link edge makes an icon-only change
+    # re-link, and therefore re-sign.
+    set_property(TARGET pokedex_tcg APPEND PROPERTY LINK_DEPENDS "${POKEDEX_ICNS}")
 
     # Ad-hoc-sign the finished bundle (stable identifier) so TCC attributes and remembers
     # the camera grant. Ad-hoc (`-`), so no developer certificate is needed for a local
     # build; a distributable build would use a Developer ID identity instead.
+    #
+    # Then publish the signed bundle under the accented name the Dock displays (see above).
+    # The staged bundle is left in place so ninja's link output still exists — otherwise the
+    # app would re-link on every build — and the copy is wiped first rather than merged, so
+    # a file dropped from the bundle can't linger in the published one. The signature
+    # survives the copy because it doesn't cover the directory name, but the published
+    # bundle is re-signed anyway: it is the one that ships, and it should not depend on
+    # copy_directory preserving every byte of _CodeSignature.
     add_custom_command(TARGET pokedex_tcg POST_BUILD
         COMMAND codesign --force --sign - "$<TARGET_BUNDLE_DIR:pokedex_tcg>"
-        COMMENT "Ad-hoc signing the .app bundle (macOS camera permission)"
+        COMMAND ${CMAKE_COMMAND} -E rm -rf "${POKEDEX_APP_BUNDLE}"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "$<TARGET_BUNDLE_DIR:pokedex_tcg>" "${POKEDEX_APP_BUNDLE}"
+        COMMAND codesign --force --sign - "${POKEDEX_APP_BUNDLE}"
+        COMMENT "Ad-hoc signing the .app bundle (macOS camera permission), then publishing it as ${POKEDEX_APP_NAME}.app"
         VERBATIM)
 endif()
 
@@ -304,10 +395,13 @@ if(APPLE)
     # inside the .app, so [NSBundle mainBundle] still finds Contents/Info.plist and the
     # camera permission keeps working from the installed command. (A bare copy of the
     # inner binary would run but couldn't scan cards.)
-    install(DIRECTORY "$<TARGET_BUNDLE_DIR:pokedex_tcg>"
+    # The PUBLISHED bundle, not $<TARGET_BUNDLE_DIR> (which is the ASCII-named staged one).
+    install(DIRECTORY "${POKEDEX_APP_BUNDLE}"
             DESTINATION "${CMAKE_INSTALL_BINDIR}" USE_SOURCE_PERMISSIONS)
+    # The link spans both names — accented directory, ASCII executable — so it follows the
+    # app name automatically; a hardcoded path here would dangle the `pokedex` command.
     install(CODE "file(CREATE_LINK
-        \"pokedex_tcg.app/Contents/MacOS/pokedex_tcg\"
+        \"${POKEDEX_APP_NAME}.app/Contents/MacOS/${POKEDEX_EXE_NAME}\"
         \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/pokedex\"
         SYMBOLIC)")
 else()

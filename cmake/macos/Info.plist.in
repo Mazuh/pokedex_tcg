@@ -16,14 +16,20 @@
 <dict>
     <key>CFBundleName</key>
     <string>${MACOSX_BUNDLE_BUNDLE_NAME}</string>
+    <!-- Must equal the .app's file name (see POKEDEX_APP_NAME in CMakeLists.txt): macOS
+         ignores a display name that disagrees with the bundle's own file name, so the two
+         are kept in lockstep rather than allowed to drift. CFBundleName above stays short
+         because it, not this, titles the menu-bar application menu. -->
     <key>CFBundleDisplayName</key>
-    <string>${MACOSX_BUNDLE_BUNDLE_NAME}</string>
+    <string>${POKEDEX_APP_NAME}</string>
     <key>CFBundleIdentifier</key>
     <string>${MACOSX_BUNDLE_GUI_IDENTIFIER}</string>
     <key>CFBundleExecutable</key>
     <string>${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+    <key>CFBundleIconFile</key>
+    <string>${MACOSX_BUNDLE_ICON_FILE}</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleShortVersionString</key>
