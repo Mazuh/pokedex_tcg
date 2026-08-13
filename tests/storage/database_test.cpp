@@ -1,5 +1,11 @@
+// test_env.h sets _DARWIN_C_SOURCE / _DEFAULT_SOURCE for setenv; include it
+// before any system header so those declarations are visible under -std=c++23.
+#include "../support/test_env.h"
+
 #include <gtest/gtest.h>
 
+#include <filesystem>
+#include <fstream>
 #include <stdexcept>
 
 #include "core/storage/database.h"
@@ -7,9 +13,12 @@
 
 namespace {
 
+namespace fs = std::filesystem;
+
 using pokedex::Database;
 using pokedex::Statement;
 using pokedex::StorageError;
+using pokedex_test::TempDir;
 
 TEST(DatabaseTest, FreshDatabaseHasNoSchemaVersion) {
     Database db(":memory:");
@@ -323,6 +332,75 @@ TEST(DatabaseTest, ForeignKeysAreEnforced) {
                 " VALUES('c2',25,'MEW','EN','151/165','Owned','NearMint','ghost','',"
                 "'2026-07-14T00:00:00Z','2026-07-14T00:00:00Z');"),
         StorageError);
+}
+
+// backupTo writes a readable, independent copy — and crucially preserves
+// user_version. A snapshot that lost the stamp would look like a fresh v0 file and
+// be silently re-migrated from scratch when restored, which is the one failure mode
+// that would make the whole backup feature worse than useless.
+TEST(DatabaseTest, BackupToWritesAReadableCopyOfTheDatabase) {
+    TempDir dir;
+    Database db(":memory:");
+    db.migrate();
+    db.exec(
+        "INSERT INTO card_copy(id,pokemon_dex_num,ref_expansion,ref_language,ref_collector,"
+        "ownership,condition,binder_id,comments,inserted_at,updated_at)"
+        " VALUES('c1',25,'BS','EN','58/102','Owned','NearMint',NULL,'hello',"
+        "'2026-07-16T00:00:00Z','2026-07-16T00:00:00Z');");
+
+    const fs::path snapshot = dir.path() / "snap.db";
+    ASSERT_NO_THROW(db.backupTo(snapshot));
+    ASSERT_TRUE(fs::exists(snapshot));
+
+    Database restored(snapshot);
+    EXPECT_EQ(restored.userVersion(), Database::kSchemaVersion);
+    Statement stmt(restored, "SELECT comments FROM card_copy WHERE id = 'c1';");
+    ASSERT_TRUE(stmt.step());
+    EXPECT_EQ(stmt.columnText(0), "hello");
+}
+
+// The source connection stays fully usable after a snapshot — VACUUM INTO reads,
+// it does not detach or lock the live database.
+TEST(DatabaseTest, BackupToLeavesTheSourceDatabaseWritable) {
+    TempDir dir;
+    Database db(":memory:");
+    db.migrate();
+    db.backupTo(dir.path() / "snap.db");
+    EXPECT_NO_THROW(
+        db.exec("INSERT INTO card_copy(id,pokemon_dex_num,ref_expansion,ref_language,"
+                "ref_collector,ownership,condition,binder_id,comments,inserted_at,updated_at)"
+                " VALUES('after',1,'BS','EN','1/102','Owned','NearMint',NULL,'',"
+                "'2026-07-16T00:00:00Z','2026-07-16T00:00:00Z');"));
+}
+
+// SQLite refuses to overwrite an existing output file. The backup service leans on
+// this as its "never clobber an existing backup" guard, so pin it — and pin that the
+// existing file is left untouched rather than truncated on the way to failing.
+TEST(DatabaseTest, BackupToRefusesAnExistingDestination) {
+    TempDir dir;
+    const fs::path taken = dir.path() / "taken.db";
+    {
+        std::ofstream out(taken);
+        out << "not a database";
+    }
+
+    Database db(":memory:");
+    db.migrate();
+    EXPECT_THROW(db.backupTo(taken), StorageError);
+
+    std::ifstream in(taken);
+    std::string contents;
+    std::getline(in, contents);
+    EXPECT_EQ(contents, "not a database");
+}
+
+// A destination whose parent directory does not exist fails loudly rather than
+// silently writing nothing.
+TEST(DatabaseTest, BackupToRejectsAnUnwritableDestination) {
+    TempDir dir;
+    Database db(":memory:");
+    db.migrate();
+    EXPECT_THROW(db.backupTo(dir.path() / "no_such_dir" / "snap.db"), StorageError);
 }
 
 }  // namespace

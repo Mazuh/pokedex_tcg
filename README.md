@@ -15,6 +15,8 @@ manage my physical card collection using local files.
   brand-new sets — resolved straight from the card's set and collector number.
 - Keep a wishlist of the cards and sources you're still after.
 - Ask a built-in AI assistant (Google Gemini) — optional, and only if you add a key.
+- Back up your collection — the database on its own, or everything including images as
+  a single zip — and get one automatically before any database upgrade.
 
 ## Instructions
 
@@ -111,6 +113,33 @@ line to your config file (`~/.config/pokedex-tcg/config`) — see the code comme
 
 The provider is deliberately abstracted behind a vendor-neutral seam, so Gemini can be
 swapped for another LLM without touching the rest of the app.
+
+### Backups
+
+Backups are written next to your collection, in a `.PokedexTCG-backups` folder beside
+your workspace (change it in **Settings → Backup folder**; it must not be inside the
+workspace itself). There are two kinds, both on demand from Settings:
+
+- **Back up data** → `pokedex-data-<timestamp>.db` — just the database. Small and quick.
+- **Back up everything** → `pokedex-full-<timestamp>.zip` — the database plus every
+  cached image, in one self-contained archive.
+
+The timestamp in the name is UTC, so the files sort chronologically; Settings shows the
+last run of each kind in your local time. A **data backup is also taken automatically
+before any database schema upgrade**, so installing a new version of the app can never
+migrate your collection without a safety copy first. If that backup cannot be written,
+the app refuses to start rather than upgrade unprotected — the error names the config
+line to fix.
+
+**To recover, quit the app first**, then either:
+
+- **From a data backup** — copy the `pokedex-data-….db` file over `pokedex.db` in your
+  workspace folder.
+- **From a full backup** — unzip it into a new, empty folder (it already contains
+  `pokedex.db` and `media/`), then point **Settings → Workspace folder** at that folder
+  and restart.
+
+The app never deletes a backup, so old ones accumulate until you remove them yourself.
 
 ## Acknowledgments
 

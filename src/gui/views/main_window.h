@@ -16,6 +16,7 @@ class CardPriceLookupService;
 class CardCopyService;
 class CardImageStore;
 class AssistantService;
+class BackupService;
 
 // GUI — the application's top-level window: a macOS-style shell with a left
 // sidebar (a source list, like Finder's or System Settings') selecting between
@@ -37,7 +38,7 @@ public:
                PokemonBrowseService& browse, WishlistService& wishlist,
                MediaService& media, CardSearchService& cardSearch,
                CardPriceLookupService& priceLookup, CardCopyService& cardCopies,
-               CardImageStore& cardImages, AssistantService& assistant,
+               CardImageStore& cardImages, AssistantService& assistant, BackupService& backups,
                const QString& collectionPath, QWidget* parent = nullptr);
 
 protected:

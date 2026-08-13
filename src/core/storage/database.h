@@ -85,6 +85,27 @@ public:
     // Idempotent: a no-op when the database is already current.
     void migrate();
 
+    // Write a consistent snapshot of this database to `destination`, using SQLite's
+    // VACUUM INTO — an atomic read-transaction copy of the LIVE file. A backup must
+    // never byte-copy pokedex.db while it is open: a page can change mid-read and a
+    // rollback journal may sit beside it, so the copy can be torn.
+    //
+    // `destination` must NOT already exist (SQLite refuses to overwrite, which is a
+    // free "never clobber an existing backup" guard) and its parent directory must.
+    // Must NOT be called from inside transaction(): VACUUM cannot run in an open
+    // transaction. Throws StorageError on any failure.
+    //
+    // Two properties worth knowing, both relied on by the backup feature:
+    //   - user_version IS preserved, so a restored snapshot is not silently
+    //     re-migrated (tests/storage/database_test.cpp pins this).
+    //   - VACUUM reassigns rowids for tables without an INTEGER PRIMARY KEY, and
+    //     card_copy is one (the binder guide orders extras by `inserted_at, rowid`).
+    //     That is safe: VACUUM copies in source-rowid order, so relative order — the
+    //     only thing that ordering depends on — survives.
+    //
+    // Requires SQLite >= 3.27 (2019); macOS ships 3.51 and ubuntu-latest 3.45.
+    void backupTo(const std::filesystem::path& destination);
+
     // Rows changed by the most recently completed INSERT/UPDATE/DELETE on this
     // connection (sqlite3_changes). Lets a repository tell "updated a row" from
     // "matched nothing".

@@ -89,7 +89,7 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
                        MediaService& media, CardSearchService& cardSearch,
                        CardPriceLookupService& priceLookup, CardCopyService& cardCopies,
                        CardImageStore& cardImages, AssistantService& assistant,
-                       const QString& collectionPath, QWidget* parent)
+                       BackupService& backups, const QString& collectionPath, QWidget* parent)
     : QWidget(parent) {
     setWindowTitle(tr("Pokedex TCG"));
     resize(900, 600);
@@ -187,7 +187,7 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
                                          priceLookup, media, wishlist);
     sections_->addWidget(ownedView);
     sections_->addWidget(new WishlistView(wishlist));
-    settings_ = new SettingsView;
+    settings_ = new SettingsView(backups);
     const int settingsRow = sections_->addWidget(settings_);
 
     // The webcam Scan-a-card screen is an extra page in the section stack with no sidebar

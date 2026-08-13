@@ -332,6 +332,30 @@ int Database::userVersion() {
     return version;
 }
 
+void Database::backupTo(const std::filesystem::path& destination) {
+    // The destination is bound, never interpolated: a workspace path can hold quotes,
+    // and VACUUM INTO does accept a bound parameter (unlike PRAGMA above).
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, "VACUUM main INTO ?1;", -1, &stmt, nullptr) != SQLITE_OK) {
+        throw StorageError(sqlite3_errmsg(db_));
+    }
+    const std::string path = destination.string();
+    if (sqlite3_bind_text(stmt, 1, path.c_str(), -1, SQLITE_TRANSIENT) != SQLITE_OK) {
+        StorageError err(sqlite3_errmsg(db_));
+        sqlite3_finalize(stmt);
+        throw err;
+    }
+    const int rc = sqlite3_step(stmt);
+    if (rc != SQLITE_DONE) {
+        // Capture the message before finalize, which can reset it. The most common
+        // failures are "output file already exists" and an unwritable directory.
+        StorageError err(std::string(sqlite3_errmsg(db_)) + " (" + path + ")");
+        sqlite3_finalize(stmt);
+        throw err;
+    }
+    sqlite3_finalize(stmt);
+}
+
 int Database::changes() { return sqlite3_changes(db_); }
 
 void Database::setUserVersion(int version) {

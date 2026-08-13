@@ -22,6 +22,23 @@ See `README.md` for the product vision; the domain glossary now lives in the
   parse the external card-catalog API responses (pokemontcg.io for metadata, tcgdex for
   prices) in `core/app/card_catalog_parse`. It never appears in a public core header (the
   parsers take `std::string`, return plain structs) and is never a storage format.
+- **Zip (backups only):** miniz (fetched via CMake `FetchContent`, tag `3.1.2`, linked
+  PRIVATE into `pokedex_core`) — used **only** to write/read the full-backup archive in
+  `core/app/backup_service`. `<miniz.h>` never appears in a public core header (the API
+  takes/returns `std::filesystem::path` + plain types), exactly like sqlite3 and
+  nlohmann/json. Three things in its CMake block are load-bearing and must not be
+  dropped: (1) **save/restore `CMAKE_BUILD_TYPE`** around the fetch — miniz's own
+  CMakeLists does `set(CMAKE_BUILD_TYPE "Release" CACHE ... FORCE)` when it finds it
+  empty, and ours *is* empty, so without this the whole project silently becomes an
+  optimized, assert-free build; (2) **`INTERFACE_SYSTEM_INCLUDE_DIRECTORIES`** so
+  `-Werror` isn't tripped by a third-party C header (`FetchContent_Declare(... SYSTEM)`
+  would be tidier but needs CMake 3.25 and our floor is 3.24); (3)
+  **`MINIZ_NO_ZLIB_COMPATIBLE_NAMES`**, since miniz otherwise `#define`s
+  `compress`/`crc32`/`deflate` as macros into every TU that includes it. Also note the
+  top-level `project()` must list **`LANGUAGES CXX C`** — miniz is a C library — and the
+  target is plain `miniz` (there is no `miniz::miniz` alias). Do NOT pin an older tag:
+  miniz 3.0.2 declares `cmake_minimum_required(VERSION 3.0)`, which CMake 4.x rejects
+  outright ("Compatibility with CMake < 3.5 has been removed"); 3.1.2 declares 3.5.
 - **Build:** CMake + Ninja
 - **Tests:** GoogleTest (fetched via CMake `FetchContent`) run through CTest
 - **CI:** GitHub Actions matrix on `macos-latest` (Apple Clang) and
@@ -414,10 +431,13 @@ shows a compact "Wishlist (N)" / "Wishlist (none)" button (reading the source co
 (`PokemonListView`, `BinderView`) turn that into a `WishlistEditPage` push, and on Back
 re-show the species so the counter refreshes (the binder guide also `refresh()`es, since
 a wishlist change can flip a species' `CollectionStatus` between Missing and Wished).
-The **Settings section** (`SettingsView`) is the app's configuration screen — today three
-settings: the collection **workspace folder**, the **default card language**, and the **AI
+The **Settings section** (`SettingsView`) is the app's configuration screen — today four
+settings: the collection **workspace folder**, the **default card language**, the **AI
 assistant API key** (a masked field; the provider secret, stored under the vendor-neutral
-config key `assistant_api_key` and read fresh per call so it applies live), all loaded
+config key `assistant_api_key` and read fresh per call so it applies live), and the
+**backup folder** (`backup_folder` — the one config key owned by *core* rather than the
+GUI, since the pre-migration hook reads it at startup with no GUI in the picture; see the
+Backups note below), all loaded
 from and saved to the `config` file the app already uses (`storage/workspace.h`). That file
 is now a tiny **`key=value` store** (`readConfigValue`/`writeConfigValue` over an internal
 load→map→write, one setting per line, `std::map`-sorted; every write *merges* so one setting
@@ -936,6 +956,76 @@ an invalid value unrepresentable (so `submit()` needs no parse branch), and
 same for any new numeric field. The two grid sides are deliberately NOT auto-linked; a
 half-set grid is caught by a message on submit (and by `BinderService`, the record of truth),
 because silently coercing a value the user typed is worse than telling them.
+
+**Backups: the one thing standing between a schema upgrade and a lost collection.**
+`core/app/backup_service` writes two kinds — a **data backup**
+(`pokedex-data-<UTC>.db`, the database alone) and a **full backup**
+(`pokedex-full-<UTC>.zip`, a database snapshot plus `media/**` in one self-contained
+archive whose entry names mirror the workspace root, so recovery is "unzip into an empty
+folder and point Settings at it"). Both are manual from Settings; the data one is ALSO
+automatic before every migration. Rules that cost real thought:
+
+- **Never byte-copy the live database.** `Database::backupTo` uses `VACUUM INTO`, an
+  atomic read-transaction copy — a plain file copy can tear (a page changes mid-read, and
+  a rollback journal may sit beside it). It must not run inside `transaction()`, it
+  refuses an existing destination (a free never-clobber guard), and it preserves
+  `user_version` — which `DatabaseTest.BackupToWritesAReadableCopyOfTheDatabase` pins,
+  because a snapshot that lost the stamp would look fresh and be silently re-migrated on
+  restore. It reassigns rowids for tables with no `INTEGER PRIMARY KEY` (`card_copy` is
+  one), which is safe only because VACUUM copies in source-rowid order, so the
+  `inserted_at, rowid` extras ordering survives.
+- **The timestamp lives in the NAME, never the mtime** (UTC, second precision, formatted
+  off `timestampToIso` so there is one time encoding in the app). A name survives a copy
+  to a NAS, an iCloud sync, or a restore from another machine; an mtime does not. A
+  same-second collision gets a `-N` suffix rather than failing. `parseBackupFileName` is
+  deliberately strict (extension must match the kind) so a half-written `*.partial` can
+  never be reported as "last backup" — both writers write to `*.partial` and rename only
+  on success.
+- **The default folder is a SIBLING of the workspace** (`<parent>/.PokedexTCG-backups`),
+  never a child: a full backup archives the workspace, so a nested destination would make
+  it archive its own output. `ensureUsableBackupFolder` is the single home of that guard
+  and is called by both writers *and* by Settings on save. **Its containment test is
+  component-wise, not a string prefix** — `/a/ws-backups` starts with `/a/ws` as text but
+  is not inside it (`ASiblingSharingANamePrefixIsAccepted` catches a `rfind`-style bug).
+  Note the two path helpers are NOT interchangeable: `lexicalDir` (no symlink resolution)
+  BUILDS paths we show the user, since resolving would rewrite `/tmp` to `/private/tmp`
+  or an iCloud folder to its backing store; `resolvedDir` (weakly_canonical) COMPARES
+  them, where following a link is a safety property.
+- **Never prune.** The app only ever writes backups; the only files it deletes are its
+  own unfinished `*.partial` temporaries.
+- **The pre-migration hook is `migrateWithBackup`, at the `openWorkspace` chokepoint**
+  (and `main.cpp`'s long-lived connection, where it is already a no-op — going through
+  the same seam means the net survives someone later bypassing `openWorkspace`).
+  `needsPreMigrationBackup(v)` is `v > 0 && v < kSchemaVersion`: a fresh file is v0 and
+  has nothing to protect, since `kSchemaV1` and its stamp land in one transaction. It
+  backs up FIRST and migrates second — `APreMigrationBackupSurvivesAFailedMigration`
+  pins that ordering, which is the entire point. An unusable configured folder falls back
+  to the default sibling; if that fails too it **throws and aborts the launch**
+  (fail-closed, the user's explicit choice), and the message names
+  `~/.config/pokedex-tcg/config` and the `backup_folder=` line because startup dies
+  before the window exists and Settings cannot be reached to fix it.
+- Progress goes to **stdout via `std::cout`** (core is Qt-free, so not `qInfo`), flushed
+  per line — if the app dies mid-migration, the line naming the backup's location is
+  exactly the one the user needs. This is the only `<iostream>` in `src/core/`; keep it
+  confined to this hook.
+- **Settings mixes a staged setting with immediate actions.** The folder is saved with
+  the rest of the form; the two "Back up now" buttons act at once. They are disabled
+  while the *backup-folder field alone* is dirty (not `isDirty()`, which would block a
+  backup merely because the API key was being edited), with a tooltip saying to save
+  first — the same explain-and-tell-them-how-to-fix-it idiom as the guide's Insert
+  blank / Move… buttons. The field's baseline is the RESOLVED folder, so it always shows
+  a real absolute path (the default is dot-prefixed and hidden in Finder) and leaving it
+  untouched writes no config key at all, letting the default keep tracking the workspace.
+- **A synchronous long operation gets `QApplication::setOverrideCursor(Qt::WaitCursor)`
+  via an RAII guard**, not a thread and never `processEvents()` (re-entrancy: `MainWindow`
+  could run `confirmLeave` *inside* a running backup). This is the app's first
+  `setOverrideCursor`; use the same idiom for the next such operation. A full backup of a
+  large media cache really does block the UI, and the help text says so.
+- `archiveEntryNames` / `extractBackupTo` are public although the GUI doesn't call them:
+  miniz is PRIVATE to `pokedex_core` and the test suite links only `pokedex_core`, so
+  without them "a full backup is actually restorable" — the strongest claim the feature
+  makes — could not be tested at all. They are also the foundation for a future Restore
+  button. `extractBackupTo` carries a zip-slip guard (no absolute or `..` entry names).
 
 **A card section re-reads on `showEvent`.** All three copy-backed sections —
 `OwnedCardsView`, `PokemonListView`, and `BinderView` (the binder guide) — override

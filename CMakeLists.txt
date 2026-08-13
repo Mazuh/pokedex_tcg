@@ -3,7 +3,8 @@ cmake_minimum_required(VERSION 3.24)
 project(pokedex_tcg
     VERSION 0.1.0
     DESCRIPTION "Pokedex TCG — visual Hello World bootstrap"
-    LANGUAGES CXX)
+    # C is needed for miniz (the backup zip writer), which is a C library.
+    LANGUAGES CXX C)
 
 # --- Language standard -------------------------------------------------------
 set(CMAKE_CXX_STANDARD 23)
@@ -110,6 +111,45 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(nlohmann_json)
 
+# --- Zip archives (miniz) ----------------------------------------------------
+# A "full backup" is one self-contained .zip (a consistent DB snapshot + media/).
+# Fetched from source like nlohmann/json and linked PRIVATE into pokedex_core:
+# <miniz.h> appears only inside src/core/app/backup_service.cpp, never in a public
+# core header, so the core interface stays dependency-agnostic and Qt-free.
+#
+# Three things here are load-bearing; do not drop them:
+#  1. CMAKE_BUILD_TYPE save/restore. miniz's own CMakeLists does
+#     set(CMAKE_BUILD_TYPE "Release" CACHE ... FORCE) when it finds it empty — and
+#     ours IS empty by default — which would silently retype this whole project as
+#     an optimized, assert-free build.
+#  2. SYSTEM includes. miniz is built from source so its headers are not SYSTEM by
+#     default and would trip -Werror. FetchContent_Declare(... SYSTEM) would be
+#     tidier but needs CMake 3.25; our floor is 3.24, so set the property directly
+#     (same intent as JSON_SystemInclude above).
+#  3. MINIZ_NO_ZLIB_COMPATIBLE_NAMES. miniz defines zlib-compatible MACROS
+#     (compress/uncompress/crc32/deflate…) by default; we use only the mz_zip_* API,
+#     so keep those macros out of our translation units.
+# Note the target is plain `miniz` — there is no miniz::miniz alias. Its
+# BUILD_EXAMPLES / BUILD_TESTS / INSTALL_PROJECT options all default to
+# standalone-only, so under FetchContent they are already OFF (INSTALL_PROJECT
+# matters: install.sh runs `cmake --install` under sudo into /usr/local).
+set(_pokedex_saved_build_type "${CMAKE_BUILD_TYPE}")
+FetchContent_Declare(
+    miniz
+    GIT_REPOSITORY https://github.com/richgel999/miniz.git
+    GIT_TAG 3.1.2
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(miniz)
+set(CMAKE_BUILD_TYPE "${_pokedex_saved_build_type}" CACHE STRING "" FORCE)
+
+get_target_property(_miniz_includes miniz INTERFACE_INCLUDE_DIRECTORIES)
+if(_miniz_includes)
+    set_target_properties(miniz PROPERTIES
+        INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${_miniz_includes}")
+endif()
+target_compile_definitions(miniz PUBLIC MINIZ_NO_ZLIB_COMPATIBLE_NAMES)
+
 add_library(pokedex_core STATIC
     src/core/domain/pokemon_catalog.cpp
     src/core/storage/workspace.cpp
@@ -120,6 +160,7 @@ add_library(pokedex_core STATIC
     src/core/storage/card_copy_repository.cpp
     src/core/storage/wishlist_repository.cpp
     src/core/app/install_service.cpp
+    src/core/app/backup_service.cpp
     src/core/app/uuid.cpp
     src/core/app/binder_service.cpp
     src/core/app/binder_guide_service.cpp
@@ -140,7 +181,8 @@ add_library(pokedex_core STATIC
 )
 target_include_directories(pokedex_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(pokedex_core
-    PRIVATE pokedex_warnings pokedex_sanitizers SQLite3::SQLite3 nlohmann_json::nlohmann_json)
+    PRIVATE pokedex_warnings pokedex_sanitizers SQLite3::SQLite3 nlohmann_json::nlohmann_json
+            miniz)
 
 # --- GUI application (Qt 6 Widgets) ------------------------------------------
 # Network is used only by the GUI's media-fetching service (MediaService); core
@@ -321,6 +363,7 @@ if(BUILD_TESTING)
         tests/storage/card_copy_repository_test.cpp
         tests/storage/wishlist_repository_test.cpp
         tests/app/install_service_test.cpp
+        tests/app/backup_service_test.cpp
         tests/app/binder_service_test.cpp
         tests/app/binder_guide_service_test.cpp
         tests/app/binder_move_planner_test.cpp

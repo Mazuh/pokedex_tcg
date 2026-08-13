@@ -1,6 +1,8 @@
 #include "gui/views/settings_view.h"
 
+#include <QApplication>
 #include <QComboBox>
+#include <QCursor>
 #include <QDir>
 #include <QFileDialog>
 #include <QFont>
@@ -17,9 +19,11 @@
 #include <optional>
 #include <string>
 
+#include "core/app/backup_service.h"
 #include "core/app/install_service.h"
 #include "core/storage/workspace.h"
 #include "gui/services/assistant_service.h"  // kAssistantApiKeyConfigKey
+#include "gui/views/datetime_label.h"
 #include "gui/views/empty_option.h"
 #include "gui/views/language_codes.h"
 #include "gui/views/primary_button.h"
@@ -27,7 +31,24 @@
 
 namespace pokedex {
 
-SettingsView::SettingsView(QWidget* parent) : QWidget(parent) {
+namespace {
+
+// Show a wait cursor for the duration of a synchronous operation, restoring it on
+// every exit path including an exception. There is no threading anywhere in this app,
+// so a full backup of a large media cache genuinely blocks the event loop; this is the
+// sanctioned way to say so rather than looking frozen for no reason.
+class WaitCursor {
+public:
+    WaitCursor() { QApplication::setOverrideCursor(Qt::WaitCursor); }
+    WaitCursor(const WaitCursor&) = delete;
+    WaitCursor& operator=(const WaitCursor&) = delete;
+    ~WaitCursor() { QApplication::restoreOverrideCursor(); }
+};
+
+}  // namespace
+
+SettingsView::SettingsView(BackupService& backups, QWidget* parent)
+    : QWidget(parent), backups_(backups) {
     // Page heading, matching the other in-window pages' bold, slightly larger title.
     auto* heading = new QLabel(tr("Settings"), this);
     QFont headingFont = heading->font();
@@ -96,6 +117,53 @@ SettingsView::SettingsView(QWidget* parent) : QWidget(parent) {
     assistantHelp->setEnabled(false);
     assistantHelp->setWordWrap(true);
 
+    // --- Backups -----------------------------------------------------------
+    // The folder is a staged setting like the ones above; the two buttons beside it
+    // are immediate actions. They are disabled while the folder field is dirty (see
+    // refreshDirtyState) so a backup can never land somewhere other than the folder
+    // the user is looking at.
+    backupEdit_ = new QLineEdit(this);
+    backupEdit_->setPlaceholderText(tr("Path to your backup folder"));
+    connect(backupEdit_, &QLineEdit::textChanged, this, &SettingsView::refreshDirtyState);
+
+    auto* backupBrowseButton = new QPushButton(tr("Browse…"), this);
+    backupBrowseButton->setAutoDefault(false);
+    connect(backupBrowseButton, &QPushButton::clicked, this, &SettingsView::browseBackup);
+
+    auto* backupRow = new QHBoxLayout;
+    backupRow->addWidget(backupEdit_, 1);
+    backupRow->addWidget(backupBrowseButton);
+
+    auto* backupHelp = new QLabel(
+        tr("Where manual backups and the automatic pre-upgrade backup are written. "
+           "To recover: quit the app, then either copy a “pokedex-data-….db” file over "
+           "“pokedex.db” in your workspace folder, or unzip a “pokedex-full-….zip” into a "
+           "new empty folder and point “Workspace folder” above at it. The app never "
+           "deletes a backup, so old ones pile up until you remove them yourself. Backing "
+           "up everything can take a while for a large collection — the app stays busy "
+           "until it finishes."),
+        this);
+    backupHelp->setEnabled(false);
+    backupHelp->setWordWrap(true);
+
+    dataBackupButton_ = new QPushButton(tr("Back up data"), this);
+    dataBackupButton_->setAutoDefault(false);
+    connect(dataBackupButton_, &QPushButton::clicked, this, [this]() { runBackup(false); });
+
+    fullBackupButton_ = new QPushButton(tr("Back up everything"), this);
+    fullBackupButton_->setAutoDefault(false);
+    connect(fullBackupButton_, &QPushButton::clicked, this, [this]() { runBackup(true); });
+
+    auto* backupActions = new QHBoxLayout;
+    backupActions->setContentsMargins(0, 0, 0, 0);
+    backupActions->addWidget(dataBackupButton_);
+    backupActions->addWidget(fullBackupButton_);
+    backupActions->addStretch();
+
+    lastRunLabel_ = new QLabel(this);
+    lastRunLabel_->setEnabled(false);
+    lastRunLabel_->setWordWrap(true);
+
     auto* form = new QFormLayout;
     form->setLabelAlignment(Qt::AlignLeft);
     form->addRow(tr("Workspace folder"), workspaceRow);
@@ -104,6 +172,10 @@ SettingsView::SettingsView(QWidget* parent) : QWidget(parent) {
     form->addRow(QString(), languageHelp);
     form->addRow(tr("AI assistant API key"), assistantKeyEdit_);
     form->addRow(QString(), assistantHelp);
+    form->addRow(tr("Backup folder"), backupRow);
+    form->addRow(QString(), backupHelp);
+    form->addRow(QString(), backupActions);
+    form->addRow(QString(), lastRunLabel_);
 
     // A muted note that a workspace change is a next-launch change, shown only while
     // the form is dirty (there's nothing pending to restart for otherwise).
@@ -168,16 +240,31 @@ void SettingsView::loadFromConfig() {
         readConfigValue(kAssistantApiKeyConfigKey);
     savedAssistantKey_ = assistantKey ? QString::fromStdString(*assistantKey) : QString();
 
+    // The baseline is the RESOLVED folder (configured value, else the default sibling
+    // of the workspace), not the raw config value: the default is dot-prefixed and so
+    // hidden in Finder, and this pre-filled field is how the user learns where it is.
+    // Because the baseline is the resolved path, leaving it untouched writes no config
+    // key at all — so the default keeps tracking the workspace if the workspace moves.
+    //
+    // It is asked of the SERVICE, i.e. resolved against the workspace actually open,
+    // never against the staged one in the field above. The buttons here write through
+    // that same service, so deriving it from a staged workspace would make the field and
+    // the tooltip name a folder no backup would go to until the next launch.
+    savedBackupFolder_ = QString::fromStdString(backups_.folder().string());
+
     languageEdit_->setCurrentIndex(langIndex);  // activated-only, so no dirty signal here
     assistantKeyEdit_->setText(savedAssistantKey_);  // triggers refreshDirtyState
+    backupEdit_->setText(savedBackupFolder_);        // triggers refreshDirtyState
     workspaceEdit_->setText(savedWorkspace_);   // triggers refreshDirtyState → clean
     refreshDirtyState();
+    refreshLastRunLabel();
 }
 
 bool SettingsView::isDirty() const {
     return workspaceEdit_->text().trimmed() != savedWorkspace_ ||
            languageEdit_->currentData().toString() != savedLanguage_ ||
-           assistantKeyEdit_->text() != savedAssistantKey_;
+           assistantKeyEdit_->text() != savedAssistantKey_ ||
+           backupEdit_->text().trimmed() != savedBackupFolder_;
 }
 
 void SettingsView::refreshDirtyState() {
@@ -185,6 +272,63 @@ void SettingsView::refreshDirtyState() {
     // The restart caveat is workspace-only (the language applies to the next add live),
     // so show it only while the workspace field itself differs from what's saved.
     dirtyHint_->setVisible(workspaceEdit_->text().trimmed() != savedWorkspace_);
+
+    // Gate the immediate backup actions on the BACKUP FOLDER field only — not on
+    // isDirty(), which would block a backup merely because the API key was being
+    // edited. Disabled-with-an-explaining-tooltip mirrors the binder guide's
+    // Insert-blank / Move… buttons: say what is wrong and how to fix it.
+    const bool backupFolderDirty = backupEdit_->text().trimmed() != savedBackupFolder_;
+    const QString tip =
+        backupFolderDirty
+            ? tr("Press “Save changes” first — backups are written to the saved folder.")
+            : tr("Write a backup now to %1.").arg(savedBackupFolder_);
+    for (QPushButton* button : {dataBackupButton_, fullBackupButton_}) {
+        button->setEnabled(!backupFolderDirty);
+        button->setToolTip(tip);
+    }
+}
+
+void SettingsView::refreshLastRunLabel() {
+    const auto label = [](const std::optional<Timestamp>& when) {
+        return when ? dateTimeLabel(*when) : tr("never");
+    };
+    lastRunLabel_->setText(tr("Last data backup: %1 · Last full backup: %2")
+                               .arg(label(backups_.lastRun(BackupKind::Data)),
+                                    label(backups_.lastRun(BackupKind::Full))));
+}
+
+void SettingsView::runBackup(bool full) {
+    // A re-entrancy flag, not setEnabled(false): the work below is synchronous with no
+    // event pumping, so a disable would never be painted OR acted on, and refreshDirtyState
+    // re-enables both buttons before the queued second click is ever dispatched. An
+    // impatient double-click during a multi-second archive would then run the whole thing
+    // twice. The flag is what actually stops that.
+    if (backupRunning_) {
+        return;
+    }
+    backupRunning_ = true;
+    struct Reset {
+        bool& flag;
+        ~Reset() { flag = false; }
+    } reset{backupRunning_};
+
+    try {
+        std::filesystem::path written;
+        {
+            WaitCursor busy;
+            written = full ? backups_.runFullBackup() : backups_.runDataBackup();
+        }
+        refreshDirtyState();
+        refreshLastRunLabel();
+        showToast(this, full ? tr("Full backup saved: %1")
+                                   .arg(QString::fromStdString(written.filename().string()))
+                             : tr("Data backup saved: %1")
+                                   .arg(QString::fromStdString(written.filename().string())));
+    } catch (const std::exception& e) {
+        refreshDirtyState();
+        QMessageBox::critical(this, tr("Backup"),
+                              tr("Could not write the backup:\n%1").arg(QString::fromUtf8(e.what())));
+    }
 }
 
 void SettingsView::browse() {
@@ -197,6 +341,16 @@ void SettingsView::browse() {
     }
 }
 
+void SettingsView::browseBackup() {
+    const QString start =
+        backupEdit_->text().trimmed().isEmpty() ? QDir::homePath() : backupEdit_->text();
+    const QString dir =
+        QFileDialog::getExistingDirectory(this, tr("Choose backup folder"), start);
+    if (!dir.isEmpty()) {
+        backupEdit_->setText(dir);
+    }
+}
+
 bool SettingsView::save() {
     const QString text = workspaceEdit_->text().trimmed();
     if (text.isEmpty()) {
@@ -206,11 +360,29 @@ bool SettingsView::save() {
 
     const QString language = languageEdit_->currentData().toString();
     const QString assistantKey = assistantKeyEdit_->text().trimmed();
+    const QString backupFolder = backupEdit_->text().trimmed();
+    if (backupFolder.isEmpty()) {
+        QMessageBox::warning(this, tr("Settings"), tr("Please choose a backup folder."));
+        return false;
+    }
     const bool workspaceChanged = (text != savedWorkspace_);
     const bool languageChanged = (language != savedLanguage_);
     const bool keyChanged = (assistantKey != savedAssistantKey_);
+    const bool backupChanged = (backupFolder != savedBackupFolder_);
 
     try {
+        // Validate the backup folder BEFORE any write. Every writeConfig* below commits
+        // to disk immediately, so validating last meant a rejected backup folder left the
+        // workspace/language/key changes already persisted while the dialog said the save
+        // had failed — and a later "Discard" would then reveal them as saved after all.
+        if (backupChanged) {
+            // Checked against the workspace being SAVED, not the one currently open, so a
+            // folder nested inside the new workspace is caught in the same press. Also
+            // creates it, so the path in the field is real from here on.
+            ensureUsableBackupFolder(Workspace(std::filesystem::path(text.toStdString())),
+                                     std::filesystem::path(backupFolder.toStdString()));
+        }
+
         // Persist only the settings that actually changed — each writeConfig* call is a
         // full read-modify-write of the config file, so writing untouched keys is wasted
         // I/O. Crucially, only a real workspace change re-runs openWorkspace: it is the
@@ -227,6 +399,9 @@ bool SettingsView::save() {
         if (keyChanged) {
             writeConfigValue(kAssistantApiKeyConfigKey, assistantKey.toStdString());
         }
+        if (backupChanged) {
+            writeConfigValue(kBackupFolderConfigKey, backupFolder.toStdString());
+        }
     } catch (const std::exception& e) {
         QMessageBox::critical(
             this, tr("Settings"),
@@ -237,9 +412,12 @@ bool SettingsView::save() {
     savedWorkspace_ = text;
     savedLanguage_ = language;
     savedAssistantKey_ = assistantKey;
+    savedBackupFolder_ = backupFolder;
     workspaceEdit_->setText(text);           // normalize the field to the saved value
     assistantKeyEdit_->setText(assistantKey);  // normalize (trimmed)
+    backupEdit_->setText(backupFolder);        // normalize (trimmed)
     refreshDirtyState();
+    refreshLastRunLabel();  // a new folder has its own history (usually none yet)
     // The workspace change is the only one needing a restart; a language-only change is
     // live, so don't nag about restarting when the folder didn't move.
     showToast(this, workspaceChanged

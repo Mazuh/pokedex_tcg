@@ -2,6 +2,7 @@
 
 #include <filesystem>
 
+#include "core/app/backup_service.h"
 #include "core/storage/database.h"
 #include "core/storage/workspace.h"
 
@@ -46,7 +47,11 @@ Workspace openWorkspace(const fs::path& root) {
     // pokedex.db's directory is guaranteed to exist before we open it.
     fs::create_directories(ws.mediaDir());
     Database db(ws.dbPath());
-    db.migrate();
+    // Not a bare migrate(): this is the app's schema-upgrade chokepoint, and an
+    // upgrade must never rewrite an existing collection without writing a data
+    // backup first. A fresh database has nothing to protect, so this is a no-op on
+    // first run.
+    migrateWithBackup(db, ws);
     return ws;
 }
 

@@ -6,6 +6,7 @@
 #include <exception>
 #include <optional>
 
+#include "core/app/backup_service.h"
 #include "core/app/binder_guide_service.h"
 #include "core/app/binder_service.h"
 #include "core/app/gemini_assistant.h"
@@ -65,7 +66,10 @@ int main(int argc, char *argv[]) {
     // first-run branch, which adopts the folder without re-opening the DB).
     try {
         pokedex::Database db(workspace->dbPath());
-        db.migrate();
+        // Already current by now (openWorkspace migrated it), so this is a no-op — but
+        // going through the same backed-up chokepoint means the safety net survives if
+        // this path is ever reached without openWorkspace having run first.
+        pokedex::migrateWithBackup(db, *workspace);
         pokedex::CardBinderRepository repository(db);
         pokedex::BinderService service(repository);
 
@@ -136,9 +140,14 @@ int main(int argc, char *argv[]) {
                 .value_or(pokedex::kGeminiDefaultModel));
         pokedex::AssistantService assistantService(assistant);
 
+        // Manual backups from Settings, over the live connection and this workspace.
+        // The same verbs the automatic pre-migration hook uses, minus the clock.
+        pokedex::BackupService backups(db, *workspace);
+
         pokedex::MainWindow window(
             service, guide, browse, wishlist, media, cardSearch, priceLookup, cardCopies,
-            cardImages, assistantService, QString::fromStdString(workspace->root().string()));
+            cardImages, assistantService, backups,
+            QString::fromStdString(workspace->root().string()));
         // Open maximized so the window fills the screen straight away — the sections'
         // list/detail splits have room to breathe without the user having to maximize
         // (the title-bar double-click) first.
