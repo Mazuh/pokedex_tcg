@@ -296,16 +296,18 @@ void BindersPage::openSelected() {
     // Navigate in place: push a binder guide onto the stack and show it. Back
     // returns to the list and disposes of the page, so each open starts fresh
     // (recomputing the guide) rather than showing a stale one.
+    //
+    // Re-reading the list on Back is load-bearing, not housekeeping: the guide WRITES
+    // into the binder it was handed — blank pockets and card placements — and that write
+    // never reaches this cached vector. Without the reload the next open would hand the
+    // guide the snapshot taken before the arrangement existed, and every blank and every
+    // moved card would read as though it had been undone (the arrangement is on disk, so
+    // it "comes back" only after an app restart, which is exactly how it looks like data
+    // loss). The same reason the edit page's Back refreshes.
     auto* view =
         new BinderView(guide_, *it, wishlist_, media_, cardSearch_, priceLookup_, cardCopies_,
                        cardImages_, service_);
-    connect(view, &BinderView::backRequested, this, [this, view]() {
-        stack_->setCurrentIndex(0);
-        stack_->removeWidget(view);
-        view->deleteLater();
-    });
-    stack_->addWidget(view);
-    stack_->setCurrentWidget(view);
+    pushBackablePage(stack_, view, [this]() { refresh(); });
 }
 
 void BindersPage::updateButtonState() {
