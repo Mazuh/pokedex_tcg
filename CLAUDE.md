@@ -386,7 +386,8 @@ capacity, and deliberately UNCLAMPED, since an over-full album is exactly what t
 exists to reveal] · market value. Its first two columns, `Page` and `Pocket`, say where a row
 physically sits — see the binder-layout note below), the
 Pokémon browser (`PokemonListView`, which hosts an inner stack for the add-copy
-page), and two card-copy pages built from the same two shared blocks — the reusable
+page and, above its search box, the `RegionProgressPanel` capture-progress header — see the
+region-progress note below), and two card-copy pages built from the same two shared blocks — the reusable
 `CardCopyForm` (the details pane: printed-identity/condition/ownership fields + binder
 picker + comments, with `setReferenceEditable()` toggling read-only and a host-filled
 action row; the binder picker pairs the combo with an optional **"Remove from binder"**
@@ -1072,6 +1073,54 @@ automatic before every migration. Rules that cost real thought:
   without them "a full backup is actually restorable" — the strongest claim the feature
   makes — could not be tested at all. They are also the foundation for a future Restore
   button. `extractBackupTo` carries a zip-slip guard (no absolute or `..` entry names).
+
+**Capture progress per region: the Pokémon browser's header.** `gui/views/RegionProgressPanel`
+sits above the browser's search box: a muted total line ("Captured 60 of 1025 (6%) · Cards 64",
+the BinderView stats-row idiom) over a collapsible per-region breakdown — one clickable row per
+region with a hand-painted bar, "41 of 151" and a percentage. The arithmetic is the Qt-free,
+unit-tested `regionProgress` / `totalProgress` beside `PokemonBrowseService` (the free-function-
+beside-the-class shape `listedSpecies` uses), returning a `std::array` sized by `kRegions` so
+"every region reports exactly once, in canonical order" is a property of the type. Four rules
+carry the feature:
+
+- **The figures are ABSOLUTE, never filter-scoped.** `setProgress` is called from `refresh()`,
+  never `applyFilter()` — the latter runs per keystroke and is the only place `filtered_` is in
+  scope, so computing there is an open invitation to make the header shrink with the search. It
+  must not: `countLabel_` ("Showing N of M") is what describes the filtered view, while a
+  filtered header would report a complete-looking "95 of 95". `regionProgress` therefore takes
+  the WHOLE `entries_`, and `RegionTotalsAreTheCatalogsSpeciesCountPerRegion` pins the
+  denominators against `pokemonCatalog()` independently so a drift into filter-scoping fails.
+- **"Captured" is `ownedCount > 0`** — the Owned column's own predicate, read off the same
+  `PokemonBrowseEntry` vector the table renders, so the header can never contradict the rows.
+  `cards` counts species-tied Owned copies only, hence legitimately lower than My Cards' row
+  count (a Trainer/Energy card depicts no species and belongs to no region).
+- **A region click filters through the existing search box** (`onRegionActivated` writes
+  `regionLabel(region)`, whose text `applyFilter` already matches) rather than adding a second
+  filter path, and the highlight is re-derived from that box every filter
+  (`activeSearchRegion`) rather than stored — so typing or ✕-clearing the search by hand keeps
+  it honest. Clicking the active region clears the box.
+- **A failed FIRST inventory read hides the panel** (`setVisible(read)` in `refresh()`). The
+  fall-through renders the catalog at zero counts — quiet as a column of em-dashes, but a
+  confident lie as "Captured 0 of 1025". The `-1` revision sentinel makes the next `showEvent`
+  retry, and the panel returns.
+
+Widget mechanics worth keeping: the bar and the row hover/active wash are **painted**, not
+stylesheet'd, for the reason `primary_button.h` records (a QSS rule can't track palette roles
+live) — which also spares the row `WA_StyledBackground` and an id selector to keep a sheet off
+its child labels. Every child of a clickable row sets `WA_TransparentForMouseEvents`, or the row
+loses both the click and its hover (a child taking the pointer sends the row a leave event,
+flickering the highlight off over each label). The row reports its click through a
+`std::function`, not a signal, so it needs no `Q_OBJECT` of its own
+(`select_all_line_edit.h`'s precedent) — what that buys is avoiding the explicit
+`#include "….moc"` a `Q_OBJECT` class defined inside a `.cpp` would require, a pattern this
+repo has nowhere; the file is still moc'd for `RegionProgressPanel` itself. The cost is that
+rows are mouse-only, not tab-focusable. Every fixed column width is measured from the widest
+rendering its cell can take — the region name in **bold** (the active row bolds in place) and
+the percentage as `(>99%)`, not `(100%)` — since a `QLabel` clips rather than elides.
+The disclosure toggle is a flat `QToolButton` with `setArrowType` (a unicode "▾" drifts with the
+font) and is deliberately NOT `setCheckable` — a checked auto-raise button paints a pressed box
+rather than reading as a disclosure triangle, so the state is read back off `rowsBox_`'s
+visibility.
 
 **A card section re-reads on `showEvent`.** All three copy-backed sections —
 `OwnedCardsView`, `PokemonListView`, and `BinderView` (the binder guide) — override
