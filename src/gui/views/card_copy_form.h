@@ -19,6 +19,7 @@ class QHBoxLayout;
 class QLineEdit;
 class QPlainTextEdit;
 class QPushButton;
+class QToolButton;
 
 namespace pokedex {
 
@@ -65,6 +66,15 @@ public:
     // selected (nothing to remove otherwise). The edit page opts in; the add flow leaves
     // it hidden.
     void setBinderRemovable(bool removable);
+
+    // Arm the "⚠ not filled in for you" markers beside the optional fields (rarity,
+    // language, condition, foil, comments): each is shown while its field is empty and
+    // hides itself the moment a value lands. The ADD page arms this once a picked card has
+    // autofilled the printed identity — the markers then say, at a glance, which of the
+    // remaining fields the catalog couldn't answer and the user still might. Disarmed by
+    // default, so a blank form doesn't nag before there is anything to compare against and
+    // the edit page (where a copy was deliberately recorded without a grade) never does.
+    void setMissingFieldHints(bool armed);
 
     // Toggle whether the printed-identity fields (card name, expansion, set, collector
     // number) can be edited. The physical-copy attributes (language, condition,
@@ -135,6 +145,12 @@ private:
     // binder is actually selected — there is nothing to remove from "— None —".
     void updateBinderRemoveEnabled();
 
+    // Show each "⚠" marker while its field is empty (and the markers are armed). Called
+    // from every path a value can arrive by: the pickers' activated handlers, the comments
+    // box's textChanged, and the SILENT setters (setRarity / setLanguage / setCondition /
+    // loadCopy), which emit nothing and are how the prefill flows write their values.
+    void refreshMissingFieldHints();
+
     QLineEdit* cardName_;
     QLineEdit* expansionCode_;
     QLineEdit* setName_;
@@ -148,6 +164,16 @@ private:
     QPushButton* unassignBinder_;  // "Remove from binder", hidden until setBinderRemovable(true)
     QPlainTextEdit* comments_;
     QHBoxLayout* actions_;  // bottom row the host fills via addAction()
+
+    // The "⚠ not filled in for you" markers, one per optional field, hidden until armed.
+    // Ownership has none (it always carries a value) and neither does the binder (a filing
+    // decision, never something a catalog could answer).
+    QToolButton* rarityHint_ = nullptr;
+    QToolButton* languageHint_ = nullptr;
+    QToolButton* conditionHint_ = nullptr;
+    QToolButton* foilHint_ = nullptr;
+    QToolButton* commentsHint_ = nullptr;
+    bool missingHintsArmed_ = false;
 };
 
 }  // namespace pokedex

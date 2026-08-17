@@ -7,18 +7,22 @@
 #include <QLineEdit>
 #include <QPalette>
 #include <QPlainTextEdit>
-#include <QPoint>
 #include <QPushButton>
+#include <QSizePolicy>
 #include <QStringList>
 #include <QTextCursor>
 #include <QToolButton>
-#include <QToolTip>
 #include <QVBoxLayout>
+
+#include <algorithm>
+#include <cstddef>
+#include <iterator>
 
 #include "gui/views/binder_combo.h"
 #include "gui/views/condition_labels.h"
 #include "gui/views/empty_option.h"
 #include "gui/views/foil_labels.h"
+#include "gui/views/glyph_button.h"
 #include "gui/views/language_codes.h"
 #include "gui/views/muted_text.h"
 #include "gui/views/ownership_labels.h"
@@ -98,6 +102,21 @@ const QString& foilInfoHtml() {
     return html;
 }
 
+// The two glyphs the form's field rows carry, both built by makeGlyphButton: "ⓘ" explains
+// what a picker's options mean, "⚠" flags a field the card catalog left empty.
+const QString kInfoGlyph = QStringLiteral("ⓘ");
+const QString kMissingGlyph = QStringLiteral("⚠");
+
+// The "⚠" popovers. Each says the same two things — nothing filled this in, and it is
+// optional anyway — but names the reason per field, since the reasons genuinely differ (an
+// English-only catalog, a grade only the holder can judge, a finish a scan can't tell
+// apart). Static authored markup, so it bypasses tooltipText() exactly like the ⓘ popovers.
+QString missingHintHtml(const QString& why) {
+    return QStringLiteral("<p><b>Not filled in for you</b><br>%1</p>"
+                          "<p>It's optional — a card can be recorded without it.</p>")
+        .arg(why);
+}
+
 }  // namespace
 
 CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
@@ -136,7 +155,12 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     for (const QString& code : languageCodes()) {
         language_->addItem(code.isEmpty() ? noneOptionLabel() : code, code);
     }
-    connect(language_, &QComboBox::activated, this, [this](int) { Q_EMIT detailsChanged(); });
+    // Every marked picker refreshes the "⚠" markers before reporting the change, so a
+    // pick clears its own marker the instant it is made (and re-raises it on "— None —").
+    connect(language_, &QComboBox::activated, this, [this](int) {
+        refreshMissingFieldHints();
+        Q_EMIT detailsChanged();
+    });
 
     collectorNumber_ = new QLineEdit(this);
     collectorNumber_->setPlaceholderText(tr("e.g. 125/197"));
@@ -153,7 +177,10 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     for (const CardCondition c : kConditions) {
         condition_->addItem(conditionLabel(c), static_cast<int>(c));
     }
-    connect(condition_, &QComboBox::activated, this, [this](int) { Q_EMIT detailsChanged(); });
+    connect(condition_, &QComboBox::activated, this, [this](int) {
+        refreshMissingFieldHints();
+        Q_EMIT detailsChanged();
+    });
 
     // Rarity and foil treatment are optional physical-copy attributes (like condition):
     // each has a noneOptionLabel() -1 sentinel first, then one item per enum value with
@@ -167,14 +194,20 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     for (const CardRarity r : kLegacyRarities) {
         rarity_->addItem(rarityLabel(r), static_cast<int>(r));
     }
-    connect(rarity_, &QComboBox::activated, this, [this](int) { Q_EMIT detailsChanged(); });
+    connect(rarity_, &QComboBox::activated, this, [this](int) {
+        refreshMissingFieldHints();
+        Q_EMIT detailsChanged();
+    });
 
     foil_ = new QComboBox(this);
     foil_->addItem(noneOptionLabel(), -1);
     for (const CardFoil f : kFoils) {
         foil_->addItem(foilLabel(f), static_cast<int>(f));
     }
-    connect(foil_, &QComboBox::activated, this, [this](int) { Q_EMIT detailsChanged(); });
+    connect(foil_, &QComboBox::activated, this, [this](int) {
+        refreshMissingFieldHints();
+        Q_EMIT detailsChanged();
+    });
 
     ownership_ = new QComboBox(this);
     // Only the live states are pickable. "Removed" is a one-way lifecycle transition
@@ -217,8 +250,12 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     comments_ = new QPlainTextEdit(this);
     comments_->setPlaceholderText(
         tr("Capture story, price, seller, imperfections, dates…"));
-    connect(comments_, &QPlainTextEdit::textChanged, this,
-            [this]() { Q_EMIT commentsChanged(); });
+    // textChanged fires for every source — typing, setComments, replaceComments, loadCopy —
+    // so the comments marker needs no per-setter refresh, unlike the silent combo setters.
+    connect(comments_, &QPlainTextEdit::textChanged, this, [this]() {
+        refreshMissingFieldHints();
+        Q_EMIT commentsChanged();
+    });
 
     // Guard every combo against accidental wheel changes: give them StrongFocus (so a
     // wheel-over doesn't focus them) and filter their wheel events (eventFilter eats an
@@ -229,40 +266,90 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
         combo->installEventFilter(this);
     }
 
+    // One builder for every row that carries a glyph beside its field. Right of the field
+    // come, in order, the "⚠" marker (this field was left empty — see setMissingFieldHints)
+    // and the "ⓘ" popover explaining the picker's terms (opaque abbreviations / jargon
+    // otherwise, and the same source as the options themselves). Either may be absent; both
+    // are built by makeGlyphButton, so the affordance can't drift row to row.
+    //
+    // The marker is muted (a hint, not an error — applyMutedText rather than
+    // setEnabled(false), which would swallow the click that pops the explanation) and keeps
+    // its size while hidden, so raising one never shifts the ⓘ or resizes the field.
+    // Returns the marker for the caller to keep; nullptr when the row has none.
+    //
+    // Both glyphs occupy a fixed-width slot, and a row missing one still reserves it — so
+    // the "⚠" column stays a column even though only three of the five marked rows carry an
+    // "ⓘ" after it, and the fields all end at the same edge.
+    const int glyphSlot = [] {
+        QToolButton probe;  // measured, never shown: one column width for every row
+        probe.setAutoRaise(true);
+        int width = 0;
+        for (const QString& glyph : {kInfoGlyph, kMissingGlyph}) {
+            probe.setText(glyph);
+            width = std::max(width, probe.sizeHint().width());
+        }
+        return width;
+    }();
+    const auto fieldRow = [this, form, glyphSlot](
+                              const QString& label, QWidget* field, const QString& missingWhy,
+                              const QString& missingName, const QString& infoHtml,
+                              const QString& infoName,
+                              Qt::Alignment glyphAlign = Qt::Alignment()) -> QToolButton* {
+        // An absent glyph leaves an empty WIDGET of the same width behind, not addSpacing:
+        // a spacer item and a widget lay out a few pixels apart, which is visible as a
+        // column that doesn't quite line up between rows. Equal widths alone aren't enough
+        // either — QHBoxLayout takes its inter-item spacing from the two neighbours'
+        // QSizePolicy::ControlType (QStyle::layoutSpacing), so a plain QWidget beside a
+        // button is spaced differently from a button beside a button. The filler therefore
+        // claims the button's control type as well as its width.
+        const auto emptySlot = [this, glyphSlot] {
+            auto* filler = new QWidget(this);
+            filler->setFixedWidth(glyphSlot);
+            QSizePolicy policy{QSizePolicy::Fixed, QSizePolicy::Preferred};
+            policy.setControlType(QSizePolicy::ToolButton);
+            filler->setSizePolicy(policy);
+            return filler;
+        };
+        auto* row = new QHBoxLayout;
+        row->setContentsMargins(0, 0, 0, 0);
+        row->addWidget(field, 1);
+        QToolButton* missing = nullptr;
+        if (missingWhy.isEmpty()) {
+            row->addWidget(emptySlot());
+        } else {
+            missing = makeGlyphButton(this, kMissingGlyph, missingHintHtml(missingWhy), missingName);
+            applyMutedText(missing);
+            missing->setFixedWidth(glyphSlot);
+            QSizePolicy policy = missing->sizePolicy();
+            policy.setRetainSizeWhenHidden(true);
+            missing->setSizePolicy(policy);
+            missing->hide();  // armed only by setMissingFieldHints(true)
+            row->addWidget(missing, 0, glyphAlign);
+        }
+        if (infoHtml.isEmpty()) {
+            row->addWidget(emptySlot());
+        } else {
+            auto* info = makeGlyphButton(this, kInfoGlyph, infoHtml, infoName);
+            info->setFixedWidth(glyphSlot);
+            row->addWidget(info, 0, glyphAlign);
+        }
+        form->addRow(label, row);
+        return missing;
+    };
+
+    // The row order is the point of the form: everything a picked card can autofill comes
+    // first (the printed identity, then the catalog's best-effort rarity), and everything
+    // only the person holding the card can answer comes after. So after a pick the eye runs
+    // straight down to the first thing still needing attention instead of hunting up and
+    // down a form whose filled and unfilled fields are interleaved.
     form->addRow(tr("Card name"), cardName_);
     form->addRow(tr("Expansion code"), expansionCode_);
     form->addRow(tr("Set name"), setName_);
-    form->addRow(tr("Language"), language_);
     form->addRow(tr("Collector number"), collectorNumber_);
-
-    // Condition, rarity, and foil treatment each pair their combo with a small "ⓘ"
-    // that explains the terms (opaque abbreviations / jargon otherwise). The same rich
-    // text is the button's tooltip (hover) and is shown on click via QToolTip, so it
-    // works with both mouse habits; the WhatsThis cursor signals "this reveals help";
-    // the popover text is the same source as the picker's options. One lambda builds
-    // all three rows so the affordance can't drift between them.
-    const auto attributeRow = [this, form](const QString& label, QComboBox* combo,
-                                           const QString& infoHtml, const QString& accessibleName) {
-        auto* info = new QToolButton(this);
-        info->setText(QStringLiteral("ⓘ"));
-        info->setAutoRaise(true);
-        info->setFocusPolicy(Qt::NoFocus);
-        info->setCursor(Qt::WhatsThisCursor);
-        info->setToolTip(infoHtml);
-        info->setAccessibleName(accessibleName);
-        connect(info, &QToolButton::clicked, this, [info, infoHtml]() {
-            QToolTip::showText(info->mapToGlobal(QPoint(0, info->height())), infoHtml, info);
-        });
-        auto* row = new QHBoxLayout;
-        row->setContentsMargins(0, 0, 0, 0);
-        row->addWidget(combo, 1);
-        row->addWidget(info);
-        form->addRow(label, row);
-    };
-    attributeRow(tr("Condition"), condition_, conditionInfoHtml(),
-                 tr("What the condition grades mean"));
-    attributeRow(tr("Rarity"), rarity_, rarityInfoHtml(), tr("What the rarities mean"));
-    attributeRow(tr("Foil treatment"), foil_, foilInfoHtml(), tr("What the foil treatments mean"));
+    rarityHint_ = fieldRow(tr("Rarity"), rarity_,
+                           tr("The card catalog gave no rarity for this printing."),
+                           tr("Rarity was not filled in"), rarityInfoHtml(),
+                           tr("What the rarities mean"));
 
     form->addRow(tr("Ownership"), ownership_);
     // The binder combo pairs with an optional "Remove from binder" button (hidden unless
@@ -273,7 +360,33 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     binderRow->addWidget(binder_, 1);
     binderRow->addWidget(unassignBinder_);
     form->addRow(tr("Binder"), binderRow);
-    form->addRow(tr("Comments"), comments_);
+
+    languageHint_ = fieldRow(tr("Language"), language_,
+                             tr("The card catalog is English-only, so it can't tell which "
+                                "language print you hold. Settings can pre-select a default."),
+                             tr("Language was not filled in"), QString(), QString());
+    conditionHint_ = fieldRow(tr("Condition"), condition_,
+                              tr("Only you can see the card in hand, so nothing can grade it "
+                                 "for you."),
+                              tr("Condition was not filled in"), conditionInfoHtml(),
+                              tr("What the condition grades mean"));
+    foilHint_ = fieldRow(tr("Foil treatment"), foil_,
+                         tr("The card catalog doesn't record which finish a printing came in."),
+                         tr("Foil treatment was not filled in"), foilInfoHtml(),
+                         tr("What the foil treatments mean"));
+    commentsHint_ = fieldRow(tr("Comments"), comments_,
+                             tr("Nothing to autofill here — it's your own note about this copy."),
+                             tr("Comments were not filled in"), QString(), QString(), Qt::AlignTop);
+
+    // Qt derives tab order from CONSTRUCTION order, which no longer matches the rows above,
+    // so spell the traversal out — otherwise Tab jumps from Collector number back up to
+    // Language. The glyph buttons are NoFocus and stay out of it.
+    QWidget* const tabChain[] = {cardName_, expansionCode_, setName_, collectorNumber_,
+                                 rarity_,   ownership_,     binder_,  unassignBinder_,
+                                 language_, condition_,     foil_,    comments_};
+    for (std::size_t i = 1; i < std::size(tabChain); ++i) {
+        setTabOrder(tabChain[i - 1], tabChain[i]);
+    }
 
     actions_ = new QHBoxLayout;
     actions_->addStretch();  // host buttons insert before the stretch (left-aligned)
@@ -301,6 +414,30 @@ void CardCopyForm::setupBinderPicker(const std::vector<CardBinder>& binders,
     fillBinderCombo(*binder_, binders, selected);
     binder_->setEnabled(enabled);
     updateBinderRemoveEnabled();  // reflect the loaded selection on the Remove button
+}
+
+void CardCopyForm::setMissingFieldHints(bool armed) {
+    missingHintsArmed_ = armed;
+    refreshMissingFieldHints();
+}
+
+void CardCopyForm::refreshMissingFieldHints() {
+    if (commentsHint_ == nullptr) {
+        return;  // the field signals are wired before the rows (and their markers) exist
+    }
+    // Guarding on the LAST marker built covers the whole window, including the stretch of
+    // the ctor between the first row and the last — where rarityHint_ is already set and
+    // the other four are not.
+    const auto mark = [this](QToolButton* hint, bool empty) {
+        hint->setVisible(missingHintsArmed_ && empty);
+    };
+    mark(rarityHint_, !rarity().has_value());
+    mark(languageHint_, cardReference().language.empty());
+    mark(conditionHint_, !condition().has_value());
+    mark(foilHint_, !foil().has_value());
+    // Whitespace-only is empty for this purpose — a stray newline left by a prefill isn't
+    // a note, and the marker would otherwise read as "you wrote something" when nobody did.
+    mark(commentsHint_, comments_->toPlainText().trimmed().isEmpty());
 }
 
 void CardCopyForm::setBinderRemovable(bool removable) {
@@ -349,6 +486,7 @@ void CardCopyForm::setRarity(std::optional<CardRarity> rarity) {
     const int data = rarity ? static_cast<int>(*rarity) : -1;
     const int index = rarity_->findData(data);
     rarity_->setCurrentIndex(index >= 0 ? index : 0);
+    refreshMissingFieldHints();  // silent setters emit nothing, so refresh explicitly
 }
 
 void CardCopyForm::setComments(const std::string& comments) {
@@ -373,6 +511,7 @@ void CardCopyForm::setLanguage(const std::string& language) {
     const QString code = QString::fromStdString(language);
     if (code.isEmpty()) {
         language_->setCurrentIndex(0);
+        refreshMissingFieldHints();
         return;
     }
     int li = language_->findData(code);
@@ -381,12 +520,14 @@ void CardCopyForm::setLanguage(const std::string& language) {
         li = language_->count() - 1;
     }
     language_->setCurrentIndex(li);
+    refreshMissingFieldHints();
 }
 
 void CardCopyForm::setCondition(std::optional<CardCondition> condition) {
     const int data = condition ? static_cast<int>(*condition) : -1;
     const int index = condition_->findData(data);
     condition_->setCurrentIndex(index >= 0 ? index : 0);  // unmapped → "— None —"
+    refreshMissingFieldHints();
 }
 
 void CardCopyForm::loadCopy(const CardCopy& copy) {
@@ -405,6 +546,7 @@ void CardCopyForm::loadCopy(const CardCopy& copy) {
     foil_->setCurrentIndex(fi >= 0 ? fi : 0);
     ownership_->setCurrentIndex(ownership_->findData(static_cast<int>(copy.ownership)));
     comments_->setPlainText(QString::fromStdString(copy.comments));
+    refreshMissingFieldHints();  // foil was set inline above, so refresh after it too
 }
 
 void CardCopyForm::addAction(QPushButton* button) {

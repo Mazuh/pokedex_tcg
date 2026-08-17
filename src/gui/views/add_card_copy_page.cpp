@@ -216,6 +216,10 @@ void AddCardCopyPage::autofillFrom(const CardCandidate& candidate) {
     // it doesn't map to one of our rarities — the picker stays editable). Foil has no
     // catalog source, so it is always the user's pick.
     form_->setRarity(rarityFromCatalog(candidate.rarity));
+    // The catalog has now said everything it can about this card, so the fields still empty
+    // are exactly the ones it couldn't answer — raise the form's "⚠ not filled in for you"
+    // markers on them (they clear themselves as the user fills each in).
+    form_->setMissingFieldHints(true);
     updateSubmitEnabled();  // the autofilled collector number may now satisfy submit
 }
 
@@ -278,6 +282,9 @@ void AddCardCopyPage::prefillFormFields(const QString& cardName, const QString& 
     ref.expansionCode = setCode.toStdString();
     ref.collectorNumber = collectorNumber.toStdString();
     form_->setCardReference(ref);
+    // A reading has filled in what it could (here the scanner's, not the catalog's), so the
+    // same "still empty, still optional" markers apply — see autofillFrom.
+    form_->setMissingFieldHints(true);
     updateSubmitEnabled();  // the pasted collector number may already satisfy submit
 }
 

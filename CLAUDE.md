@@ -394,7 +394,29 @@ action row; the binder picker pairs the combo with an optional **"Remove from bi
 button beside it — hidden until `setBinderRemovable(true)` [only the edit page opts in], it
 just selects the combo's "— None —" entry and emits `binderChanged`, reusing the host's
 existing save-binder path rather than adding a second unassign verb, and is enabled only
-while a binder is actually selected) and the reusable `CardFinderPanel` (the set-scoped search + infinite-scroll
+while a binder is actually selected. **Its row ORDER is load-bearing, not cosmetic:**
+everything a picked card can autofill comes first (card name, expansion code, set name,
+collector number, then the catalog's best-effort rarity), and everything only the person
+holding the card can answer comes after (ownership, binder, language, condition, foil,
+comments) — so after a pick the eye runs straight down to the first field still needing
+attention instead of hunting a form whose filled and unfilled rows interleave. Keep a new
+field on the side of that line it belongs to. Because Qt derives tab order from
+CONSTRUCTION order, the ctor spells the traversal out with `setTabOrder`; a new field must
+be added to that chain or Tab will jump back up the form. Paired with the order are the
+**"⚠ not filled in for you" markers** — one per optional field (rarity, language,
+condition, foil, comments; ownership always has a value and the binder is a filing
+decision, so neither gets one), shown while the field is empty and hidden the moment a
+value lands. They are ARMED, not automatic: `setMissingFieldHints(true)` is called by
+`AddCardCopyPage` once a reading has filled the identity — the catalog pick
+[`autofillFrom`] or the scanner's copy-to-form [`prefillFormFields`] — so a blank form
+doesn't nag before there is anything to compare against and the EDIT page, where a copy was
+deliberately recorded without a grade, never does. `refreshMissingFieldHints` must be
+called from every path a value arrives by, including the SILENT setters [`setRarity` /
+`setLanguage` / `setCondition` / `loadCopy`], which emit nothing and are how the prefill
+flows write. Each glyph occupies a fixed-width slot and a row lacking one still reserves it
+with an empty WIDGET [not `addSpacing`, which lays out a few pixels off and visibly breaks
+the column], so the ⚠ and ⓘ read as columns across rows that carry different combinations)
+and the reusable `CardFinderPanel` (the set-scoped search + infinite-scroll
 printings list + preview; reports picks via signals, knows nothing of forms/copies,
 and exposes `setPreviewFooter()` for a host action under the picture. **In species
 mode its set input is a searchable DROPDOWN over the catalog's set table, and choosing
@@ -1253,6 +1275,21 @@ labels: hiding a LEADING one still needs an explicit fixup, since the label that
 first must drop its separator (`BinderView`'s Listed / Captured / Cards / value line is the
 reference — it hides Listed and Captured together when the binder lists no species, and
 switches Cards to a separator-less variant for exactly that case).
+
+**A small glyph that reveals an explanation is built by `makeGlyphButton`.**
+`gui/views/glyph_button.h` is the one recipe: a flat `QToolButton` showing a single
+character whose rich text is BOTH its tooltip (hover) and what it pops via
+`QToolTip::showText` on click, so it serves either mouse habit; `Qt::WhatsThisCursor`
+signals "this reveals help" and `Qt::NoFocus` keeps it out of the form's tab order (it
+explains a field, it isn't one). The click reads whatever tooltip the button CURRENTLY
+holds, so a caller may re-word it per render without re-wiring (the price surfaces fold
+their freshness dates in that way). Two glyphs use it today — "ⓘ" (what these
+options/figures mean: `CardCopyForm`'s attribute pickers, and both price surfaces via
+`price_headline.h`'s `makeInfoButton`, which now only pins the glyph and the price wording
+onto it) and "⚠" (`CardCopyForm`'s "the catalog couldn't fill this in" markers, muted with
+`applyMutedText` so they read as a hint rather than an error — which is also why
+`applyMutedText` covers the `ButtonText` role: a button ignores `WindowText`). Build a
+third the same way rather than re-spelling the recipe.
 
 **A form's primary/submit button gets the shared accent affordance.** Every
 in-window CRUD form's commit button — "Add copy" (`AddCardCopyPage`), "Save

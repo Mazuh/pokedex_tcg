@@ -2,11 +2,9 @@
 
 #include <QLatin1Char>
 #include <QObject>
-#include <QPoint>
 #include <QString>
 #include <QStringList>
 #include <QToolButton>
-#include <QToolTip>
 #include <QUrl>
 #include <QWidget>
 
@@ -18,6 +16,7 @@
 #include "core/domain/card_reference.h"
 #include "core/domain/types.h"
 #include "core/storage/codecs.h"  // timestampToIso
+#include "gui/views/glyph_button.h"
 #include "gui/views/price_labels.h"
 
 namespace pokedex {
@@ -113,20 +112,11 @@ inline const QString& priceInfoHtml() {
 // flat tool button that pops the metrics/freshness explanation on click. Defined once here so
 // the two can't drift on the same affordance. Callers keep the returned button (to update its
 // tooltip per render with freshness) and lay it out themselves; the click reads whatever tooltip
-// it currently holds.
+// it currently holds. The button itself is the app-wide glyph affordance (glyph_button.h) — this
+// only pins the glyph and the price wording onto it.
 inline QToolButton* makeInfoButton(QWidget* parent) {
-    auto* button = new QToolButton(parent);
-    button->setText(QStringLiteral("ⓘ"));
-    button->setAutoRaise(true);
-    button->setFocusPolicy(Qt::NoFocus);
-    button->setCursor(Qt::WhatsThisCursor);
-    button->setToolTip(priceInfoHtml());
-    button->setAccessibleName(QObject::tr("What these prices mean"));
-    QObject::connect(button, &QToolButton::clicked, button, [button]() {
-        QToolTip::showText(button->mapToGlobal(QPoint(0, button->height())), button->toolTip(),
-                           button);
-    });
-    return button;
+    return makeGlyphButton(parent, QStringLiteral("ⓘ"), priceInfoHtml(),
+                           QObject::tr("What these prices mean"));
 }
 
 // The "ⓘ" tooltip/popover text for a priced card: the static metric explanation plus a
