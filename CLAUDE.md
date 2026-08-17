@@ -804,6 +804,15 @@ ctest --test-dir build --output-on-failure
   `POKEDEX_TCG_CONFIG_DIR=<throwaway dir>` so you exercise a scratch workspace,
   not the user's — two instances writing the same DB also contend on SQLite's
   file lock.
+- **A `QTableWidget` row selection cannot be driven headlessly here.** macOS
+  Accessibility marks the AX node but never updates Qt's `selectionModel`, so
+  `itemSelectionChanged` never fires; synthetic `click at {x,y}` and focus-then-arrow-keys
+  don't take either. So **anything gated behind a selected table row** — the binder guide's
+  Insert blank / Move… / Scroll to page, My Cards' Assign/Remove/Delete, opening a binder
+  from `BindersPage` — is unreachable by synthetic drive-through and must be verified by a
+  real click (or an HID tool like `cliclick`, which isn't installed — ask first). When that
+  blocks verification, **say so explicitly in the report**: a green build plus `ctest` proves
+  nothing about GUI behaviour, since the test suite links only the Qt-free `pokedex_core`.
 
 **The checklist and the extras: what a binder reserves a pocket for.** A binder's guide is
 two runs, and every ordering rule below depends on which one a row is in.
@@ -1019,6 +1028,33 @@ labels so it reads exactly like the table's Name column. Capacity, when recorded
 range; without it the cap is the last page in use plus one, so a card can always be sent past the
 end. A placed row's Page/Pocket cells carry a "moved here by hand" tooltip — otherwise it is
 indistinguishable from one the dex put there.
+
+**Finding a card again: "Scroll to page".** A third selection-scoped button sits beside those
+two (`BinderView::revealSelectedRow` / `updateRevealButtonState`). It exists for a journey that
+was entirely manual: search a Pokémon's name, click the row that survives the filter, then clear
+the search and scroll a thousand-row list by hand hunting for where that card physically sits.
+So it clears the search **and** any header sort and centres the selected row
+(`scrollToItem(…, PositionAtCenter)` — the question is what sits *around* the card, so its
+neighbours must be on screen), then `setFocus()`es the table so the row renders as an active
+rather than dimmed selection and ↑/↓ walk the neighbours immediately. Points worth keeping:
+
+- **Clearing the sort is part of the action, not a side effect** — filed order is the only mode
+  that fills Page/Pocket, draws the page breaks, and makes the adjacent rows the card's physical
+  neighbours. It goes through the `clearHeaderSort_` callable `installHeaderSort` hands back (see
+  that section), never a hand-assigned `sortColumn_ = -1`.
+- Its **label adapts** on `binder_.pocketGrid` ("Scroll to page" / "Scroll to card") but, unlike
+  Insert blank and Move…, a missing grid does **not** disable it: a grid-less binder loses the
+  page *numbers*, not the reason to jump. It likewise carries no `sortColumn_` gate — an active
+  sort is what it undoes, not a blocker.
+- **The order inside the action is load-bearing**: capture the row's identity (copy id + dex) by
+  value BEFORE either clear. `sortEntries()` reassigns `entries_` wholesale from
+  `naturalEntries_`, so a reference into it would dangle, and the row *index* is exactly what the
+  rebuild invalidates. `reselectRow` (which now returns the row it landed on, -1 if gone) is what
+  re-finds it.
+- It is **disabled on a blank-pocket row**, which names neither a card nor a species, so `rowOf`
+  could not find it after the rebuild. The tempting fallback — `toggleBlankAtSelection`'s "scan
+  forward to the next anchorable row" — was rejected: it silently retargets the selection (and
+  the inspector, and the other two row actions) at a *different* record than the one selected.
 
 **A numeric field is a `QSpinBox`.** `BinderEditPage`'s capacity and rows×columns are the
 first numeric inputs in the app. A spinbox rather than `QLineEdit` + `QIntValidator`: it makes
@@ -1386,6 +1422,23 @@ My Cards' dex-then-added, the Binders list's service order). It matters most in
 `BinderView`, whose natural order is the ONLY mode that fills Page/Pocket and draws the
 page breaks, and the only one where "Insert blank"/"Move…" are enabled. Any new view
 must therefore treat `-1` as reachable at any time, not just before the first click.
+
+That third click is no longer the only way back: **`installHeaderSort` RETURNS a callable
+that clears the sort programmatically**, for a view action whose whole point is to put the
+table back (the binder guide's "Scroll to page", which clears the search and the sort
+together before jumping to the selected row). It has to come from inside the helper, and a
+view must **never** just assign its own `sortColumn_ = -1`: the three-state cycle's state
+lives in that helper, so a hand-assigned clear leaves the header still painting a sort arrow
+over rows it no longer sorts AND leaves the cycle half-finished, so the next click on that
+same column jumps straight to descending instead of restarting ascending. The callable
+resets that state, clears the indicator, and reports `(-1, AscendingOrder)` through the
+view's OWN `onSort` — so the clear travels the one existing path (the view's `sortColumn_`
+assignment plus its `repopulate()`) and a programmatic clear is indistinguishable from the
+user's third click. It no-ops when no sort is active (no needless rebuild of a big table),
+holds a `QPointer` so it survives the table's destruction, and must never be called from
+inside `onSort` itself. The return is deliberately **not** `[[nodiscard]]`: three of the
+four call sites have nothing to clear and discard it as a plain statement, which
+`[[nodiscard]]` would turn into `-Werror` failures.
 
 Two consequences a new table has to get right:
 

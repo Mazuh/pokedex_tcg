@@ -356,7 +356,10 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     // drop back to the natural filed order. Declaring them as reset columns makes the
     // helper report -1 on the first click and paint no sort arrow over rows it didn't
     // sort; the third click on any other header is the general way to undo a sort.
-    installHeaderSort(
+    // The returned reset is how "Scroll to page" clears the sort: it reports through this
+    // very callback, so the programmatic clear and the third header click are one code
+    // path — including the header's own indicator and cycle state, which live in the helper.
+    clearHeaderSort_ = installHeaderSort(
         table_,
         [this](int column, Qt::SortOrder order) {
             sortColumn_ = column;
@@ -425,9 +428,15 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     connect(blankButton_, &QPushButton::clicked, this, &BinderView::toggleBlankAtSelection);
     moveButton_ = new QPushButton(tr("Move…"), this);
     connect(moveButton_, &QPushButton::clicked, this, &BinderView::moveSelectedCard);
+    // No ctor text: its label adapts to whether the binder records a pocket grid, exactly
+    // as blankButton_'s adapts to the selected row — so both come from the state update.
+    revealButton_ = new QPushButton(this);
+    connect(revealButton_, &QPushButton::clicked, this, &BinderView::revealSelectedRow);
+    updateRevealButtonState();  // label + tooltip before the first paint, not just first show
     auto* rowActions = new QHBoxLayout;
     rowActions->addWidget(blankButton_);
     rowActions->addWidget(moveButton_);
+    rowActions->addWidget(revealButton_);
     rowActions->addStretch();
 
     auto* listPane = new QWidget(this);
@@ -1005,10 +1014,23 @@ int BinderView::rowOf(const QString& copyId, int dex) const {
             }
         }
     }
-    // The copy is gone (moved, deleted) or was never named — fall back to the species,
-    // whose placeholder or first remaining copy row is the nearest thing to where the
-    // user was.
+    // The copy is gone (moved, deleted) or was never named — fall back to the species.
+    // PREFER ITS PLACEHOLDER: that is the row this fallback exists for, and a species can
+    // hold both. buildEntries pushes a species' copy rows before appending its placeholder,
+    // and a hand-placed copy is emitted at its anchor, which can be far earlier in the
+    // guide — so taking the first row for the dex would land on a Removed copy's frozen
+    // history, or on a card pinned pages away, rather than on the reserved slot the caller
+    // means. That misfire is silent: the highlight, the inspector and "Scroll to page" all
+    // follow it to a different physical card.
     if (dex >= 0) {
+        for (int i = 0; i < static_cast<int>(entries_.size()); ++i) {
+            if (entries_[i].pokemon && entries_[i].pokemon->dexNumber == dex &&
+                !entries_[i].cardCopyId) {
+                return i;
+            }
+        }
+        // No placeholder (the species still holds something here) — its first copy row is
+        // then the nearest thing to where the user was.
         for (int i = 0; i < static_cast<int>(entries_.size()); ++i) {
             if (entries_[i].pokemon && entries_[i].pokemon->dexNumber == dex) {
                 return i;
@@ -1033,6 +1055,7 @@ void BinderView::applyFilter(const QString& filter) {
     }
     updateBlankButtonState();  // the selected row may have just been hidden
     updateMoveButtonState();
+    updateRevealButtonState();
     if (shownStillVisible) {
         return;
     }
@@ -1078,6 +1101,7 @@ void BinderView::showEntryInPanel(int row) {
         detail_->showSingleCopy(*copy, sameSpeciesTotal);
         updateBlankButtonState();
         updateMoveButtonState();
+        updateRevealButtonState();
         return;
     }
     // A blank pocket: it stands for no species and no card, so there is nothing to
@@ -1095,6 +1119,7 @@ void BinderView::showEntryInPanel(int row) {
     detail_->showPokemon(shownDex_, QString::fromStdString(entry.pokemon->name));
     updateBlankButtonState();
     updateMoveButtonState();
+    updateRevealButtonState();
 }
 
 void BinderView::clearPanel() {
@@ -1106,6 +1131,7 @@ void BinderView::clearPanel() {
     shownDex_ = -1;
     updateBlankButtonState();
     updateMoveButtonState();
+    updateRevealButtonState();
 }
 
 void BinderView::activateRow(int row) {
@@ -1480,6 +1506,94 @@ void BinderView::moveSelectedCard() {
     reselectRow(QString::fromStdString(copyId), -1);  // follow the card to its new row
 }
 
+void BinderView::updateRevealButtonState() {
+    const int row = table_->currentRow();
+    const bool haveRow = row >= 0 && row < static_cast<int>(entries_.size()) &&
+                         !table_->isRowHidden(row) && !table_->selectedItems().isEmpty();
+
+    // The label names what the user will find when they arrive. Without a recorded grid the
+    // rows carry no page numbers, so promising a page would be a lie — but the jump still
+    // answers "what sits around this card", which is why (unlike Insert blank and Move…) a
+    // missing grid re-labels this button instead of disabling it.
+    revealButton_->setText(binder_.pocketGrid ? tr("Scroll to page") : tr("Scroll to card"));
+    // Note there is deliberately no sortColumn_ gate here, the one the other two row actions
+    // both carry: an active sort is the condition this action UNDOES, not one that blocks it.
+    if (!haveRow) {
+        revealButton_->setEnabled(false);
+        revealButton_->setToolTip(tr("Select a row to jump to where it sits in this binder."));
+        return;
+    }
+    if (isBlankSlot(entries_[row])) {
+        // A blank pocket names neither a card nor a species, so once the search and the sort
+        // are cleared there is no identity left for rowOf() to find its new row by.
+        revealButton_->setEnabled(false);
+        revealButton_->setToolTip(
+            tr("A blank pocket has no card or Pokémon to look up again — select the row it "
+               "sits before instead."));
+        return;
+    }
+    revealButton_->setEnabled(true);
+    revealButton_->setToolTip(
+        binder_.pocketGrid
+            ? tr("Clear the search and any column sort, then scroll to this row in page "
+                 "order — so you can see which page it is on and which cards sit around it.")
+            : tr("Clear the search and any column sort, then scroll to this row in filed "
+                 "order — so you can see which cards sit around it."));
+}
+
+void BinderView::revealSelectedRow() {
+    const int row = table_->currentRow();
+    if (row < 0 || row >= static_cast<int>(entries_.size())) {
+        return;
+    }
+    // Capture the row's IDENTITY first, by value — and deliberately WITHOUT binding a
+    // reference into entries_ along the way. Both clears below rebuild the row set: the row
+    // INDEX is exactly what they invalidate, and a `const CardBinderEntry&` held across them
+    // would dangle outright, since sortEntries() reassigns the whole vector from
+    // naturalEntries_. Reading the fields inline leaves nothing for a later edit to trip on.
+    const QString copyId = entries_[row].cardCopyId
+                               ? QString::fromStdString(*entries_[row].cardCopyId)
+                               : QString();
+    const int dex = entries_[row].pokemon ? entries_[row].pokemon->dexNumber : -1;
+    if (copyId.isEmpty() && dex < 0) {
+        return;  // a blank pocket: nothing rowOf can find again (the button is disabled)
+    }
+
+    // The search first: a filter only HIDES rows, so this is the cheap half, and doing it
+    // before the rebuild below means that rebuild's trailing content-column measurement
+    // sizes for the rows that will actually be on screen. The guard keeps QLineEdit from
+    // emitting textChanged for a box that is already empty.
+    if (!search_->text().isEmpty()) {
+        search_->clear();  // → textChanged → applyFilter("") shows every row again
+    }
+    // Then any header sort, back to filed order — the only order in which Page/Pocket are
+    // filled, the page breaks are drawn, and the rows above and below this one are its
+    // physical neighbours. This re-enters the view through the installHeaderSort callback
+    // (sortColumn_ = -1 → repopulate()), which restores the selection by identity and
+    // re-applies the filter itself. A no-op when nothing is sorted.
+    if (clearHeaderSort_) {
+        clearHeaderSort_();
+    }
+
+    // Only now is a row index meaningful again: reselectRow re-finds the record by identity,
+    // moves the highlight without re-firing showRow, and re-drives the panel.
+    const int target = reselectRow(copyId, dex);
+    if (target < 0) {
+        return;  // defensive: neither clearing a filter nor a sort can drop a row
+    }
+    // CENTRE it rather than merely scroll it into view: the question being answered is what
+    // sits AROUND this card, so its neighbours have to be on screen too.
+    if (QTableWidgetItem* item = table_->item(target, 3)) {  // the name column
+        table_->scrollToItem(item, QAbstractItemView::PositionAtCenter);
+    }
+    // Focus the table so the row just centred renders as an ACTIVE selection rather than the
+    // palette's dimmed inactive one — the dimmed row would be the very one being pointed at —
+    // and so the arrow keys walk its neighbours straight away. The only thing losing focus is
+    // the search box this action just emptied. It changes no current cell, so it cannot
+    // re-fire showRow.
+    table_->setFocus();
+}
+
 void BinderView::updatePocketHeaderTooltips() {
     // Both explanations go through setHeaderTooltip, which recomposes the header's own
     // text and the shared sort-cycle hint around them — so re-running this per refresh
@@ -1515,13 +1629,13 @@ void BinderView::openEditBinder() {
     pushBackablePage(stack_, page, [this]() { refresh(); });
 }
 
-void BinderView::reselectRow(const QString& copyId, int dex) {
+int BinderView::reselectRow(const QString& copyId, int dex) {
     const int row = rowOf(copyId, dex);
     if (row < 0) {
         // The row left the guide entirely (a species-free card moved away, or a species'
         // last copy did and it wasn't in one of the binder's regions).
         clearPanel();
-        return;
+        return -1;
     }
     table_->blockSignals(true);  // setCurrentCell would re-fire showRow redundantly
     table_->setCurrentCell(row, 3);  // the name column
@@ -1529,6 +1643,7 @@ void BinderView::reselectRow(const QString& copyId, int dex) {
     // Drive the panel explicitly: if the copy is gone this lands on the species'
     // placeholder row and falls back to plain artwork.
     showEntryInPanel(row);
+    return row;
 }
 
 }  // namespace pokedex

@@ -2,6 +2,7 @@
 
 #include <QWidget>
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -148,12 +149,21 @@ private:
     // Move the highlight to the row for copy `copyId` (falling back to species `dex`)
     // and re-show it in the panel — restoring the selection by IDENTITY after a refresh()
     // rebuilt the rows. Clears the panel if the row left the guide. Called by the
-    // edit/prices/wishlist page returns.
-    void reselectRow(const QString& copyId, int dex);
+    // edit/prices/wishlist page returns. Returns the row it landed on, or -1 when the
+    // record left the guide: the callers that only want the highlight moved discard it,
+    // while revealSelectedRow() needs to know which row to bring into view.
+    int reselectRow(const QString& copyId, int dex);
     // The row showing copy `copyId`, or — when that copy is gone or `copyId` is empty —
-    // the first row for species `dex`; -1 when neither is present. The single definition
-    // of row identity: a sort or a rebuild moves records between row indices, so every
-    // "find my row again" path must go through this rather than a remembered index.
+    // species `dex`'s PLACEHOLDER row, falling back to its first copy row when it has no
+    // placeholder; -1 when neither is present. The single definition of row identity: a
+    // sort or a rebuild moves records between row indices, so every "find my row again"
+    // path must go through this rather than a remembered index.
+    //
+    // The placeholder preference is load-bearing, not a nicety: a species can hold both a
+    // placeholder and copy rows (every copy soft-Removed, or one pinned to another pocket),
+    // and buildEntries emits the copy rows first — so "the first row for the dex" would
+    // silently retarget the highlight, the inspector and "Scroll to page" at a different
+    // physical card than the reserved slot the caller meant.
     int rowOf(const QString& copyId, int dex) const;
     // Drive the detail panel from entries_[row]: a copy row shows that exact copy
     // (with the Add/wishlist affordances matching whether it depicts a species), a
@@ -190,6 +200,32 @@ private:
     // Whether entries_[row] is a card this view can move: a real copy, not a placeholder,
     // a blank, or Removed frozen history.
     bool rowIsMovable(int row) const;
+    // The third row-scoped action: put the guide back the way it was found, then go to the
+    // selected row. The journey it exists for was previously all manual — type a Pokémon's
+    // name, click the row that survives, then clear the search and scroll a thousand-row
+    // list by hand looking for where that card physically sits. So this clears the search
+    // AND any header sort and centres the row it started from; the page number, the page
+    // breaks and the row's physical neighbours all come back at once, which is the whole
+    // question being asked ("where is this in the grand scheme of things?").
+    //
+    // Clearing the SORT is part of the action, not a side effect: natural filed order is
+    // the only mode that fills Page/Pocket and draws the page breaks, and the only one in
+    // which the rows above and below a card are its physical neighbours rather than
+    // whatever the sorted column happened to put there. It goes through clearHeaderSort_
+    // rather than assigning sortColumn_ here — see installHeaderSort's returned reset.
+    void revealSelectedRow();
+    // Re-label/enable the reveal button for the current selection and guide state, from the
+    // same places as the blank and move buttons. Two deliberate differences from those two:
+    // it stays ENABLED with no pocket grid recorded (a missing grid removes the page
+    // NUMBERS, not the reason to jump — hence the "Scroll to card" label), and it does not
+    // gate on an active sort, which is the very thing it undoes. It is disabled only for a
+    // blank-pocket row, which names neither a card nor a species, so rowOf() could not find
+    // it again once the rebuild has moved it.
+    //
+    // Note the label reads binder_.pocketGrid, which "Edit binder" can change: that path
+    // re-derives it through the Back callback's refresh() -> repopulate() -> applyFilter(),
+    // the same chain the other two buttons' grid gates already rely on.
+    void updateRevealButtonState();
     // Re-set the Page column's tooltip for the binder's current grid (it changes under
     // Edit binder, and says something different when no grid is recorded).
     void updatePocketHeaderTooltips();
@@ -217,11 +253,20 @@ private:
     PokemonDetailPanel* detail_;
     QPushButton* refreshPricesButton_;  // "Refresh prices" — bulk re-fetch all filed cards
     QLabel* bulkStatus_;                 // "Refreshing… n/m" progress beside it (hidden when idle)
-    // The selection-scoped actions, under the table: "Insert blank" / "Remove blank", and
-    // "Move…" for putting a card in a named pocket. Binder-scoped actions stay in the top
-    // bar (see the placement rule in CLAUDE.md).
+    // The selection-scoped actions, under the table: "Insert blank" / "Remove blank",
+    // "Move…" for putting a card in a named pocket, and "Scroll to page" / "Scroll to card"
+    // for going to where the selected row physically sits. Binder-scoped actions stay in
+    // the top bar (see the placement rule in CLAUDE.md).
     QPushButton* blankButton_;
     QPushButton* moveButton_;
+    QPushButton* revealButton_;
+    // Drop the header sort back to natural filed order, handed over by installHeaderSort.
+    // Held rather than re-derived because the three-state cycle's state lives inside that
+    // helper: assigning sortColumn_ = -1 here would strand the header's sort arrow and
+    // leave the next click on that column resuming mid-cycle. Invoking it re-enters this
+    // view through the same callback a third header click takes (sortColumn_ + repopulate),
+    // and is a no-op when no sort is active.
+    std::function<void()> clearHeaderSort_;
     // The guide's rows, strictly 1:1 with the table's rows (see the class docstring).
     std::vector<CardBinderEntry> entries_;
     // The same rows in the order buildEntries emitted them — the FILED order, kept

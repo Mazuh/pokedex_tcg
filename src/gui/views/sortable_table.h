@@ -2,6 +2,7 @@
 
 #include <QHeaderView>
 #include <QObject>
+#include <QPointer>
 #include <QString>
 #include <QStringList>
 #include <QTableWidget>
@@ -45,6 +46,30 @@ namespace pokedex {
 // only one where the arrange actions work. Clicking a different column starts
 // ascending again.
 //
+// It is no longer the ONLY way back, though: this RETURNS a callable that clears the
+// sort programmatically, for a view action whose whole point is to put the table back
+// (the binder guide's "Scroll to page", which clears the search and the sort together
+// before jumping to the selected row). It has to come from in here rather than from a
+// free function, because the cycle's state lives INSIDE this helper: a view that merely
+// assigned its own sortColumn_ = -1 would leave the header still painting a sort arrow
+// over rows it no longer sorts, and would leave the cycle half-finished, so the next
+// click on that same column would jump straight to descending instead of starting
+// ascending again.
+//
+// The callable resets that state, clears the indicator, and then reports
+// (-1, AscendingOrder) through the view's OWN onSort — so the clear travels the one
+// existing path (the view's sortColumn_ assignment plus its repopulate) and a
+// programmatic clear is indistinguishable from the user's third click. Keeping the
+// view's callback as the single writer of its sort state is the point: a second
+// encoding of "what happens when the sort clears" is exactly what would drift. It is a
+// no-op when no sort is active (no needless rebuild of a big table), it is safe to hold
+// after the table has been destroyed, and it must NEVER be called from inside onSort
+// itself (infinite recursion).
+//
+// The return is deliberately NOT [[nodiscard]]: three of the four call sites have
+// nothing to clear programmatically and discard it as a plain statement, which
+// [[nodiscard]] would turn into -Werror failures.
+//
 // The view holds the current (column, order) as its own state and re-applies it on
 // every refresh, so sorting survives a reload; a column index of < 0 means "keep
 // the natural order the data was loaded in" (the initial and the cleared state).
@@ -68,9 +93,9 @@ enum class HeaderSortRole {
 inline void setHeaderTooltip(QTableWidget* table, int column, const QString& explanation = {},
                              HeaderSortRole role = HeaderSortRole::Sortable);
 
-inline void installHeaderSort(QTableWidget* table,
-                              std::function<void(int column, Qt::SortOrder order)> onSort,
-                              std::vector<int> resetColumns = {}) {
+inline std::function<void()> installHeaderSort(
+    QTableWidget* table, std::function<void(int column, Qt::SortOrder order)> onSort,
+    std::vector<int> resetColumns = {}) {
     QHeaderView* header = table->horizontalHeader();
     header->setSectionsClickable(true);
     header->setSortIndicatorShown(true);
@@ -89,8 +114,10 @@ inline void installHeaderSort(QTableWidget* table,
     // shared_ptr keeps the state alive for the connection's lifetime and copyable
     // into the std::function.
     auto state = std::make_shared<std::pair<int, Qt::SortOrder>>(-1, Qt::AscendingOrder);
+    // onSort is COPIED into the click handler rather than moved: the returned reset below
+    // needs its own copy so a programmatic clear can report through the very same callback.
     QObject::connect(header, &QHeaderView::sectionClicked, table,
-                     [table, onSort = std::move(onSort), state, resets](int column) {
+                     [table, onSort, state, resets](int column) {
                          // Same column: ascending → descending → cleared. Otherwise
                          // (a different column, or none active) → ascending. A reset
                          // column skips the cycle and goes straight to cleared.
@@ -107,6 +134,19 @@ inline void installHeaderSort(QTableWidget* table,
                          table->horizontalHeader()->setSortIndicator(sorted, order);
                          onSort(sorted, order);
                      });
+    // The programmatic "put it back" (see the note above). QPointer rather than a raw
+    // pointer because, unlike the connection above (which Qt drops with its context
+    // object), a returned callable has no lifetime tie to the table.
+    return [table = QPointer<QTableWidget>(table), onSort = std::move(onSort), state]() {
+        if (table.isNull() || state->first < 0) {
+            return;  // gone, or already in the default order — don't rebuild for nothing
+        }
+        // The same cleared state the third click produces: that path leaves `order`
+        // ascending too, so this can't invent one the click path never reaches.
+        *state = {-1, Qt::AscendingOrder};
+        table->horizontalHeader()->setSortIndicator(-1, Qt::AscendingOrder);
+        onSort(-1, Qt::AscendingOrder);
+    };
 }
 
 // GUI — the tooltip a sortable table's column header carries, composed from three
