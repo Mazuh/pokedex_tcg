@@ -38,6 +38,14 @@ namespace pokedex {
 
 namespace {
 
+// Sidebar row indices. The sidebar rows and the section stack's pages are added in
+// lockstep below (row N selects page N), and several handlers route to a section by
+// number, so the numbers are named here rather than spelled inline — inserting a
+// section otherwise means hunting every literal that shifted. The Settings and Scan
+// rows are captured from addWidget instead, since they are the tail.
+constexpr int kPokemonRow = 1;
+constexpr int kMyCardsRow = 2;
+
 // The single set in the loaded set table that the read code/name unambiguously names, or
 // null. Exact printed code (unique per set) wins; then an exact set name; then, only if the
 // read name substring-matches EXACTLY ONE set (either direction, 3+ chars), that set. An
@@ -236,7 +244,7 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
                 // Route the reading into My Cards (fills its search + stashes the scan for
                 // the next "Add a card") and show that section.
                 ownedView->applyScannedCard(scanned);
-                goToSection(2);
+                goToSection(kMyCardsRow);
             });
     connect(scanView, &ScanCardView::addRequested, this,
             [goToSection, pokemonView, ownedView](const ScannedCard& reading, int dex,
@@ -248,7 +256,7 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
                 // seed the finder search (by set for a species, by name otherwise).
                 if (dex > 0) {
                     const QString species = speciesName(dex);
-                    goToSection(1);  // Pokémon browser
+                    goToSection(kPokemonRow);
                     if (copyFieldsToForm) {
                         pokemonView->openAddCopyWithFields(dex, species, reading);
                     } else {
@@ -262,7 +270,7 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
                         pokemonView->openAddCopyBySet(dex, species, setQuery);
                     }
                 } else {
-                    goToSection(2);  // My Cards
+                    goToSection(kMyCardsRow);
                     ownedView->startAddScannedCard(reading, copyFieldsToForm);
                 }
             });
@@ -304,12 +312,11 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
     // Double-clicking an owned species in the Pokémon browser jumps to "My Cards"
     // pre-filtered to that species: set the filter first (it persists through the
     // reload the section's showEvent triggers), then select the sidebar row — which
-    // switches sections and highlights it, keeping the sidebar in sync. Row 2 = My
-    // Cards, matching the sidebar/section order built above.
+    // switches sections and highlights it, keeping the sidebar in sync.
     connect(pokemonView, &PokemonListView::searchInMyCardsRequested, this,
             [sidebar, ownedView](const QString& species) {
                 ownedView->searchFor(species);
-                sidebar->setCurrentRow(2);
+                sidebar->setCurrentRow(kMyCardsRow);
             });
 
     // Opens the webcam Scan-a-card screen: refresh its owned-name match estimate from a

@@ -4,7 +4,6 @@
 
 #include <QString>
 #include <functional>
-#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -30,7 +29,6 @@ class BinderService;
 class WishlistService;
 class PokemonDetailPanel;
 class AddCardCopyPage;
-class RegionProgressPanel;
 
 // GUI — the Pokémon section of the main window: an unscoped, read-only browse of
 // the whole National Pokédex (# / name / region / owned-copy count) with a live
@@ -45,6 +43,12 @@ class RegionProgressPanel;
 // pre-filtered to that species (emitting searchInMyCardsRequested for MainWindow to
 // switch sections + set the filter). Editing a specific copy stays on the detail
 // panel's explicit "Edit card…" button.
+//
+// Beside the search box sits "Gotta Catch 'Em All!", which pushes the
+// CaptureProgressView page onto this section's inner stack — how far the collection
+// has come overall and per region. Clicking one of its region rows pops it and
+// narrows this list to that region (showRegion), so the progress figures and the
+// list they describe stay one screen apart, not one section apart.
 //
 // The full catalog is ~1000 species, so the table loads incrementally
 // (infinite scroll): it starts with one chunk of rows and appends the next
@@ -133,19 +137,22 @@ private:
     // list from the top. Clears the panel if the species is filtered out. Shared by
     // the edit-page return and showEvent's revisit restore.
     void reselectSpecies(int dex, const QString& copyId);
-    // The region the list is currently narrowed to, read straight off the search box:
-    // an exact (case-insensitive) match on a region label — the same text a region-row
-    // click writes there, compared UNTRIMMED so this reads the box exactly as
-    // applyFilter does. The box is the single source of truth for "which region is
-    // being shown", so typing or clearing it by hand keeps the stats panel's highlight
-    // honest and no second copy of that state can drift. A partial match ("Kan")
-    // deliberately highlights nothing.
-    std::optional<Region> activeSearchRegion() const;
-    // A region row in the stats panel was clicked: narrow the list to that region by
-    // writing its label into the search box (whose filter already matches on it), or
-    // clear the box when that region is already the active one. Filtering therefore
-    // stays a single path rather than gaining a second, divergent one.
-    void onRegionActivated(Region region);
+    // Push the "Gotta Catch 'Em All!" capture-progress page onto the inner stack (the
+    // button beside the search box); Back pops + disposes of it. It is a page of this
+    // section rather than a sidebar section of its own because its figures are about
+    // this very list — same catalog, and every region row is a way into it.
+    void openCaptureProgress();
+    // Pop `page` off the inner stack back to the browse list and dispose of it. The one
+    // teardown every page this class pushes itself goes through — the add page's Back, the
+    // wishlist page's, and the capture-progress page's two exits (Back, and a region row,
+    // which narrows afterwards) — so a later fix to the sequence can't reach only one of
+    // them. (The edit and prices pages are torn down by their shared host helpers instead.)
+    void closeInnerPage(QWidget* page);
+    // Narrow the list to one region — a region click on that page, which the push site
+    // closes first. It writes the region's label into the search box, whose filter
+    // already matches on it, so filtering stays the single path it has always been
+    // rather than gaining a second, divergent one.
+    void showRegion(Region region);
     // Drive the detail panel for species `dex`: copy mode when it owns copies
     // (preferring `preferCopyId` if set, else a random one), plain artwork otherwise.
     // The one place the owned_ lookup → showPokemon dispatch lives.
@@ -171,7 +178,6 @@ private:
     QLineEdit* search_;
     QTableWidget* table_;
     QLabel* countLabel_;
-    RegionProgressPanel* statsPanel_;
     PokemonDetailPanel* detail_;
 
     // The whole catalog, computed once; never re-queried.

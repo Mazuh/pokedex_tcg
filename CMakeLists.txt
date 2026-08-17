@@ -225,7 +225,7 @@ qt_add_executable(pokedex_tcg
     src/gui/views/binders_page.cpp
     src/gui/views/binder_view.cpp
     src/gui/views/pokemon_list_view.cpp
-    src/gui/views/region_progress_panel.cpp
+    src/gui/views/capture_progress_view.cpp
     src/gui/views/pokemon_detail_panel.cpp
     src/gui/views/add_card_copy_page.cpp
     src/gui/views/card_copy_form.cpp

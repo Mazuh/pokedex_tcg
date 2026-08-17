@@ -1,9 +1,11 @@
 #include "gui/views/pokemon_list_view.h"
 
 #include <QEvent>
+#include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPushButton>
 #include <QScrollBar>
 #include <QSplitter>
 #include <QStackedWidget>
@@ -20,13 +22,13 @@
 #include "core/app/card_copy_service.h"
 #include "gui/services/card_price_lookup_service.h"
 #include "gui/views/add_card_copy_page.h"
+#include "gui/views/capture_progress_view.h"
 #include "gui/views/copy_row_activation.h"
 #include "gui/views/edit_copy_page_host.h"
 #include "gui/views/owned_copy_buckets.h"
 #include "gui/views/pokemon_detail_panel.h"
 #include "gui/views/prices_page_host.h"
 #include "gui/views/region_labels.h"
-#include "gui/views/region_progress_panel.h"
 #include "gui/views/select_all_line_edit.h"
 #include "gui/views/splitter_style.h"
 #include "gui/views/table_cell.h"
@@ -64,6 +66,16 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService&
     search_->setPlaceholderText(tr("Search Pokémon or region…"));
     search_->setClearButtonEnabled(true);
 
+    // How far the collection has come — a page of this section, opened from beside the
+    // search box, rather than a sidebar section of its own: the figures count the very
+    // species this list shows, and each of its region rows narrows this search box.
+    auto* progressButton = new QPushButton(tr("Gotta Catch 'Em All!"), this);
+    progressButton->setToolTip(tr("See how much of the Pokédex you've captured, overall "
+                                  "and region by region."));
+    progressButton->setAutoDefault(false);  // never the window's default button (back_button.h)
+    progressButton->setDefault(false);
+    connect(progressButton, &QPushButton::clicked, this, &PokemonListView::openCaptureProgress);
+
     // A read-only four-column table: dex number, name, region, owned count. Whole-
     // row selection, no editing; the name column takes the slack.
     table_ = new QTableWidget(this);
@@ -91,13 +103,6 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService&
 
     countLabel_ = new QLabel(this);
     countLabel_->setEnabled(false);  // muted: a status detail, not an action
-
-    // How far the collection has come, overall and per region — the collection-level
-    // counterpart to countLabel_, which describes only what the table is showing. Built
-    // before the ctor's closing refresh(), which fills it.
-    statsPanel_ = new RegionProgressPanel(this);
-    connect(statsPanel_, &RegionProgressPanel::regionActivated, this,
-            &PokemonListView::onRegionActivated);
 
     // Copy mode is on here too (a CardImageStore is passed): a selected species that
     // owns copies shows one, so the double-click shortcut can offer to edit it. The
@@ -153,13 +158,21 @@ PokemonListView::PokemonListView(PokemonBrowseService& service, WishlistService&
     });
     table_->viewport()->installEventFilter(this);
 
-    // The list (progress + search + table + count) on the left, the detail panel on
-    // the right, in a draggable horizontal split. The list takes the slack.
+    // The list (search + table + count) on the left, the detail panel on the right, in
+    // a draggable horizontal split. The list takes the slack. The capture-progress
+    // figures used to sit above the search box; nine region rows cost more vertical
+    // space than this list can spare, so they became a page behind the button now
+    // sitting at the right end of that same search row (CaptureProgressView), which
+    // still narrows this list by writing into search_.
+    auto* searchRow = new QHBoxLayout;
+    searchRow->setContentsMargins(0, 0, 0, 0);
+    searchRow->addWidget(search_, 1);  // the box takes the slack; the button keeps its width
+    searchRow->addWidget(progressButton);
+
     auto* listPane = new QWidget(this);
     auto* listLayout = new QVBoxLayout(listPane);
     listLayout->setContentsMargins(16, 12, 16, 12);  // don't hug the section edges
-    listLayout->addWidget(statsPanel_);
-    listLayout->addWidget(search_);
+    listLayout->addLayout(searchRow);
     listLayout->addWidget(table_);
     listLayout->addWidget(countLabel_);
 
@@ -309,28 +322,37 @@ void PokemonListView::applyFilter() {
         detail_->clear();
         shownDex_ = -1;
     }
-    // Highlight the region the list is narrowed to (if any) — re-derived from the search
-    // box on every filter, so a hand-typed or ✕-cleared search moves the highlight too.
-    statsPanel_->setActiveRegion(activeSearchRegion());
 }
 
-std::optional<Region> PokemonListView::activeSearchRegion() const {
-    // Read the box EXACTLY as applyFilter does — untrimmed. Trimming here would make
-    // "Kanto " (a trailing space is easy to paste) bold the Kanto row and read "Stop
-    // showing only Kanto" while the filter, matching the raw text, showed no rows at all.
-    const QString text = search_->text();
-    for (const Region region : kRegions) {
-        if (text.compare(regionLabel(region), Qt::CaseInsensitive) == 0) {
-            return region;
-        }
-    }
-    return std::nullopt;
+void PokemonListView::openCaptureProgress() {
+    auto* page = new CaptureProgressView(service_, cardCopies_);
+    // A region row: close the page first, THEN narrow — showRegion focuses the search
+    // box, which must be the visible widget by the time it does.
+    connect(page, &CaptureProgressView::regionActivated, this, [this, page](Region region) {
+        closeInnerPage(page);
+        showRegion(region);
+    });
+    connect(page, &CaptureProgressView::backRequested, this,
+            [this, page]() { closeInnerPage(page); });
+    stack_->addWidget(page);
+    stack_->setCurrentWidget(page);
 }
 
-void PokemonListView::onRegionActivated(Region region) {
-    // setText fires textChanged → applyFilter() → setActiveRegion, so the table, the
-    // count label and the highlight all follow from this one write.
-    search_->setText(activeSearchRegion() == region ? QString() : regionLabel(region));
+void PokemonListView::closeInnerPage(QWidget* page) {
+    stack_->setCurrentIndex(0);
+    stack_->removeWidget(page);
+    page->deleteLater();
+}
+
+void PokemonListView::showRegion(Region region) {
+    // setText fires textChanged → applyFilter(), so the table and the count label both
+    // follow from this one write.
+    search_->setText(regionLabel(region));
+    // Selecting the text makes the narrowing easy to undo: the box is focused with its
+    // contents highlighted, so typing a species name replaces the region outright
+    // (SelectAllLineEdit's own click behaviour).
+    search_->setFocus();
+    search_->selectAll();
 }
 
 void PokemonListView::showRow(int row) {
@@ -386,11 +408,8 @@ void PokemonListView::pushAddPage(int dexNumber, const QString& name,
     }
     // A newly added copy changes the Owned column; refresh so it's current.
     connect(page, &AddCardCopyPage::copyAdded, this, &PokemonListView::refresh);
-    connect(page, &AddCardCopyPage::backRequested, this, [this, page]() {
-        stack_->setCurrentIndex(0);
-        stack_->removeWidget(page);
-        page->deleteLater();
-    });
+    connect(page, &AddCardCopyPage::backRequested, this,
+            [this, page]() { closeInnerPage(page); });
     stack_->addWidget(page);
     stack_->setCurrentWidget(page);
 }
@@ -439,9 +458,7 @@ void PokemonListView::openWishlist(int dexNumber, const QString& name) {
     const QString copyId = detail_->shownCopyId();
     connect(page, &WishlistEditPage::backRequested, this,
             [this, page, dexNumber, name, copyId]() {
-                stack_->setCurrentIndex(0);
-                stack_->removeWidget(page);
-                page->deleteLater();
+                closeInnerPage(page);
                 showSpeciesInPanel(dexNumber, name, copyId);
             });
     stack_->addWidget(page);
@@ -483,16 +500,6 @@ void PokemonListView::refresh() {
         counts.emplace(dex, static_cast<int>(copies.size()));
     }
     entries_ = service_.listAll(counts);
-    // Absolute, whole-collection stats — computed from entries_ (the full catalog) and
-    // updated HERE rather than in applyFilter(), which runs per keystroke and is the one
-    // place filtered_ is in scope: the figures must never become filter-scoped, since
-    // countLabel_ is what describes the filtered view.
-    statsPanel_->setProgress(regionProgress(entries_));
-    // A failed FIRST read falls through to here and renders the catalog with zero counts
-    // — quiet as a column of em-dashes, but a confident lie as "Captured 0 of 1025". Say
-    // nothing instead; loadOwnedCopies held the -1 sentinel, so the next showEvent retries
-    // and the panel comes back.
-    statsPanel_->setVisible(read);
     applyFilter();
 }
 
