@@ -208,8 +208,8 @@ private:
     // Why a host's searchFor() query selected no set (named none, or several). Shown
     // until the user picks one — INCLUDING while another set is still selected and
     // listed, which is exactly when the prefill's failure would otherwise be invisible
-    // (a "reuse last card's set" whose set name is ambiguous leaves the previous set's
-    // printings on screen, and nothing would say the reuse didn't take).
+    // (a "search the last card's set" whose set name is ambiguous leaves the previous
+    // set's printings on screen, and nothing would say the search didn't take).
     QString prefillNote_;
     QHash<QString, QListWidgetItem*> itemById_;  // card id → row, for late-arriving thumbnails
 

@@ -37,8 +37,20 @@
 
 namespace pokedex {
 
-// Set once per successful add, read by the next page's "Same set as last…" button.
+// Set once per successful add, read by the next page's two booster shortcuts — the
+// "Reuse comments from …" and "Search set …" buttons.
 AddCardCopyPage::LastAdded AddCardCopyPage::lastAdded_;
+
+namespace {
+
+// How the last add's set is named, for both the "Search set …" button's label and the
+// query it runs — so the button can never search something other than what it says.
+// Prefers the set name (how the finder resolves a set), falling back to its code.
+QString lastSetQuery(const std::string& setName, const std::string& expansionCode) {
+    return QString::fromStdString(!setName.empty() ? setName : expansionCode);
+}
+
+}  // namespace
 
 AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& copies,
                                  CardPriceLookupService& priceLookup, BinderService& binders,
@@ -76,11 +88,12 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
     form_->setupBinderPicker(binders.list(), lockedBinder_, /*enabled=*/!lockedBinder_);
     // Pre-select the user's default card language (Settings) on a fresh add, read live
     // from the config file so a change takes effect on the next add with no restart. A
-    // reuse-last carry-over or a manual pick still overrides it. Read here (the page is
-    // built fresh per open) rather than threaded through every host.
+    // manual pick still overrides it (nothing else writes the language). Read here (the
+    // page is built fresh per open) rather than threaded through every host.
     if (const std::optional<std::string> defaultLang =
             readConfigValue(kDefaultLanguageConfigKey)) {
         form_->setLanguage(*defaultLang);
+        seededLanguage_ = *defaultLang;  // isDirty() must not read our own pre-select as input
     }
     // A user edit that no longer matches the picked card drops the preview; the
     // required collector number gates submit.
@@ -101,21 +114,58 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
     connect(uploadButton_, &QPushButton::clicked, this, &AddCardCopyPage::uploadPhoto);
     form_->addAction(uploadButton_);
 
-    // Prefill from the last copy added this session — the common case of entering
-    // several cards from one booster, which share a set and often a note/language.
-    // Naming the last card makes the button self-explanatory. Disabled until there is a
-    // last add to reuse (the static memory survives this page being disposed on Back).
-    const QString reuseLabel =
-        lastAdded_.has && !lastAdded_.displayName.isEmpty()
-            ? tr("Reuse last info from “%1”").arg(lastAdded_.displayName)
-            : tr("Reuse last card’s info");
-    reuseButton_ = new QPushButton(reuseLabel, this);
-    reuseButton_->setToolTip(
-        tr("Search this card's set and carry over the comments, language, and condition "
-           "from the last card you added — handy when entering a whole booster."));
-    reuseButton_->setEnabled(lastAdded_.has);
-    connect(reuseButton_, &QPushButton::clicked, this, &AddCardCopyPage::reuseLastFields);
-    form_->addAction(reuseButton_);
+    // Two narrow shortcuts off the last copy added this session — the common case of
+    // entering several cards from one booster, which share a note and a set. Each does
+    // exactly what its label says and nothing more; neither rewrites the printed
+    // identity behind the user's back. Disabled until there is something to reuse (the
+    // static memory survives this page being disposed on Back).
+    //
+    // The labels are SHORT and static, with the last card/set named in the tooltip
+    // instead: the form's action row is one non-wrapping QHBoxLayout inside a pane
+    // capped at 560px, so interpolating a card name and a full set name into two of its
+    // four buttons overflows it and clips the trailing button — unclickable in exactly
+    // the same-booster flow it exists for. Any further action here has the same budget.
+    reuseCommentsButton_ = new QPushButton(tr("Reuse comments"), this);
+    // An empty comment is nothing to carry over, so don't offer the click — and say why,
+    // rather than leaving a greyed button unexplained.
+    const bool canReuseComments = lastAdded_.has && !lastAdded_.comments.empty();
+    reuseCommentsButton_->setEnabled(canReuseComments);
+    reuseCommentsButton_->setToolTip(
+        canReuseComments
+            ? tr("Put the comments from the last card you added (“%1”) into this copy's "
+                 "comments box, replacing whatever is there — handy when entering a whole "
+                 "booster. Undo brings back what you had.")
+                  .arg(lastAdded_.displayName)
+            : (lastAdded_.has
+                   ? tr("The last card you added (“%1”) had no comments to reuse.")
+                         .arg(lastAdded_.displayName)
+                   : tr("Available once you have added a card this session — it reuses "
+                        "that card's comments.")));
+    connect(reuseCommentsButton_, &QPushButton::clicked, this,
+            &AddCardCopyPage::reuseLastComments);
+    form_->addAction(reuseCommentsButton_);
+
+    // Only in species mode: the name-search finder takes a card name, so pointing it at
+    // a set would search nonsense — there the button simply doesn't exist.
+    if (dexNumber_) {
+        const QString setQuery = lastSetQuery(lastAdded_.setName, lastAdded_.expansionCode);
+        const bool canSearchLastSet = lastAdded_.has && !setQuery.isEmpty();
+        searchLastSetButton_ = new QPushButton(tr("Search last set"), this);
+        searchLastSetButton_->setEnabled(canSearchLastSet);
+        searchLastSetButton_->setToolTip(
+            canSearchLastSet
+                ? tr("List the printings of “%1” — the last card's set — in the search on "
+                     "the right. Nothing is filled in until you pick a card from the "
+                     "results.")
+                      .arg(setQuery)
+                : (lastAdded_.has
+                       ? tr("The last card you added recorded no set to search.")
+                       : tr("Available once you have added a card this session — it "
+                            "searches that card's set.")));
+        connect(searchLastSetButton_, &QPushButton::clicked, this,
+                &AddCardCopyPage::searchLastSet);
+        form_->addAction(searchLastSetButton_);
+    }
 
     // --- Finder (right): the shared search + preview widget ----------------
     // Scoped: search the species' printings by set. Species-free: search by card name
@@ -231,47 +281,27 @@ void AddCardCopyPage::prefillFormFields(const QString& cardName, const QString& 
     updateSubmitEnabled();  // the pasted collector number may already satisfy submit
 }
 
-void AddCardCopyPage::reuseLastFields() {
+void AddCardCopyPage::reuseLastComments() {
     if (!lastAdded_.has) {
         return;  // button is disabled in this case, but guard anyway
     }
-    // Carry over only the booster-shared bits the card search itself cannot supply: the
-    // comment (into an EMPTY box only — never clobber a note already typed, nor blank it
-    // when the last add had none), the language, and the condition.
-    if (form_->comments().empty()) {
-        form_->setComments(lastAdded_.comments);
-    }
-    form_->setLanguage(lastAdded_.language);
-    form_->setCondition(lastAdded_.condition);
+    // The comment is the one thing a booster's cards share that neither the card search
+    // nor Settings can supply, so it is all this button carries. It OVERWRITES the box:
+    // the click is an explicit gesture, so it should always take effect (nothing here
+    // touches the printed identity or gates submit). replaceComments, not setComments,
+    // so a mis-click on a typed note is recoverable with Undo.
+    form_->replaceComments(lastAdded_.comments);
+}
 
-    // Reset the per-card printed identity to just the reused set: this is a NEW card from
-    // the same set, so its name/collector number are entered fresh. Writing the set onto
-    // the FORM (not only the finder search) matters two ways: (a) the set is never lost —
-    // if the finder search flakes or lists nothing and the user completes the card by
-    // hand, the set still saves, and pricing can resolve from it; (b) clearing the old
-    // name/collector means a previously picked card can't be saved by mistake (submit
-    // re-gates on the now-empty collector number). setCardReference is silent.
-    CardReference ref;
-    ref.expansionCode = lastAdded_.expansionCode;
-    ref.setName = lastAdded_.setName;
-    form_->setCardReference(ref);
-
-    // In species mode also drive the finder search from the set, so the card search does
-    // its natural job on top of the baseline above: list that set's printings and, once
-    // the user picks the card, autofill the full identity (name, collector number,
-    // rarity, image). Prefer the set name (how the finder's completer searches), falling
-    // back to the expansion code.
-    const QString setQuery = !lastAdded_.setName.empty()
-                                 ? QString::fromStdString(lastAdded_.setName)
-                                 : QString::fromStdString(lastAdded_.expansionCode);
-    if (dexNumber_ && !setQuery.isEmpty()) {
-        finder_->searchFor(setQuery);
+void AddCardCopyPage::searchLastSet() {
+    // Search only — this writes nothing to the form. The user still picks a printing
+    // from the results to decide what autofills (a programmatic searchFor deliberately
+    // doesn't emit setChosen, so even the set fields stay untouched until then).
+    const QString setQuery = lastSetQuery(lastAdded_.setName, lastAdded_.expansionCode);
+    if (!lastAdded_.has || setQuery.isEmpty()) {
+        return;  // button is disabled in these cases, but guard anyway
     }
-    // Drop any finder pick that no longer matches the reset form (covers name mode and
-    // the no-set case, where no fresh search ran to clear it; a driven search clears it
-    // on its own via onPrintingsReady).
-    checkUnmatch();
-    updateSubmitEnabled();
+    finder_->searchFor(setQuery);
 }
 
 void AddCardCopyPage::checkUnmatch() {
@@ -342,13 +372,16 @@ bool AddCardCopyPage::eventFilter(QObject* watched, QEvent* event) {
 
 bool AddCardCopyPage::isDirty() const {
     // "Dirty" = the user has entered something that would be lost. Every field starts
-    // pristine (empty identity, unspecified language/condition, Owned, empty comments),
-    // so any departure from that is worth confirming. A picked finder card is covered
-    // by the identity check: it autofills those fields (and checkUnmatch drops the pick
-    // once they're edited away), so it never needs a separate term here.
+    // pristine (empty identity, unspecified condition, Owned, empty comments), so any
+    // departure from that is worth confirming. A picked finder card is covered by the
+    // identity check: it autofills those fields (and checkUnmatch drops the pick once
+    // they're edited away), so it never needs a separate term here.
+    // Language is the exception: the ctor pre-selects the user's Settings default, which
+    // is OUR doing, not theirs — comparing against what we seeded (blank when there is no
+    // default) is what stops Back on an untouched page from always asking to discard.
     const CardReference ref = form_->cardReference();
     if (!ref.name.empty() || !ref.expansionCode.empty() || !ref.setName.empty() ||
-        !ref.collectorNumber.empty() || !ref.language.empty()) {
+        !ref.collectorNumber.empty() || ref.language != seededLanguage_) {
         return true;
     }
     if (!form_->comments().empty() || form_->condition().has_value() ||
@@ -426,17 +459,15 @@ void AddCardCopyPage::submitCopy() {
             cardImages_.fetchAndSave(created.id, url);  // no-ops on a blank url
         }
     }
-    // Remember this copy's set, physical attributes, comments, and a display name so the
-    // next add page (a fresh instance) can prefill in one click — the same-booster flow.
-    // The display name prefers the printed card name, falling back to the species name.
+    // Remember this copy's set, comments, and a display name so the next add page (a
+    // fresh instance) can offer them in one click — the same-booster flow. The display
+    // name prefers the printed card name, falling back to the species name.
     QString reuseName = QString::fromStdString(created.cardRef.name);
     if (reuseName.isEmpty()) {
         reuseName = speciesName_;
     }
-    lastAdded_ = LastAdded{/*has=*/true,        created.cardRef.expansionCode,
-                           created.cardRef.setName, created.cardRef.language,
-                           created.condition,    created.comments,
-                           reuseName};
+    lastAdded_ = LastAdded{/*has=*/true, created.cardRef.expansionCode,
+                           created.cardRef.setName, created.comments, reuseName};
 
     // Kick off a best-effort background price fetch for the new copy, so the user no
     // longer has to press Fetch by hand after every add. The controller does the same

@@ -411,23 +411,38 @@ nothing), the set+collector-number filter ["OBF 125"] is GONE [a species has 1�
 printings inside one set, so the number earned nothing] along with
 `parseSetAndNumberFilter`, re-picking the set already on screen spends no request
 [`shownSetId_`], and `setChosen` is emitted only for a USER pick — never for a set the
-panel selected on a host's behalf. `searchFor(query)` [the scanner / reuse-last prefill
-seam] keeps its signature but now RESOLVES: `resolveSetFilterToIds` locally, selecting
+panel selected on a host's behalf. `searchFor(query)` [the scanner / search-the-last-set
+prefill seam] keeps its signature but now RESOLVES: `resolveSetFilterToIds` locally, selecting
 the dropdown entry and searching once on a single match, saying so and spending nothing
 on none-or-several, and holding the query until `setsReady` when the table hasn't landed
 yet. **Name mode [misc/Trainer cards] is untouched**: still a free-text card-name box,
 typed, 3+ characters, debounced by the service). The
 `AddCardCopyPage` assembles them editable (finder pick autofills the form; submit
-creates a copy). It carries a **"Reuse last info from “<card>”"** button (session-static
-`LastAdded`, labelled with the last add's card/species name) for the same-booster flow:
-it prefills only what the card search can't supply itself — the comment (into an empty box
-only), language, and condition — and writes the last **set** onto the form while, in
-species mode, also **driving the finder search** from it (`CardFinderPanel::searchFor`) so
-the search does its natural job (list the set's printings, autofill the picked card's
-identity/rarity/image). Writing the set to the form as a baseline is deliberate: it's never
-lost if the search flakes/finds nothing (and pricing can still resolve from it), and
-resetting the per-card identity (name/collector) to just the set means a previously picked
-card can't be saved by mistake. The `EditCardCopyPage` assembles them read-only-but-comments (a
+creates a copy). For the same-booster flow it carries **two narrow shortcuts** off the
+session-static `LastAdded` (the last successful add's set, comment, and display name —
+static because each add is a fresh page instance, in-memory only): **"Reuse comments"**
+puts the last add's comment in the box and does NOTHING else — it OVERWRITES what's typed
+(an explicit click should take effect) but through `CardCopyForm::replaceComments`, a
+cursor-based select-all+insert that keeps the edit UNDOABLE, unlike `setComments`, whose
+`setPlainText` clears the undo stack and would put a mis-clicked-over note out of reach;
+it is disabled when the last add had no comment. **"Search last set"** only runs
+`CardFinderPanel::searchFor` on the last set, writing nothing to the form (a programmatic
+`searchFor` deliberately doesn't emit `setChosen`), so the user still picks a printing to
+decide what autofills. It exists only in species mode — the name-search finder takes a
+card *name*, so a set query there would search nonsense (the cost, accepted: a booster of
+Trainer/Energy cards added from My Cards has no set shortcut at all). Both labels are
+SHORT and static with the card/set named in the **tooltip**: `CardCopyForm`'s action row
+is one non-wrapping `QHBoxLayout` inside a pane capped at 560px, and interpolating a card
+name plus a full set name into two of its four buttons overflows it and clips the trailing
+button — budget for that before adding a fifth action or a longer label. Each disabled
+state explains itself in the tooltip (the same idiom as the guide's Insert blank / Move…).
+This REPLACED a single "Reuse last info" button that also carried language + condition and
+rewrote the form's `CardReference` to the last set; one click silently rewriting fields the
+user didn't ask about is exactly what made it unpleasant, so don't re-merge them. Language
+now comes solely from the Settings default (or a manual pick) — and because that
+pre-select is the PAGE's doing rather than the user's, `isDirty()` compares the language
+against the seeded value (`seededLanguage_`) instead of testing it non-empty, which is what
+stops Back on an untouched page from always asking to discard. The `EditCardCopyPage` assembles them read-only-but-comments (a
 copy's first edit surface — edit comments with an explicit "Save comments" via
 `CardCopyService::editDetails`, and change the image by re-searching the catalog
 ["Use this card's image", centered under the preview] or uploading a photo, staying
@@ -473,7 +488,7 @@ a **manually-applied form**: edits are staged in the fields and committed only b
 switch takes effect on the **next launch** (a muted note says so while the workspace field is
 dirty — the note is workspace-only); the **default language** applies **live** — `AddCardCopyPage`
 reads it (`readConfigValue(kDefaultLanguageConfigKey)`) fresh per open and pre-selects it on the
-form for a new copy (reuse-last / a manual pick still override), so a change needs no restart.
+form for a new copy (only a manual pick overrides it), so a change needs no restart.
 The language code list is the shared `gui/views/language_codes.h` (also the config-key constant),
 used by both the card form's Language picker and this screen so they can't drift. Because leaving
 a staged form would silently drop edits, `MainWindow` **guards every section switch** (and the

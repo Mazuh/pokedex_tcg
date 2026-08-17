@@ -81,8 +81,15 @@ public:
     // and the user can still change it.
     void setRarity(std::optional<CardRarity> rarity);
 
-    // Overwrite the comments box (e.g. reusing the last card's note across a booster).
+    // Overwrite the comments box outright, resetting its undo history with it — for
+    // filling a box the user hasn't touched yet (a load, a prefill).
     void setComments(const std::string& comments);
+
+    // Overwrite the comments box as a single UNDOABLE edit, so Ctrl/Cmd+Z brings back
+    // whatever was there. Use this instead of setComments for a host BUTTON that
+    // replaces the note (the add page's "Reuse comments"): the user may have typed a
+    // long note and mis-clicked, and setComments' reset would put it out of reach.
+    void replaceComments(const std::string& comments);
 
     // Pre-fill the language / condition pickers (e.g. reusing the last card's physical
     // attributes across a booster — the card search can't supply these). Silent (uses

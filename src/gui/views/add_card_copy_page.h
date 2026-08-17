@@ -7,7 +7,6 @@
 #include <optional>
 #include <string>
 
-#include "core/domain/card_condition.h"
 #include "core/domain/types.h"
 
 class QEvent;
@@ -128,7 +127,8 @@ private:
     void checkUnmatch();                       // drop the finder selection once the form diverges
     void updateSubmitEnabled();                // enable submit once the form is valid
     void submitCopy();                         // create the copy from the form fields
-    void reuseLastFields();                    // fill set + comments from the last added copy
+    void reuseLastComments();                  // copy the last added copy's comment onto the form
+    void searchLastSet();                      // point the finder at the last added copy's set
     void uploadPhoto();                        // pick a local image → hold it, replace the search
     void removeUploadedPhoto();                // drop the held photo → the finder returns
     void refreshUploadedPreview();             // render the held photo into the preview pane
@@ -144,26 +144,30 @@ private:
     // the (disabled) combo's display state, so it never lands unfiled even if the
     // binder is absent from the combo (e.g. removed after the guide was opened).
     std::optional<CardBinderId> lockedBinder_;
+    // The language the ctor pre-selected from Settings ("" when none was configured).
+    // isDirty() compares against it so our own pre-fill isn't mistaken for user input.
+    std::string seededLanguage_;
 
     CardCopyForm* form_;      // the shared details pane (editable, with a submit action)
     QPushButton* submit_;     // "Add copy" — lives in the form's action row
     QPushButton* uploadButton_;  // "Upload a photo…" — also in the form's action row
-    QPushButton* reuseButton_;   // "Reuse last info from …" — see reuseLastFields()
+    QPushButton* reuseCommentsButton_;  // "Reuse comments from …" — see reuseLastComments()
+    // "Search set …" — see searchLastSet(). Null in name-search mode: that finder
+    // searches by card name, so pointing it at a set name would search nonsense.
+    QPushButton* searchLastSetButton_ = nullptr;
     CardFinderPanel* finder_;  // the shared search field + printings list + preview
 
-    // Session-lived memory of the last successfully added copy, so opening a fresh add
-    // page for the next card from the same booster can prefill in one click (the "Reuse
-    // last info from …" button — see reuseLastFields). We keep the set (to drive the
-    // finder search) plus the physical attributes the card search can't supply
-    // (language, condition) and the note; displayName labels the button. Static because
-    // each add is a brand-new page instance — it must outlive any one page. In-memory
-    // only: never persisted, so it resets when the app is closed.
+    // Session-lived memory of the last successfully added copy, backing the two
+    // one-click shortcuts for entering a whole booster: its comment (reuseLastComments)
+    // and its set (searchLastSet, which only drives the finder's search). Nothing else
+    // is remembered — a click carries over exactly what its button names, never a
+    // silent form rewrite. displayName labels the comments button. Static because each
+    // add is a brand-new page instance — it must outlive any one page. In-memory only:
+    // never persisted, so it resets when the app is closed.
     struct LastAdded {
         bool has = false;
         std::string expansionCode;
         std::string setName;
-        std::string language;
-        std::optional<CardCondition> condition;
         std::string comments;
         QString displayName;  // the last card/species name, for the button label
     };

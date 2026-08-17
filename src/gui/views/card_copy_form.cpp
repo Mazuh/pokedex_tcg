@@ -10,6 +10,7 @@
 #include <QPoint>
 #include <QPushButton>
 #include <QStringList>
+#include <QTextCursor>
 #include <QToolButton>
 #include <QToolTip>
 #include <QVBoxLayout>
@@ -354,6 +355,18 @@ void CardCopyForm::setComments(const std::string& comments) {
     comments_->setPlainText(QString::fromStdString(comments));
 }
 
+void CardCopyForm::replaceComments(const std::string& comments) {
+    // Select-all + insert through a cursor, which QPlainTextEdit records as an ordinary
+    // edit — unlike setPlainText, which CLEARS the undo stack, so a mis-click on the
+    // host's button would put a typed note permanently out of reach. One edit block, so
+    // a single undo restores the whole previous text rather than half of it.
+    QTextCursor cursor = comments_->textCursor();
+    cursor.beginEditBlock();
+    cursor.select(QTextCursor::Document);
+    cursor.insertText(QString::fromStdString(comments));
+    cursor.endEditBlock();
+}
+
 void CardCopyForm::setLanguage(const std::string& language) {
     // Same resolution as loadCopy: blank → the "— None —" entry; a known code selects
     // it; an unknown code is added as a selectable item so it round-trips.
@@ -383,7 +396,7 @@ void CardCopyForm::loadCopy(const CardCopy& copy) {
     collectorNumber_->setText(QString::fromStdString(copy.cardRef.collectorNumber));
     // Delegate the language / condition / rarity resolution to the single setters (as this
     // already does for rarity), so an unknown-code / unmapped-value rule lives in exactly
-    // one place and the edit and reuse paths can't resolve the same value differently.
+    // one place and the edit and prefill paths can't resolve the same value differently.
     setLanguage(copy.cardRef.language);
     setCondition(copy.condition);
     setRarity(copy.rarity);
