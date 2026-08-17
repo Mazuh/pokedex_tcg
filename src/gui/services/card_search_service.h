@@ -42,7 +42,7 @@ class CardSetCache;
 // down. Without a cache (e.g. a bare test construction) it always fetches, as before.
 //
 // The network path is throttled like MediaService — a latest-wins debounce (so
-// typing an expansion-code filter doesn't fire a request per keystroke) plus a
+// typing a card name doesn't fire a request per keystroke) plus a
 // token-bucket backstop shared by searches and thumbnail fetches. Card searches
 // additionally retry with backoff on transient failures (the API 504s under load).
 // Results are stale-guarded by a monotonic generation counter: only the most recent
@@ -57,43 +57,62 @@ public:
     explicit CardSearchService(const CardCatalogApi& api, CardSetCache* cache = nullptr,
                                QObject* parent = nullptr);
 
-    // Search `dexNumber`'s printings, optionally narrowed to the set whose printed
-    // code is `setCodeFilter` (blank = every printing). Debounced; returns a unique
+    // Search `dexNumber`'s printings, narrowed to the set whose catalog id is `setId`
+    // (blank = every printing). The id is EXACT — the caller picked a set from sets(),
+    // so there is nothing here to resolve or guess at, and no request is spent
+    // discovering that a typed filter names nothing. Debounced; returns a unique
     // request id that the eventual printingsReady()/printingsFailed() carries.
     // Because one CardSearchService is shared by every page, the CALLER must ignore
     // replies whose id it did not receive from its own most recent call — otherwise
     // a second live page would consume or strand this page's result.
-    std::uint64_t searchPrintings(int dexNumber, const QString& setCodeFilter);
+    std::uint64_t searchPrintings(int dexNumber, const QString& setId);
 
     // Search by card NAME rather than species — for a card that depicts no Pokémon
     // (a Trainer or Energy card), which has no national dex number to search by.
-    // `nameQuery` is matched as a name prefix; `setCodeFilter` narrows to a set as in
-    // searchPrintings (blank = any set). Same debounce/stale-guard contract: returns a
-    // request id the eventual printingsReady()/printingsFailed() carries (with a
-    // dexNumber of 0, since there is no species). The caller must ignore foreign ids.
-    std::uint64_t searchByName(const QString& nameQuery, const QString& setCodeFilter);
+    // `nameQuery` is matched as a name prefix. Same debounce/stale-guard contract:
+    // returns a request id the eventual printingsReady()/printingsFailed() carries
+    // (with a dexNumber of 0, since there is no species). The caller must ignore
+    // foreign ids.
+    std::uint64_t searchByName(const QString& nameQuery);
 
     // Fetch one card image into memory (never to disk) and emit thumbnailReady().
     // A blank url or a failed/invalid fetch simply yields no signal (the row keeps
     // its placeholder). Concurrent requests for the same cardId are de-duplicated.
     void fetchThumbnail(const QString& cardId, const QString& imageUrl);
 
-    // The in-memory set table, once loaded — backs the expansion-code picker. Empty
-    // until the first search populates it; setsReady() fires when it arrives.
+    // The in-memory set table, once loaded — backs the set picker and every search's
+    // narrowing. Empty until the load finishes; setsReady() fires when it arrives.
     const std::vector<CardSetInfo>& sets() const { return sets_; }
+
+    // Whether a set-table load is in flight right now. With an empty sets(), this is
+    // what tells "still loading" apart from "we tried and have nothing" — a view opened
+    // long after a failed startup load must render the second, not wait forever on the
+    // first. (setsReady/setsUnavailable then report the transition.)
+    bool setsLoading() const { return setsLoading_; }
+
+    // Re-attempt the set-table load at the user's explicit request (the finder's Retry).
+    // Deliberately ignores the "stop re-fetching for the session" latch a degraded 200
+    // sets, exactly as the manual price Refresh ignores its TTL: a button press means
+    // "go look now". A no-op while a load is already in flight.
+    void reloadSets();
 
 Q_SIGNALS:
     void printingsReady(std::uint64_t requestId, int dexNumber,
                         const std::vector<CardCandidate>& cards);
     void printingsFailed(std::uint64_t requestId, int dexNumber);
     void setsReady();
+    // A set-table load finished with nothing to show for it — no network answer and no
+    // cache to fall back on. Held apart from setsReady() because a view that offers the
+    // sets as a CHOICE has nothing to offer in this state and must say why (the catalog
+    // may be down), rather than looking like an empty catalog.
+    void setsUnavailable();
     void thumbnailReady(const QString& cardId, const QPixmap& pixmap);
 
 private:
     struct PendingSearch {
         int dexNumber;          // 0 == a by-name search (nameQuery is then set)
         QString nameQuery;      // the card-name query, when dexNumber == 0
-        QString setCodeFilter;
+        QString setId;          // exact catalog set id to narrow to; blank = every set
         std::uint64_t generation;
     };
 

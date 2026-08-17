@@ -1,6 +1,7 @@
 #include "gui/views/card_finder_panel.h"
 
 #include <QAbstractItemView>
+#include <QComboBox>
 #include <QCompleter>
 #include <QEvent>
 #include <QFontMetrics>
@@ -11,6 +12,7 @@
 #include <QListWidget>
 #include <QPushButton>
 #include <QScrollBar>
+#include <QSignalBlocker>
 #include <QSize>
 #include <QSplitter>
 #include <QStringList>
@@ -18,8 +20,10 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <string>
 #include <utility>
 
+#include "core/app/card_catalog_parse.h"
 #include "gui/services/card_search_service.h"
 #include "gui/views/price_labels.h"
 #include "gui/views/scaled_pixmap.h"
@@ -42,10 +46,9 @@ constexpr int kPrefetchMargin = 64;
 constexpr int kThumbW = 48;
 constexpr int kThumbH = 66;
 
-// The completer entry for a set: "CODE — Name", or just "Name" for a code-less
-// set. Built when populating the completer and reverse-matched when a set is
-// picked, so it must be formatted in exactly one place — a divergence between the
-// two would leave picked entries matching no set (silently doing nothing).
+// The dropdown entry for a set: "CODE — Name", or just "Name" for a code-less set.
+// The entry carries the set's id as its data, so nothing is ever matched back by
+// this label — it is display only.
 QString setEntryLabel(const CardSetInfo& s) {
     const QString name = QString::fromStdString(s.name);
     const QString code = QString::fromStdString(s.ptcgoCode);
@@ -61,6 +64,17 @@ bool sameCandidateIds(const std::vector<CardCandidate>& a, const std::vector<Car
     return a.size() == b.size() &&
            std::equal(a.begin(), a.end(), b.begin(),
                       [](const CardCandidate& x, const CardCandidate& y) { return x.id == y.id; });
+}
+
+// The set carrying `id`, or nullptr when the table doesn't list it.
+const CardSetInfo* findSetById(const std::vector<CardSetInfo>& sets, const QString& id) {
+    const std::string wanted = id.toStdString();
+    for (const CardSetInfo& s : sets) {
+        if (s.id == wanted) {
+            return &s;
+        }
+    }
+    return nullptr;
 }
 
 }  // namespace
@@ -81,28 +95,58 @@ CardFinderPanel::CardFinderPanel(CardSearchService& search, NameSearchMode,
 }
 
 void CardFinderPanel::init(const QString& initialQuery) {
-    // --- Search field + results list (left) --------------------------------
+    // --- Set picker / name field + results list (left) ----------------------
     auto* listPane = new QWidget(this);
-    searchField_ = new SelectAllLineEdit(listPane);
-    // The species-mode set filter also accepts a trailing collector number ("OBF 125",
-    // "151 25") to pin down the exact printing (parseSetAndNumberFilter splits it out in
-    // CardSearchService). Name mode's field is the card name itself, so no number there.
-    searchField_->setPlaceholderText(nameMode_ ? tr("Find a card by name…")
-                                               : tr("Find by set — and number, e.g. “OBF 125”"));
-    searchField_->setClearButtonEnabled(true);
-    connect(searchField_, &QLineEdit::textEdited, this, &CardFinderPanel::onSearchTextChanged);
+    QWidget* input = nullptr;
+    if (nameMode_) {
+        searchField_ = new SelectAllLineEdit(listPane);
+        searchField_->setPlaceholderText(tr("Find a card by name…"));
+        searchField_->setClearButtonEnabled(true);
+        connect(searchField_, &QLineEdit::textEdited, this,
+                &CardFinderPanel::onSearchTextChanged);
+        input = searchField_;
+    } else {
+        // A searchable dropdown, not a text box: type to filter the catalog's sets
+        // locally, and only CHOOSING one searches (see the class docstring). Same
+        // editable-combo idiom as the wishlist's species picker — NoInsert, so typing
+        // can never invent an entry — with the finder's own contains-match completer,
+        // since a set is as often recalled by a word in its name as by its code.
+        setCombo_ = new QComboBox(listPane);
+        setCombo_->setEditable(true);
+        setCombo_->setInsertPolicy(QComboBox::NoInsert);
+        setCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+        setCombo_->setMinimumContentsLength(24);
+        setCombo_->lineEdit()->setPlaceholderText(tr("Pick a set…"));
+        if (QCompleter* completer = setCombo_->completer()) {
+            completer->setCompletionMode(QCompleter::PopupCompletion);
+            completer->setCaseSensitivity(Qt::CaseInsensitive);
+            completer->setFilterMode(Qt::MatchContains);
+        }
+        connect(setCombo_, &QComboBox::activated, this, [this](int index) {
+            if (index >= 0) {
+                chooseSet(setCombo_->itemData(index).toString(), /*emitChosen=*/true);
+            }
+        });
+        input = setCombo_;
+    }
 
     status_ = new QLabel(listPane);
     status_->setEnabled(false);  // muted status/hint text
     status_->setWordWrap(true);
 
-    // Shown only while the last search FAILED — the one state the user can act on, and
-    // the reason failure is worth telling apart from an empty result: re-running the
-    // exact same query is very often all it takes (the catalog 500s intermittently).
+    // Shown only in the two states the user can act on — and the reason each is worth
+    // telling apart from an empty result: re-running the exact same query is very often
+    // all it takes (the catalog 500s intermittently), and a missing set table leaves
+    // nothing to pick from at all.
     retryButton_ = new QPushButton(tr("Retry"), listPane);
     retryButton_->hide();
     connect(retryButton_, &QPushButton::clicked, this, [this]() {
-        if (lastQuery_.trimmed().size() >= 3) {
+        if (setTableMissing()) {
+            search_.reloadSets();  // nothing to search until there are sets to choose
+            updateStatus();        // ...which is now loading
+            return;
+        }
+        if (!lastQuery_.isEmpty()) {
             searchWith(lastQuery_);
         }
     });
@@ -127,6 +171,15 @@ void CardFinderPanel::init(const QString& initialQuery) {
         }
     });
     printings_->viewport()->installEventFilter(this);
+    if (setCombo_ != nullptr) {
+        // Installed here, not beside the combo above: eventFilter reads printings_ on
+        // every event it sees, so nothing may be filtered before that exists.
+        // Watching the COMBO rather than its line edit is load-bearing — QComboBox makes
+        // itself the line edit's focus proxy and hands the focus-out on with a direct
+        // lineEdit->event() call, which bypasses the filter chain entirely, so a filter
+        // on the line edit never sees one.
+        setCombo_->installEventFilter(this);  // tidy up abandoned typing
+    }
 
     // Status text and its Retry action share one row, the button trailing so the wrapped
     // status text keeps the left edge it has in every other state.
@@ -137,7 +190,7 @@ void CardFinderPanel::init(const QString& initialQuery) {
 
     auto* listLayout = new QVBoxLayout(listPane);
     listLayout->setContentsMargins(0, 0, 0, 0);
-    listLayout->addWidget(searchField_);
+    listLayout->addWidget(input);
     listLayout->addLayout(statusRow);
     listLayout->addWidget(printings_);
 
@@ -179,12 +232,16 @@ void CardFinderPanel::init(const QString& initialQuery) {
     connect(&search_, &CardSearchService::thumbnailReady, this,
             &CardFinderPanel::onThumbnailReady);
     connect(&search_, &CardSearchService::setsReady, this, &CardFinderPanel::onSetsReady);
+    // A set-table load that ended with nothing changes only what the status says — but
+    // it must say it, or the dropdown sits empty with no explanation.
+    connect(&search_, &CardSearchService::setsUnavailable, this,
+            &CardFinderPanel::updateStatus);
     if (!nameMode_) {
-        rebuildSetCompleter();  // the set table is warmed at startup, so usually ready
+        rebuildSetCombo();  // the set table is warmed at startup, so usually ready
     }
 
     // Nothing is fetched on open — a species can have hundreds of printings. The
-    // user searches by set first (see onSearchTextChanged).
+    // user picks a set first (species mode) or types a card name (name mode).
     clearPreview();
     // In name mode a host may seed the field (e.g. the card's stored name) so its
     // printings appear without the user retyping. setText() does not fire textEdited,
@@ -203,27 +260,37 @@ bool CardFinderPanel::eventFilter(QObject* watched, QEvent* event) {
         } else if (watched == preview_) {
             renderPreview();
         }
+    } else if (event->type() == QEvent::FocusOut && watched == setCombo_) {
+        // Typing into the dropdown only filters it, so text left behind without a pick
+        // ("cri") names nothing and would read as a selection that isn't there. Put the
+        // selected set's label back — or clear it when nothing is selected. Skipped while
+        // the completer popup is up, since choosing from it is what takes the focus.
+        const QCompleter* completer = setCombo_->completer();
+        const bool choosing =
+            completer != nullptr && completer->popup() != nullptr && completer->popup()->isVisible();
+        if (!choosing) {
+            const int index = setCombo_->currentIndex();
+            setCombo_->lineEdit()->setText(index >= 0 ? setCombo_->itemText(index) : QString());
+        }
     }
     return QWidget::eventFilter(watched, event);
 }
 
 void CardFinderPanel::onSearchTextChanged(const QString& text) {
+    // NAME MODE only — species mode searches from the dropdown, never from typing.
     if (text.trimmed().size() < 3) {
         clearResults();  // too short to search
         updateStatus();  // falls back to the "type 3+ chars" hint
         return;
     }
-    // Hand the raw filter to the service — it is the single authority on resolving a
-    // code/name to sets, waiting for the set table, and returning empty when nothing
-    // matches (so we don't duplicate that logic here, and a not-yet-loaded set table
-    // no longer dead-ends the finder). The service debounces the request.
-    searchWith(text);
+    searchWith(text);  // the service debounces the request
 }
 
 void CardFinderPanel::clearResults() {
     pendingRequestId_ = 0;  // ignore any in-flight reply for a now-abandoned query
     loading_ = false;
     failed_ = false;  // the failed query is abandoned; there is nothing left to retry
+    shownSetId_.clear();
     candidates_.clear();
     loadedCount_ = 0;
     itemById_.clear();
@@ -395,11 +462,81 @@ void CardFinderPanel::clearPreview() {
 void CardFinderPanel::clearSelection() { clearPreview(); }
 
 void CardFinderPanel::searchFor(const QString& query) {
-    // Mirror what a user keystroke would do: put the text in the field, then run the
-    // same gate onSearchTextChanged applies (3+ chars → search, else clear + hint).
-    searchField_->setText(query);
-    onSearchTextChanged(query);
+    if (nameMode_) {
+        // Mirror what a user keystroke would do: put the text in the field, then run
+        // the same gate onSearchTextChanged applies (3+ chars → search, else hint).
+        searchField_->setText(query);
+        onSearchTextChanged(query);
+        return;
+    }
+    const QString wanted = query.trimmed();
+    prefillNote_.clear();
+    if (wanted.isEmpty()) {
+        updateStatus();
+        return;
+    }
+    if (search_.sets().empty()) {
+        // Nothing to resolve against yet (a cold cache, or a load still in flight).
+        // Hold the query rather than dropping it; onSetsReady() finishes the job.
+        pendingSetQuery_ = query;
+        updateStatus();
+        return;
+    }
+    pendingSetQuery_.clear();
+    // The host handed us a set CODE or NAME (a scanner reading, the last card's set), so
+    // this is the one place a fuzzy filter still has to be resolved — and it is resolved
+    // locally against the table, spending no request either way.
+    const std::vector<std::string> ids = resolveSetFilterToIds(wanted.toStdString(),
+                                                               search_.sets());
+    if (ids.size() != 1) {
+        // Never guess: narrowing to the wrong set would autofill the wrong printing.
+        prefillNote_ = ids.empty()
+                           ? tr("Couldn’t match “%1” to a set — pick it from the list.").arg(wanted)
+                           : tr("“%1” matches several sets — pick the right one from the list.")
+                                 .arg(wanted);
+        updateStatus();
+        return;
+    }
+    chooseSet(QString::fromStdString(ids.front()), /*emitChosen=*/false);
 }
+
+void CardFinderPanel::chooseSet(const QString& setId, bool emitChosen) {
+    const CardSetInfo* set = findSetById(search_.sets(), setId);
+    if (set == nullptr) {
+        return;  // an id the table doesn't list; nothing to show and nothing to narrow by
+    }
+    prefillNote_.clear();
+    selectSetEntry(setId);
+    if (emitChosen) {
+        Q_EMIT setChosen(*set);  // a host may autofill its own set fields from the pick
+    }
+    // These printings may already be on screen — re-picking the set the list is showing
+    // is easy to do, and re-fetching it is pure cost: a request against an API that
+    // fails plenty of them, and a failure would clear the list and the user's pick with
+    // it. A failed or still-running search is NOT "already showing", so retrying by
+    // re-picking the set works.
+    if (setId == shownSetId_ && !loading_ && !failed_ && !candidates_.empty()) {
+        updateStatus();
+        return;
+    }
+    searchWith(setId);
+}
+
+bool CardFinderPanel::selectSetEntry(const QString& setId) {
+    if (setCombo_ == nullptr) {
+        return false;
+    }
+    const int index = setCombo_->findData(setId);
+    if (index < 0) {
+        return false;
+    }
+    // Programmatic: setCurrentIndex does not emit activated(), so this can't be mistaken
+    // for a user pick (and can't recurse back into chooseSet).
+    setCombo_->setCurrentIndex(index);
+    return true;
+}
+
+bool CardFinderPanel::setTableMissing() const { return !nameMode_ && search_.sets().empty(); }
 
 void CardFinderPanel::renderPreview() {
     // Called on selection changes and on resize, so it rescales whatever is showing.
@@ -432,90 +569,91 @@ void CardFinderPanel::searchWith(const QString& query) {
     loading_ = true;
     failed_ = false;
     lastQuery_ = query;  // what Retry re-runs, verbatim
+    if (!nameMode_) {
+        shownSetId_ = query;  // species mode: the query IS the set id being listed
+    }
     updateStatus();
-    // In name mode the field text is the card-name query; in species mode it is a
-    // set-code/name filter narrowing the species. The service tags the reply so
-    // onPrintingsReady still matches by request id either way.
-    pendingRequestId_ = nameMode_ ? search_.searchByName(query, QString())
+    // In name mode the field text is the card-name query; in species mode it is the
+    // exact id of the picked set. The service tags the reply so onPrintingsReady still
+    // matches by request id either way.
+    pendingRequestId_ = nameMode_ ? search_.searchByName(query)
                                   : search_.searchPrintings(dexNumber_, query);
 }
 
-void CardFinderPanel::rebuildSetCompleter() {
-    // A "CODE — Name" (or just "Name" for code-less sets) typeahead on the finder's
-    // search field. Picking one narrows the search to that set (and lets a host fill
-    // its own set fields via setChosen).
-    QStringList entries;
+void CardFinderPanel::rebuildSetCombo() {
+    // Fill the dropdown with one "CODE — Name" (or "Name") entry per set, each carrying
+    // its set id as data — the id is what searches, so the label is display only.
+    struct Entry {
+        QString label;
+        QString id;
+    };
+    std::vector<Entry> entries;
+    entries.reserve(search_.sets().size());
     for (const CardSetInfo& s : search_.sets()) {
         if (s.name.empty() && s.ptcgoCode.empty()) {
-            continue;
+            continue;  // nothing to show for it, and nothing the user could recognize
         }
-        entries << setEntryLabel(s);
+        entries.push_back(Entry{setEntryLabel(s), QString::fromStdString(s.id)});
     }
-    entries.removeDuplicates();
-    entries.sort(Qt::CaseInsensitive);
+    std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) {
+        return QString::compare(a.label, b.label, Qt::CaseInsensitive) < 0;
+    });
 
-    auto* completer = new QCompleter(entries, searchField_);
-    completer->setCaseSensitivity(Qt::CaseInsensitive);
-    completer->setFilterMode(Qt::MatchContains);
+    const QString keep = setCombo_->currentIndex() >= 0 ? setCombo_->currentData().toString()
+                                                        : QString();
+    // Repopulating must never read as a user pick: clear() alone would fire activated
+    // in some styles, and setCurrentIndex is silent only for the index, not the model.
+    const QSignalBlocker block(setCombo_);
+    setCombo_->clear();
+    for (const Entry& entry : entries) {
+        setCombo_->addItem(entry.label, entry.id);
+    }
+    setCombo_->setCurrentIndex(-1);
+    setCombo_->lineEdit()->clear();
+    setCombo_->setEnabled(!entries.empty());
+
     // Entries can be long and differ only by a trailing year (McDonald's Collection
     // 2019/2020/…); size the popup to the longest one (capped) and never elide.
-    completer->popup()->setTextElideMode(Qt::ElideNone);
-    const QFontMetrics fm(searchField_->font());
+    const QFontMetrics fm(setCombo_->font());
     int widest = 0;
-    for (const QString& entry : entries) {
-        widest = std::max(widest, fm.horizontalAdvance(entry));
+    for (const Entry& entry : entries) {
+        widest = std::max(widest, fm.horizontalAdvance(entry.label));
     }
-    if (widest > 0) {
-        completer->popup()->setMinimumWidth(std::min(widest + 32, 460));
+    const int popupWidth = widest > 0 ? std::min(widest + 32, 460) : 0;
+    if (popupWidth > 0) {
+        setCombo_->view()->setTextElideMode(Qt::ElideNone);
+        setCombo_->view()->setMinimumWidth(popupWidth);
+        if (QCompleter* completer = setCombo_->completer()) {
+            completer->popup()->setTextElideMode(Qt::ElideNone);
+            completer->popup()->setMinimumWidth(popupWidth);
+        }
     }
-    searchField_->setCompleter(completer);
-    // Connect AFTER setCompleter so this slot runs after QLineEdit's own handler
-    // (which would otherwise leave the decorated "CODE — Name" in the field — a
-    // string that matches no set, so a later edit would wrongly clear the results).
-    connect(completer, qOverload<const QString&>(&QCompleter::activated), this,
-            [this](const QString& picked) {
-                // Map the picked "CODE — Name"/"Name" entry back to its set, tell any
-                // host (setChosen), put the clean set name in the field, and fetch.
-                for (const CardSetInfo& s : search_.sets()) {
-                    if (setEntryLabel(s) == picked) {
-                        Q_EMIT setChosen(s);
-                        const QString name = QString::fromStdString(s.name);
-                        const QString code = QString::fromStdString(s.ptcgoCode);
-                        const QString clean = name.isEmpty() ? code : name;
-                        // What is listed may ALREADY be exactly this set's printings —
-                        // the usual case, since the user typed a filter that resolved
-                        // here ("cri" → CRI) and picked a card from what came back. Then
-                        // re-searching is pure cost: a request against an API that fails
-                        // most of them, and a failure would clear the list and the pick
-                        // with it. Judged from the rows themselves (every one from this
-                        // set), which is the only thing that can be checked here — the
-                        // service, not the panel, resolves a filter to sets.
-                        const bool alreadyThisSet =
-                            !loading_ && !candidates_.empty() &&
-                            std::all_of(candidates_.begin(), candidates_.end(),
-                                        [&s](const CardCandidate& c) { return c.setId == s.id; });
-                        searchField_->setText(clean);  // replace the decorated entry
-                        if (alreadyThisSet) {
-                            lastQuery_ = clean;  // keep Retry aligned with the shown text
-                        } else {
-                            searchWith(clean);
-                        }
-                        return;
-                    }
-                }
-            });
+
+    if (!keep.isEmpty()) {
+        selectSetEntry(keep);  // the table was refilled under a live selection
+    }
 }
 
 void CardFinderPanel::onSetsReady() {
-    if (!nameMode_) {
-        rebuildSetCompleter();  // name mode has no set completer
+    if (nameMode_) {
+        // Re-run the current name search now that the table is available: results carry
+        // expansion codes read from it, so one that landed without it is stale.
+        if (searchField_->text().trimmed().size() >= 3) {
+            onSearchTextChanged(searchField_->text());
+        }
+        return;
     }
-    // Re-run the current search now that the set table is available: the user may
-    // have typed a filter before it loaded (or a failed startup fetch just retried),
-    // in which case the finder was empty and would otherwise stay stale.
-    if (searchField_->text().trimmed().size() >= 3) {
-        onSearchTextChanged(searchField_->text());
+    rebuildSetCombo();
+    if (!pendingSetQuery_.isEmpty()) {
+        // A host's prefill arrived before the table; now it can be resolved. Note this
+        // is the ONLY thing that searches here — an arriving set table must not re-fire
+        // a search the user never asked for.
+        const QString query = pendingSetQuery_;
+        pendingSetQuery_.clear();
+        searchFor(query);
+        return;
     }
+    updateStatus();
 }
 
 void CardFinderPanel::updateStatus() {
@@ -525,30 +663,38 @@ void CardFinderPanel::updateStatus() {
     // the set that we have no basis for, and it sends the user off to hand-fill a form
     // for a card the catalog knows perfectly well.
     // A third thing that is not an empty set: with no set table there is nothing to
-    // narrow by, so EVERY set filter resolves to nothing and the search never even
-    // leaves the app. Only reachable when the set-list fetch failed with no cache to
-    // fall back on (it is warmed at startup and cached across launches).
-    const bool noSetTable = candidates_.empty() && !nameMode_ && search_.sets().empty() &&
-                            searchField_->text().trimmed().size() >= 3;
+    // pick from at all, so the finder can't even be used. Only reachable when the
+    // set-list load failed with no cache to fall back on (it is warmed at startup and
+    // cached across launches), which is why it says the catalog may be down — the one
+    // state here that is about the CATALOG rather than about a card.
+    const bool loadingSets = setTableMissing() && search_.setsLoading();
+    const bool noSetTable = setTableMissing() && !loadingSets;
+    // Species mode: no set picked yet (nothing has been searched, so nothing to say
+    // about results). Name mode keeps its own too-short-to-search gate.
+    const bool awaitingChoice = nameMode_ ? searchField_->text().trimmed().size() < 3
+                                          : setCombo_->currentIndex() < 0;
     retryButton_->setVisible(!loading_ && (failed_ || noSetTable));
-    if (loading_) {
+    if (loadingSets) {
+        status_->setText(tr("Loading the list of sets…"));
+    } else if (noSetTable) {
+        status_->setText(tr("The list of sets couldn’t be loaded, so there is no set to pick "
+                            "here — the card catalog may be having problems. Retry, or fill "
+                            "the form by hand."));
+    } else if (loading_) {
         status_->setText(tr("Searching…"));
     } else if (failed_) {
         status_->setText(tr("The card catalog didn’t answer — the request failed, so this "
                             "is not “nothing found”. It flakes often; retrying usually works."));
-    } else if (searchField_->text().trimmed().size() < 3) {
+    } else if (!prefillNote_.isEmpty()) {
+        // Why a host's prefill picked no set. Ranked above the result lines on purpose:
+        // when a set was already selected, those describe the OLD set, and the note is
+        // the only thing that says the prefill didn't take.
+        status_->setText(prefillNote_);
+    } else if (awaitingChoice) {
         status_->setText(nameMode_
                              ? tr("Find a card by name — type its name (3+ characters).")
-                             : tr("Find %1's cards by set — type a code or name (3+ characters).")
+                             : tr("Find %1's cards — pick the set this card comes from.")
                                    .arg(speciesName_));
-    } else if (noSetTable) {
-        // Deliberately does not promise that Retry re-fetches the list: after a
-        // degraded answer (an empty or malformed 200) the service marks the table
-        // loaded on purpose, so as not to re-fire /v2/sets on every search. Retry is
-        // still offered — it does re-fetch after a plain network failure — but the
-        // message only claims what is always true.
-        status_->setText(tr("The set list couldn’t be loaded, so no set can be looked up "
-                            "right now — this says nothing about what that set holds."));
     } else if (candidates_.empty()) {
         status_->setText(nameMode_
                              ? tr("No cards found by that name — %1").arg(noResultsHint_)

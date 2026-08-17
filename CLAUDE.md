@@ -395,7 +395,28 @@ just selects the combo's "— None —" entry and emits `binderChanged`, reusing
 existing save-binder path rather than adding a second unassign verb, and is enabled only
 while a binder is actually selected) and the reusable `CardFinderPanel` (the set-scoped search + infinite-scroll
 printings list + preview; reports picks via signals, knows nothing of forms/copies,
-and exposes `setPreviewFooter()` for a host action under the picture). The
+and exposes `setPreviewFooter()` for a host action under the picture. **In species
+mode its set input is a searchable DROPDOWN over the catalog's set table, and choosing
+a set is the ONLY thing that searches** — typing merely filters the list, locally, and
+spends nothing. Free text used to fire a search on the third keystroke and then a
+second one when the user clicked the completion they were aiming at [the old
+`alreadyThisSet` guard couldn't suppress it: the first search was still in flight, so
+its "are these rows already this set?" test was false] — two requests against a free
+public API to show one set. It also bought nothing, since a set outside the table
+resolves to nothing and never reaches the wire, so the only sets that ever worked are
+exactly the ones the dropdown lists. Consequences worth keeping straight: the search
+is narrowed by an **exact set id** (`CardSearchService::searchPrintings` takes the id,
+not a filter — no resolution, no wasted request discovering that a typed filter names
+nothing), the set+collector-number filter ["OBF 125"] is GONE [a species has 1–3
+printings inside one set, so the number earned nothing] along with
+`parseSetAndNumberFilter`, re-picking the set already on screen spends no request
+[`shownSetId_`], and `setChosen` is emitted only for a USER pick — never for a set the
+panel selected on a host's behalf. `searchFor(query)` [the scanner / reuse-last prefill
+seam] keeps its signature but now RESOLVES: `resolveSetFilterToIds` locally, selecting
+the dropdown entry and searching once on a single match, saying so and spending nothing
+on none-or-several, and holding the query until `setsReady` when the table hasn't landed
+yet. **Name mode [misc/Trainer cards] is untouched**: still a free-text card-name box,
+typed, 3+ characters, debounced by the service). The
 `AddCardCopyPage` assembles them editable (finder pick autofills the form; submit
 creates a copy). It carries a **"Reuse last info from “<card>”"** button (session-static
 `LastAdded`, labelled with the last add's card/species name) for the same-booster flow:
@@ -571,8 +592,9 @@ species-free one (dex==0), and then, per `copyFieldsToForm`:
 - **"Create by set" / "Create by name"** (`copyFieldsToForm=false`) — seed the catalog **finder
   search** and let the picked printing autofill deterministically (the reliable path when the search
   works). Species → `PokemonListView::openAddCopyBySet` → `AddCardCopyPage::prefillSetSearch` (the
-  set **code**/abbreviation, falling back to the full set name when the code is <3 chars since the
-  finder only auto-searches at 3+); non-Pokémon → `OwnedCardsView::startAddScannedCard(…, false)` →
+  set **code**/abbreviation, falling back to the full set name when the code is <3 chars — kept
+  because `resolveSetFilterToIds` only name-matches at 3+, so a 2-char code that isn't an exact
+  printed code would resolve to nothing); non-Pokémon → `OwnedCardsView::startAddScannedCard(…, false)` →
   `AddCardCopyPage::prefillFrom` (read name into the by-name search, set/number as a form baseline).
 - **"Copy to creation form"** (`copyFieldsToForm=true`) — the **escape hatch for a flaky search**:
   paste the read fields straight onto the form with NO catalog search, for the user to review/save.
@@ -619,7 +641,13 @@ cached to disk**; the lone exception is the small, near-static set table, which 
 `CardSetCache` is injected — is loaded from disk on startup if younger than a 24h TTL
 [skipping the daily-flaky `/v2/sets` fetch entirely on most launches], overwritten after a
 fresh fetch, and loaded *stale* as a fallback when the fetch fails so narrowing survives an
-API outage),
+API outage. Since the finder now offers that table as a CHOICE, its load state is
+observable: `setsLoading()` [an accessor — a view opened long after a failed startup load
+must render "unavailable", not wait forever on "loading"], the `setsUnavailable()` signal
+[a load that ended with nothing: no answer AND no cache, so the finder can say the catalog
+may be down rather than sitting empty], and `reloadSets()` [the finder's Retry — it clears
+the "stop re-fetching this session" latch a degraded 200 sets, exactly as the manual price
+Refresh ignores its TTL: a button press means "go look now"]),
 and `CardImageStore` (the on-disk store for the one image a committed copy keeps,
 `cards/<copyId>.png`; `save`/`fetchAndSave`/`load`, and an `imageChanged(copyId)`
 signal so a view re-reads the file after a deferred download or an override lands).

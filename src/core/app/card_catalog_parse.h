@@ -90,30 +90,11 @@ std::vector<CardSetInfo> parseTcgdexSets(const std::string& json);
 std::optional<std::string> resolveTcgdexCardId(const CardReference& ref,
                                                const std::vector<CardSetInfo>& tcgdexSets);
 
-// A finder filter split into its set part and an optional trailing collector number.
-struct SetNumberFilter {
-    std::string setFilter;  // the set name/code part (may be empty)
-    std::string number;     // the printing, no "/total" (e.g. "125", "TG05"; may be empty)
-};
-
-// Split a finder filter that may carry a trailing collector number — "OBF 125",
-// "obsidian flames 125/197", or a lone "125/197" — into a set filter + a collector number,
-// so a search can pin down one printing. The LAST whitespace token is taken as the number
-// only when it plainly is one: it contains a '/' (a "number/total", unambiguous even alone),
-// OR it looks like a short collector code (letters then 1-3 digits, e.g. "125"/"TG05") AND a
-// set part precedes it. A lone token that is not slash-formed stays the set filter, so a
-// single-word set NAME that is digits ("151") is never mistaken for a number (a 4-digit run is
-// likewise treated as a name). The returned `number` drops any "/total". Either part may be
-// empty; a blank input yields both empty.
-//
-// This is a heuristic and CANNOT tell a multi-word set name ending in a short digit ("POP
-// Series 9", "Base Set 2") from a set + number — it would split those. Disambiguating them
-// needs the set table, so the caller (CardSearchService) tries the WHOLE filter as a set name
-// first and only falls back to this split when the whole string names no set.
-SetNumberFilter parseSetAndNumberFilter(const std::string& typed);
-
-// Resolve a user-typed set filter to the set ids it matches, for reliable
-// set.id-based search narrowing. The filter is read WORD BY WORD (whitespace-
+// Resolve a set filter to the set ids it matches. The finder no longer TYPES a filter —
+// a search is narrowed by an exact set id picked from the dropdown — so this is now the
+// resolver for a filter that arrives from somewhere else: a card scanner's reading, or
+// the set of the last card added. Its callers act only on an unambiguous single match,
+// which is why returning every match still matters. The filter is read WORD BY WORD (whitespace-
 // separated, ignoring any word with no alphanumeric character): a set matches when
 // EVERY word lands on it, each either as its exact printed code (e.g. "OBF") or as a
 // case-insensitive substring of its name (e.g. "mcdonald" → every McDonald's
@@ -124,15 +105,13 @@ SetNumberFilter parseSetAndNumberFilter(const std::string& typed);
 //
 // Matching per word rather than as one substring is deliberately FORGIVING, and is
 // strictly more permissive than a whole-string substring (if the filter is a
-// substring of the name, so is each of its words). It buys three things: the finder's
-// own "CODE — Name" completer entry resolves verbatim (the decoration is in no set's
-// name, so as one substring it matched nothing and silently dead-ended the search);
-// words may be given in any order or with the code first ("cri chaos rising"); and
-// "POP 9" now pins POP Series 9 instead of matching nothing and falling back to all
-// nine. The cost is that a filter whose trailing number is a COLLECTOR number can
-// now be absorbed by a set whose name happens to contain those digits ("mcdonald 25"
-// → the 2025 set, rather than card 25 across every year) — consistent with the
-// caller's documented rule that the whole filter is tried as a set name first.
+// substring of the name, so is each of its words). It buys two things: a "CODE — Name"
+// label resolves verbatim (the decoration is in no set's name, so as one substring it
+// matched nothing at all), and words may be given in any order or with the code first
+// ("cri chaos rising"). Note it reads a trailing number as part of the SET ("POP 9"
+// pins POP Series 9), so a filter carrying a collector number ("OBF 125") matches
+// nothing — the finder narrows by set alone, and a caller passing a scanner's reading
+// should hand over the set part only.
 std::vector<std::string> resolveSetFilterToIds(const std::string& typed,
                                                const std::vector<CardSetInfo>& sets);
 

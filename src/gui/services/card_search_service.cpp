@@ -36,10 +36,6 @@ constexpr double kBurst = 8.0;
 constexpr double kSustainedPerSecond = 5.0;
 // Card-search retry/backoff uses the shared API policy (kApiMaxRetries /
 // kApiBackoffBaseMs in http_status.h) so it can't drift from the price transport.
-// A filter that resolves to more than this many sets isn't a useful narrow and
-// would OR that many set.id clauses into the query URL (risking the API's length
-// limit), so treat it as unnarrowed.
-constexpr std::size_t kMaxNarrowSets = 12;
 
 std::int64_t monotonicNowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -72,25 +68,35 @@ CardSearchService::CardSearchService(const CardCatalogApi& api, CardSetCache* ca
     }
 }
 
-std::uint64_t CardSearchService::searchPrintings(int dexNumber, const QString& setCodeFilter) {
+std::uint64_t CardSearchService::searchPrintings(int dexNumber, const QString& setId) {
     // Mint a unique id for this request; the reply carries it so the caller can tell
     // its own result from another page's (this service is shared app-wide).
     const std::uint64_t requestId = ++generation_;
-    pendingSearch_ = PendingSearch{dexNumber, QString(), setCodeFilter, requestId};
+    pendingSearch_ = PendingSearch{dexNumber, QString(), setId, requestId};
     ensureSetsLoading();  // load the set table once, in parallel with the debounce
     searchDebounce_->start(kDebounceMs);
     return requestId;
 }
 
-std::uint64_t CardSearchService::searchByName(const QString& nameQuery,
-                                              const QString& setCodeFilter) {
+std::uint64_t CardSearchService::searchByName(const QString& nameQuery) {
     // A by-name search is tagged with dexNumber 0 (no species); the rest of the
-    // pipeline — debounce, set-filter resolution, stale-guard — is identical.
+    // pipeline — debounce, stale-guard — is identical. It is never set-narrowed: the
+    // by-name finder searches the whole catalog for a card the user names.
     const std::uint64_t requestId = ++generation_;
-    pendingSearch_ = PendingSearch{0, nameQuery, setCodeFilter, requestId};
+    pendingSearch_ = PendingSearch{0, nameQuery, QString(), requestId};
     ensureSetsLoading();
     searchDebounce_->start(kDebounceMs);
     return requestId;
+}
+
+void CardSearchService::reloadSets() {
+    if (setsLoading_) {
+        return;  // a load is already on its way; the user's press has nothing to add
+    }
+    // Clear the latch a degraded 200 sets (see fetchSets) so this really re-fetches.
+    // Keep whatever table we hold — a stale one still narrows while the retry runs.
+    setsLoaded_ = false;
+    ensureSetsLoading();
 }
 
 void CardSearchService::ensureSetsLoading() {
@@ -170,6 +176,9 @@ void CardSearchService::fetchSets(int retriesLeft) {
                     // (hammering a responsive-but-degraded free API). Narrowing is simply
                     // unavailable this session; the TTL retries next launch.
                     setsLoaded_ = true;
+                    if (sets_.empty()) {
+                        Q_EMIT setsUnavailable();  // nothing fetched, nothing cached
+                    }
                 } else {
                     sets_ = std::move(parsed);
                     setsLoaded_ = true;
@@ -200,6 +209,9 @@ void CardSearchService::fetchSets(int retriesLeft) {
                 // the no-cache case. Narrowing is unavailable this session; the TTL retries
                 // next launch.
                 setsLoaded_ = true;
+                if (sets_.empty()) {
+                    Q_EMIT setsUnavailable();  // unusable body, nothing cached
+                }
             }
         } else if (isTransient(reply) && retriesLeft > 0) {
             const int delay = backoffDelayMs(retriesLeft, kApiMaxRetries, kApiBackoffBaseMs);
@@ -218,6 +230,9 @@ void CardSearchService::fetchSets(int retriesLeft) {
             qWarning().noquote() << "CardSearchService: set list fetch failed —"
                                  << httpStatusNote(reply) << ":" << reply->errorString();
             fallBackToCache();
+            if (sets_.empty()) {
+                Q_EMIT setsUnavailable();  // the API is down and we have no cache
+            }
         }
         // On a terminal outcome (loaded, parse-fail, or exhausted), let any pending
         // search proceed now that the load is no longer in flight.
@@ -232,17 +247,14 @@ void CardSearchService::dispatchSearch() {
         return;
     }
     // Prefer to wait out an in-flight set load so the first results carry correct
-    // expansion codes and honor a typed filter; ensureSetsLoading's completion
-    // re-drives us.
+    // expansion codes (parseCardSearchResponse reads the table); ensureSetsLoading's
+    // completion re-drives us.
     if (!setsLoaded_ && setsLoading_) {
         return;
     }
 
     const PendingSearch req = *pendingSearch_;
 
-    // Resolve the typed set filter (code or name) to set ids, BEFORE spending a rate
-    // token — a filter that matches nothing needs no request. This is the single
-    // authority on narrowing; callers pass a raw filter and read back the results.
     CardSearchQuery query;
     if (req.dexNumber != 0) {
         query.dexNumber = req.dexNumber;  // species search
@@ -250,46 +262,20 @@ void CardSearchService::dispatchSearch() {
         query.nameQuery = req.nameQuery.trimmed().toStdString();  // by-name search
         if (query.nameQuery.empty()) {
             // A blank name has no scope clause — never fall back to fetching the whole
-            // catalog (resolveSearch would build an empty `q=`). Emit no results, as the
-            // empty-set-filter branch below does. (The finder gates on 3+ chars, so this
-            // is defense for the public searchByName seam.)
+            // catalog (resolveSearch would build an empty `q=`). Emit no results instead,
+            // spending no request. (The finder gates on 3+ chars, so this is defense for
+            // the public searchByName seam.)
             pendingSearch_.reset();
             Q_EMIT printingsReady(req.generation, req.dexNumber, {});
             return;
         }
     }
-    // The filter may carry a trailing collector number ("OBF 125", "125/197") — but a set is
-    // sometimes NAMED with a trailing number ("POP Series 9", "Base Set 2"). So try the WHOLE
-    // filter as a set name FIRST; only when it names no set do we peel a collector number off
-    // it. This is why the split lives here, not in the pure parser: it needs the set table to
-    // tell a digit-suffixed set name from a set+number.
-    const std::string typed = req.setCodeFilter.trimmed().toStdString();
-    if (!typed.empty()) {
-        query.setIds = resolveSetFilterToIds(typed, sets_);
-        if (query.setIds.empty()) {
-            // The whole filter names no set — peel off a trailing collector number and resolve
-            // the remaining set part.
-            const SetNumberFilter parsed = parseSetAndNumberFilter(typed);
-            query.number = parsed.number;
-            if (!parsed.setFilter.empty()) {
-                query.setIds = resolveSetFilterToIds(parsed.setFilter, sets_);
-            }
-            // A named set part that still matches nothing — or a filter with neither a set nor
-            // a number (garbage) — yields NO cards (never fall back to the whole species). A
-            // lone number with no set part ("125/197") IS usable: it narrows the species by
-            // number, so it falls through with empty setIds.
-            if ((!parsed.setFilter.empty() && query.setIds.empty()) ||
-                (parsed.setFilter.empty() && query.number.empty())) {
-                pendingSearch_.reset();
-                Q_EMIT printingsReady(req.generation, req.dexNumber, {});
-                return;
-            }
-        }
-        if (query.setIds.size() > kMaxNarrowSets) {
-            // Too broad to send as one query URL; cap it (still narrowed — never the
-            // whole species) so the user sees something and can refine.
-            query.setIds.resize(kMaxNarrowSets);
-        }
+    // Narrowing is a straight EXACT set id now: the caller picked the set out of sets(),
+    // so there is nothing to resolve here and no way for a request to be spent finding
+    // out that a typed filter names nothing. (Blank = search every set.)
+    const std::string setId = req.setId.trimmed().toStdString();
+    if (!setId.empty()) {
+        query.setIds = {setId};
     }
 
     if (!limiter_.tryAcquire(monotonicNowMs())) {

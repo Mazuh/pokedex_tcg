@@ -524,39 +524,6 @@ std::optional<std::string> resolveTcgdexCardId(const CardReference& ref,
     return std::nullopt;
 }
 
-SetNumberFilter parseSetAndNumberFilter(const std::string& typed) {
-    const std::string s = trim(typed);
-    if (s.empty()) {
-        return {};
-    }
-    const auto lastSpace = s.find_last_of(" \t");
-    const std::string lastTok = (lastSpace == std::string::npos) ? s : s.substr(lastSpace + 1);
-    const std::string rest =
-        (lastSpace == std::string::npos) ? std::string() : trim(s.substr(0, lastSpace));
-
-    // A plausible collector-number token: the part before any '/' is alphanumeric with 1-3
-    // digits (a 4+-digit run is a year/large id — a set NAME part, not a collector number).
-    const std::string head = lastTok.substr(0, lastTok.find('/'));
-    int digits = 0;
-    bool alnumOnly = !head.empty();
-    for (const unsigned char c : head) {
-        if (std::isdigit(c) != 0) {
-            ++digits;
-        } else if (std::isalpha(c) == 0) {
-            alnumOnly = false;
-        }
-    }
-    const bool looksLikeNumber = alnumOnly && digits >= 1 && digits <= 3;
-    const bool hasSlash = lastTok.find('/') != std::string::npos;
-
-    // Split the number out only when it's a slash-formed number (unambiguous even alone) or a
-    // number with a set part before it — never a lone bare token (keeps digit-named sets whole).
-    if (looksLikeNumber && (hasSlash || !rest.empty())) {
-        return {.setFilter = rest, .number = head};
-    }
-    return {.setFilter = s, .number = std::string()};
-}
-
 std::vector<std::string> resolveSetFilterToIds(const std::string& typed,
                                                const std::vector<CardSetInfo>& sets) {
     std::vector<std::string> ids;
