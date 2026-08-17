@@ -3,6 +3,8 @@
 #include <QLabel>
 #include <QString>
 
+#include "gui/views/tooltip_text.h"
+
 namespace pokedex {
 
 // GUI — is this wishlist source a clickable link (a marketplace URL) rather than
@@ -32,6 +34,12 @@ inline QLabel* sourceLabel(const QString& source, QWidget* parent = nullptr) {
         label->setTextInteractionFlags(Qt::TextSelectableByMouse);
     }
     label->setWordWrap(true);
+    // The source itself on hover, as a table cell carries its text (see table_cell.h) —
+    // this label IS the wishlist table's Source cell, and a long marketplace URL is the
+    // most likely thing in the app to be cut off by its column. Through tooltipText, since
+    // a source is free text: `safe` would be wrong here, as an escaped "&" in a query
+    // string shows up literally in a tooltip.
+    label->setToolTip(tooltipText(source));
     return label;
 }
 

@@ -95,6 +95,10 @@ private:
     // the last refresh() so Open can recover the full CardBinder (region and all)
     // for the selected row without a second query.
     std::vector<CardBinder> binders_;
+    // The same binders in the service's own load order, kept pristine: binders_ is
+    // sorted in place, so clearing the sort (the third click on a header) needs an
+    // untouched copy to restore from. sortBinders() rebuilds binders_ from this.
+    std::vector<CardBinder> naturalBinders_;
 };
 
 }  // namespace pokedex

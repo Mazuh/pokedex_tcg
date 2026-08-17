@@ -224,6 +224,12 @@ private:
     QPushButton* moveButton_;
     // The guide's rows, strictly 1:1 with the table's rows (see the class docstring).
     std::vector<CardBinderEntry> entries_;
+    // The same rows in the order buildEntries emitted them — the FILED order, kept
+    // pristine because entries_ is sorted in place and a header sort can be cleared at
+    // any time. sortEntries() rebuilds entries_ from this on every repopulate, so the
+    // unsorted state really is the filed order (which is what Page/Pocket, the page
+    // breaks and the Move planner all read) rather than the last sort's leftovers.
+    std::vector<CardBinderEntry> naturalEntries_;
     // Header-driven sort state, re-applied on every refresh so it survives a
     // recompute. -1 = unsorted (keep the guide's natural order); see sortEntries().
     int sortColumn_ = -1;

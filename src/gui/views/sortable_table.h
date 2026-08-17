@@ -1,7 +1,12 @@
 #pragma once
 
 #include <QHeaderView>
+#include <QObject>
+#include <QString>
+#include <QStringList>
 #include <QTableWidget>
+
+#include "gui/views/tooltip_text.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -29,20 +34,55 @@ namespace pokedex {
 // the clicked column and the order, and the view sorts its OWN data (with a typed
 // comparator — numeric dex #, chronological timestamps, condition rank, locale-
 // aware text — see compareValues below) and repopulates from scratch, so rows and
-// their backing vectors stay aligned. Clicking a column the first time sorts it
-// ascending; clicking the same column again flips to descending; clicking a
-// different column starts ascending again. The header's sort indicator is kept in
-// sync so the active column and direction stay visible.
+// their backing vectors stay aligned.
+//
+// The cycle is THREE-state, not two: clicking a column sorts it ascending, clicking
+// the same column again flips to descending, and a third click drops the sort
+// altogether — the view is handed column -1 and returns to its default order, with
+// the header's sort indicator cleared. That third click is the only discoverable way
+// back: a sort is easy to start by mistake, and in the binder guide the default filed
+// order is the only mode that shows the Page/Pocket numbers and page breaks and the
+// only one where the arrange actions work. Clicking a different column starts
+// ascending again.
 //
 // The view holds the current (column, order) as its own state and re-applies it on
 // every refresh, so sorting survives a reload; a column index of < 0 means "keep
-// the natural order the data was loaded in" (the initial, unsorted state).
+// the natural order the data was loaded in" (the initial and the cleared state).
+//
+// `resetColumns` names the columns that are NOT sortable fields but the row's position
+// itself (the binder guide's Page and Pocket, which only exist in the default order).
+// Clicking one is a direct "put it back": it reports column -1 and clears the indicator,
+// without the intermediate ascending/descending steps a real column cycles through — so
+// the header never paints a sort arrow over a table it did not sort, and its tooltip says
+// what it does.
+//
+// It also gives every column a header tooltip (setHeaderTooltip below) so an elided
+// header stays readable and the sort cycle is explained where it is used. A view with
+// its own per-column explanation must call setHeaderTooltip AFTER this, since this
+// pass would otherwise overwrite it.
+enum class HeaderSortRole {
+    Sortable,         // an ordinary column: ascending → descending → cleared
+    ResetsToDefault,  // a reset column: one click, straight back to the default order
+};
+
+inline void setHeaderTooltip(QTableWidget* table, int column, const QString& explanation = {},
+                             HeaderSortRole role = HeaderSortRole::Sortable);
+
 inline void installHeaderSort(QTableWidget* table,
-                              std::function<void(int column, Qt::SortOrder order)> onSort) {
+                              std::function<void(int column, Qt::SortOrder order)> onSort,
+                              std::vector<int> resetColumns = {}) {
     QHeaderView* header = table->horizontalHeader();
     header->setSectionsClickable(true);
     header->setSortIndicatorShown(true);
     header->setSortIndicator(-1, Qt::AscendingOrder);  // no active column initially
+    const auto resets = [resetColumns](int column) {
+        return std::find(resetColumns.begin(), resetColumns.end(), column) != resetColumns.end();
+    };
+    for (int column = 0; column < table->columnCount(); ++column) {
+        setHeaderTooltip(table, column, {},
+                         resets(column) ? HeaderSortRole::ResetsToDefault
+                                        : HeaderSortRole::Sortable);
+    }
     // The click handler owns the current (column, order) itself rather than reading
     // it back from the header: QHeaderView may mutate its own indicator on a click,
     // so the header is not a reliable source for "what was the previous sort". A
@@ -50,17 +90,57 @@ inline void installHeaderSort(QTableWidget* table,
     // into the std::function.
     auto state = std::make_shared<std::pair<int, Qt::SortOrder>>(-1, Qt::AscendingOrder);
     QObject::connect(header, &QHeaderView::sectionClicked, table,
-                     [table, onSort = std::move(onSort), state](int column) {
-                         // Same column already ascending → flip to descending;
-                         // otherwise (new column, or was descending) → ascending.
+                     [table, onSort = std::move(onSort), state, resets](int column) {
+                         // Same column: ascending → descending → cleared. Otherwise
+                         // (a different column, or none active) → ascending. A reset
+                         // column skips the cycle and goes straight to cleared.
+                         int sorted = resets(column) ? -1 : column;
                          Qt::SortOrder order = Qt::AscendingOrder;
-                         if (state->first == column && state->second == Qt::AscendingOrder) {
-                             order = Qt::DescendingOrder;
+                         if (sorted == column && state->first == column) {
+                             if (state->second == Qt::AscendingOrder) {
+                                 order = Qt::DescendingOrder;
+                             } else {
+                                 sorted = -1;  // third click: back to the default order
+                             }
                          }
-                         *state = {column, order};
-                         table->horizontalHeader()->setSortIndicator(column, order);
-                         onSort(column, order);
+                         *state = {sorted, order};
+                         table->horizontalHeader()->setSortIndicator(sorted, order);
+                         onSort(sorted, order);
                      });
+}
+
+// GUI — the tooltip a sortable table's column header carries, composed from three
+// parts: the header's own text (so a header the column is too narrow to show in full
+// stays readable — the same reason every cell carries its text, see table_cell.h), an
+// optional per-column `explanation`, and the hint for what clicking it does. Composing
+// rather than appending means it can be re-applied at any time (BinderView re-sets its
+// Page tooltip whenever the binder's pocket grid changes) without the parts piling up.
+//
+// `role` must match what installHeaderSort was told: a reset column resets on the first
+// click, so promising the ascending/descending cycle there would describe a behavior the
+// header does not have.
+//
+// installHeaderSort applies the no-explanation form to every column, so a view only
+// calls this itself for a column that has something extra to say — and must do so
+// AFTER installHeaderSort, whose own pass would overwrite it.
+inline void setHeaderTooltip(QTableWidget* table, int column, const QString& explanation,
+                             HeaderSortRole role) {
+    QTableWidgetItem* item = table->horizontalHeaderItem(column);
+    if (item == nullptr) {
+        return;  // a column with no header item has no text to explain
+    }
+    QStringList parts;
+    if (!item->text().isEmpty()) {
+        parts << item->text();
+    }
+    if (!explanation.isEmpty()) {
+        parts << explanation;
+    }
+    parts << (role == HeaderSortRole::ResetsToDefault
+                  ? QObject::tr("Click to put the table back in its default order.")
+                  : QObject::tr("Click to sort by this column; click again to reverse it, "
+                                "and once more to restore the default order."));
+    item->setToolTip(tooltipText(parts.join(QStringLiteral("\n\n"))));
 }
 
 // GUI — three-way compare for a sort comparator: -1 / 0 / +1 for a < / == / >.
@@ -161,6 +241,36 @@ void sortByKeys(std::vector<T>& items, int column, Qt::SortOrder order, KeyFn ke
         sorted.push_back(std::move(items[d.index]));
     }
     items = std::move(sorted);
+}
+
+// GUI — the same two shells, but reordering `items` FROM a pristine copy of the load
+// order rather than from wherever the last sort left it. A view whose rows are its own
+// vector sorts that vector in PLACE, so once a sort can be CLEARED — and with the
+// three-state cycle it can be, from any column, at any time — "column < 0 keeps the
+// natural load order" only holds if that order is still around to keep. It isn't: the
+// previous sort destroyed it. So a view like that holds the load order in a second
+// vector and reorders through these, which restore it first.
+//
+// It is load-bearing in the binder guide, where the cleared state also re-enables the
+// filed-order-only behaviour (Page/Pocket numbers, page breaks, Insert blank, Move…):
+// reading a rarity-sorted row list as the filed order would print wrong pocket
+// coordinates and let a confirmed Move persist an arrangement the binder was never in.
+// It also makes ties deterministic — stable_sort breaks them by the natural order every
+// time, rather than by whichever column happened to be clicked before.
+//
+// `natural` must be a distinct vector, never `items` itself.
+template <class T, class KeyFn, class KeyCompare>
+void sortByKeys(std::vector<T>& items, const std::vector<T>& natural, int column,
+                Qt::SortOrder order, KeyFn keyFn, KeyCompare keyCompare) {
+    items = natural;
+    sortByKeys(items, column, order, std::move(keyFn), std::move(keyCompare));
+}
+
+template <class T, class Compare>
+void applyColumnSort(std::vector<T>& items, const std::vector<T>& natural, int column,
+                     Qt::SortOrder order, Compare columnCompare) {
+    items = natural;
+    applyColumnSort(items, column, order, std::move(columnCompare));
 }
 
 }  // namespace pokedex

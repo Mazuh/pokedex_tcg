@@ -1250,6 +1250,62 @@ the data (Wishlist: one row per source within a per-species entry), flatten to a
 one-record-per-row vector first so every column — including the per-row one — is
 sortable.
 
+The cycle is **three-state: ascending → descending → cleared**. The third click on the
+active column hands the view `column == -1` and clears the header's sort indicator, so
+every table can be put back the way it was found — a sort is easy to start by mistake,
+and each view's unsorted state is a real default (the binder guide's filed page order,
+My Cards' dex-then-added, the Binders list's service order). It matters most in
+`BinderView`, whose natural order is the ONLY mode that fills Page/Pocket and draws the
+page breaks, and the only one where "Insert blank"/"Move…" are enabled. Any new view
+must therefore treat `-1` as reachable at any time, not just before the first click.
+
+Two consequences a new table has to get right:
+
+- **A view that sorts its rows IN PLACE must keep the load order in a second vector**
+  and reorder through the `sortByKeys`/`applyColumnSort` overloads that take it
+  (`BinderView::naturalEntries_`, `BindersPage::naturalBinders_`,
+  `WishlistView::naturalRows_`). "`column < 0` keeps the natural order" is only true if
+  that order still exists — the previous sort destroyed it, so without the pristine copy
+  the cleared state silently keeps the last sort. In the binder guide that is not just a
+  wrong order: the cleared state also re-enables the filed-order-only behaviour, so the
+  Page/Pocket coordinates and page breaks would be computed from (say) a rarity-ordered
+  row list, and a confirmed "Move…" would persist an arrangement the binder was never in.
+  Sorting from a fixed base also makes ties deterministic instead of click-history
+  dependent. (`OwnedCardsView` instead re-derives its default with an explicit
+  dex-then-added sort under `sortColumn_ < 0`; either shape is fine as long as `-1`
+  actively restores something.)
+- **A column that is the row's POSITION rather than a field is a reset column**: pass it
+  in `installHeaderSort`'s third argument (`BinderView` passes `{0, 1}` for Page/Pocket).
+  It then reports `-1` on the first click, paints no sort indicator, and gets the
+  reset-flavoured tooltip via `HeaderSortRole::ResetsToDefault` — a header must never
+  advertise a sort it doesn't perform.
+
+**A table cell and a table header carry their own text as a tooltip** — the HTML
+`title` idiom, so a column too narrow for its content ("…") is still readable on hover.
+`cell()` (`gui/views/table_cell.h`) sets it for every cell in every table, so there is
+nothing per-view to remember; a cell with something MORE to say (the guide's "moved here
+by hand" note) uses `addToolTip`, which keeps the text ahead of the note rather than
+replacing it — never `setToolTip`, which drops the very thing the tooltip exists for. An
+empty cell keeps the em-dash and gets none. A cell rendered as a **widget** rather than
+an item misses `cell()` entirely and must set its own (`sourceLabel` does). On the header
+side `installHeaderSort` gives every column `setHeaderTooltip`, which composes the
+header's own text + an optional per-column explanation + the sort-cycle hint; a view with
+an explanation (`BindersPage`'s Capacity/Pockets, `BinderView`'s Page/Pocket) calls it
+**after** `installHeaderSort`, whose install-time pass would otherwise overwrite it.
+Because it recomposes rather than appends, it can be re-applied per refresh.
+
+Every tooltip built from **free text** goes through `tooltipText`
+(`gui/views/tooltip_text.h`) — `cell()`, `addToolTip`, `setHeaderTooltip` and
+`sourceLabel` already do. Qt tooltips are `Qt::AutoText`, so a binder name or wishlist
+source that happens to look like markup ("Shop `<b>`deals`</b>`") would be *rendered*
+and the user's characters would vanish. The rule is deliberately conditional, not
+"always escape": Qt does **not** treat an escaped `&` as rich text, so blanket escaping
+would print a literal `&amp;` in every "Scarlet & Violet" set name and every URL with a
+query string. So plain-reading text is passed through untouched and only markup-looking
+text is escaped — which keeps it on the rich-text path, where the entities decode back
+to what was typed (newlines become `<br>` there, since rich text collapses them). Verify
+any change to this against `Qt::mightBeRichText` rather than by reasoning about it.
+
 **A large table's row rebuild wraps the fill in `BulkTablePopulate`.** With a
 column in `QHeaderView::ResizeToContents`, EVERY `setItem` re-measures that column
 across all rows, so refilling an already-populated, visible table is O(rows²) — a

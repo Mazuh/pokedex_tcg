@@ -72,9 +72,12 @@ private:
 
     WishlistService& wishlist_;
     QTableWidget* table_;
-    // The flattened source rows backing the current table, cached from the last
-    // refresh() so a header-sort repopulate() can reorder without a re-read.
+    // The flattened source rows backing the current table, in display order.
     std::vector<SourceRow> rows_;
+    // The same rows in the order refresh() flattened them, kept pristine: rows_ is
+    // sorted in place, so clearing the sort (the third click on a header) needs an
+    // untouched copy to restore from. repopulate() rebuilds rows_ from this.
+    std::vector<SourceRow> naturalRows_;
     // Header-driven sort state, re-applied on every refresh so it survives a reload.
     // -1 = unsorted (keep the service's order); see refresh().
     int sortColumn_ = -1;

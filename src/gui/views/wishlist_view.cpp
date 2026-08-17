@@ -186,15 +186,17 @@ bool WishlistView::eventFilter(QObject* watched, QEvent* event) {
 void WishlistView::refresh() {
     // Flatten the wishlist to one record per (Pokémon, source) so a header click can
     // sort by any column — including Source, which varies within a species' rows and so
-    // can't be captured by sorting the per-species entries alone. Cached in rows_ so a
-    // header-sort repopulate() reorders without a re-read.
-    rows_.clear();
+    // can't be captured by sorting the per-species entries alone. Cached in naturalRows_
+    // so a header-sort repopulate() reorders without a re-read — and, since rows_ is
+    // sorted in place, so that clearing the sort has an untouched order to restore.
+    naturalRows_.clear();
     try {
         for (const WishlistEntry& entry : wishlist_.listAll()) {
             const QString name = QString::fromStdString(entry.pokemon.name);
             for (const std::string& source : entry.sources) {
-                rows_.push_back({entry.pokemon.dexNumber, name, QString::fromStdString(source),
-                                 entry.insertedAt, entry.updatedAt});
+                naturalRows_.push_back({entry.pokemon.dexNumber, name,
+                                        QString::fromStdString(source), entry.insertedAt,
+                                        entry.updatedAt});
             }
         }
     } catch (const std::exception& e) {
@@ -221,7 +223,9 @@ void WishlistView::repopulate() {
 
     table_->setRowCount(0);
 
-    applyColumnSort(rows_, sortColumn_, sortOrder_,
+    // From naturalRows_, so a sortColumn_ < 0 restores the load order rather than leaving
+    // the previous sort in place (see the applyColumnSort overload).
+    applyColumnSort(rows_, naturalRows_, sortColumn_, sortOrder_,
                     [](const SourceRow& a, const SourceRow& b, int column) -> int {
                         switch (column) {
                             case 0: return compareValues(a.dexNumber, b.dexNumber);

@@ -311,11 +311,9 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     table_->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     // "Page" and "#" sit over right-aligned numbers, so right-align them to match.
     table_->horizontalHeaderItem(0)->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    // Both tooltips are re-set per refresh (the grid can change under Edit binder) —
-    // see updatePocketHeaderTooltips.
-    table_->horizontalHeaderItem(1)->setToolTip(
-        tr("Where on the page: row×column, counting from the top-left. \"2×3\" is the "
-           "second row, third pocket across."));
+    // The Page and Pocket header tooltips live in updatePocketHeaderTooltips, which runs
+    // per refresh (the grid can change under Edit binder) — and, crucially, after
+    // installHeaderSort below, which gives every header its plain tooltip.
     table_->horizontalHeaderItem(2)->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -353,15 +351,19 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     // Clicking a header sorts the guide by that column; store the choice and
     // repopulate from the cached entries_ (re-sorted so they stay 1:1 with the rows).
     // A pure reorder — it never recomputes the guide or re-reads the binder's copies.
-    installHeaderSort(table_, [this](int column, Qt::SortOrder order) {
-        // The Page/Pocket columns aren't fields of the data — they ARE the filed position,
-        // derived from the row order after sorting. So "sort by page" can only mean one
-        // thing: drop back to the natural filed order (sortColumn_ < 0), which is also how
-        // you undo a sort.
-        sortColumn_ = column <= 1 ? -1 : column;
-        sortOrder_ = order;
-        repopulate();
-    });
+    // The Page/Pocket columns aren't fields of the data — they ARE the filed position,
+    // derived from the row order after sorting. So "sort by page" can only mean one thing:
+    // drop back to the natural filed order. Declaring them as reset columns makes the
+    // helper report -1 on the first click and paint no sort arrow over rows it didn't
+    // sort; the third click on any other header is the general way to undo a sort.
+    installHeaderSort(
+        table_,
+        [this](int column, Qt::SortOrder order) {
+            sortColumn_ = column;
+            sortOrder_ = order;
+            repopulate();
+        },
+        {0, 1});
     // The detail panel's "Add copy" relays up to an in-place page push. Which of the two
     // it emits depends on the shown row: a species row keeps the species flow, a
     // species-free card's row switches the button to the "add a card" flow so it is never
@@ -505,6 +507,11 @@ void BinderView::refresh() {
             ++ownedCountsByDex_[*copy.pokemonDexNum];
         }
     }
+
+    // Keep the filed order the guide just derived: entries_ is sorted IN PLACE by a header
+    // click, and the sort can be cleared from any column at any time, so "unsorted" has to
+    // restore from a copy that no sort has touched (sortEntries).
+    naturalEntries_ = entries_;
 
     loadCachedPrices();  // one batched cache read feeding both the header total and the rows
     updateStats(filedCopies_);
@@ -763,8 +770,10 @@ void BinderView::repopulate() {
             if (entry.placedByHand) {
                 const QString moved = tr("Moved to this pocket by hand. Use “Move…” to "
                                          "change it or return it to Pokédex order.");
-                page->setToolTip(moved);
-                pocketCell->setToolTip(moved);
+                // Added to the cell's own tooltip (its page number / pocket label), not
+                // in place of it — see addToolTip.
+                addToolTip(page, moved);
+                addToolTip(pocketCell, moved);
             }
             table_->setItem(i, 0, page);
             table_->setItem(i, 1, pocketCell);
@@ -775,13 +784,10 @@ void BinderView::repopulate() {
             table_->setItem(i, 2, number);
             table_->setItem(i, 3, cell(rowLabel(entry, copy)));
             // The row's OWN filed copy fills the printed-identity columns; a placeholder
-            // row leaves them blank (rendered as an em-dash by cell()).
-            // Set is the eliding Stretch column ("Base Set (BS)"); carry the full value as a
-            // tooltip so a long name stays readable when the column truncates it ("…").
-            const QString setText = copy ? setLabel(copy->cardRef) : QString();
-            auto* setCell = cell(setText);
-            setCell->setToolTip(setText);
-            table_->setItem(i, 4, setCell);
+            // row leaves them blank (rendered as an em-dash by cell()). Set is the eliding
+            // Stretch column ("Base Set (BS)"); cell() carries the full value as the
+            // tooltip, so a long name stays readable when the column truncates it ("…").
+            table_->setItem(i, 4, cell(copy ? setLabel(copy->cardRef) : QString()));
             table_->setItem(i, 5, cell(copy ? QString::fromStdString(copy->cardRef.collectorNumber)
                                             : QString()));
             table_->setItem(i, 6, cell(copy && copy->condition ? conditionAbbrev(*copy->condition)
@@ -851,8 +857,11 @@ void BinderView::repopulate() {
 void BinderView::sortEntries() {
     // Precompute each row's key once (via sortByKeys) rather than rebuilding it for both
     // operands on every comparison — the name and the copy-derived text columns allocate
-    // QStrings, and the copy columns do a copyFor() lookup. A sortColumn_ < 0 keeps the
-    // guide's NATURAL order, and only there does the "a species' copies are adjacent,
+    // QStrings, and the copy columns do a copyFor() lookup. Every sort starts from
+    // naturalEntries_, the order buildEntries emitted, so a sortColumn_ < 0 RESTORES the
+    // guide's NATURAL order rather than leaving the last sort in place (the rows are
+    // sorted in place, and the third click on any header clears the sort — see the
+    // sortByKeys overload). Only in that order does the "a species' copies are adjacent,
     // species-free cards last" guarantee hold — any header sort is free to interleave
     // them, which is the point of sorting. The dex number and the copy columns are keyed
     // as std::optional so a species-free row (no dex) and a placeholder row (no copy) sink
@@ -874,7 +883,7 @@ void BinderView::sortEntries() {
     const bool ascending = sortOrder_ == Qt::AscendingOrder;
     const int column = sortColumn_;
     sortByKeys(
-        entries_, sortColumn_, sortOrder_,
+        entries_, naturalEntries_, sortColumn_, sortOrder_,
         [this, column](const CardBinderEntry& e) {
             // Build ONLY the clicked column's key (as OwnedCardsView::repopulate does):
             // the comparator reads a single field, so materializing every column on each
@@ -1472,11 +1481,21 @@ void BinderView::moveSelectedCard() {
 }
 
 void BinderView::updatePocketHeaderTooltips() {
-    table_->horizontalHeaderItem(0)->setToolTip(
+    // Both explanations go through setHeaderTooltip, which recomposes the header's own
+    // text and the shared sort-cycle hint around them — so re-running this per refresh
+    // (the grid can change under “Edit binder”) never accumulates or drops a part. It
+    // must run after installHeaderSort, whose install-time pass sets the plain form.
+    setHeaderTooltip(
+        table_, 0,
         binder_.pocketGrid
             ? tr("Which page of the binder this slot falls on, counting %1 pockets per page.")
                   .arg(pocketsPerPage(*binder_.pocketGrid))
-            : tr("Record this binder's pocket grid in “Edit binder” to see page numbers."));
+            : tr("Record this binder's pocket grid in “Edit binder” to see page numbers."),
+        HeaderSortRole::ResetsToDefault);
+    setHeaderTooltip(table_, 1,
+                     tr("Where on the page: row×column, counting from the top-left. \"2×3\" is "
+                        "the second row, third pocket across."),
+                     HeaderSortRole::ResetsToDefault);
 }
 
 void BinderView::openEditBinder() {

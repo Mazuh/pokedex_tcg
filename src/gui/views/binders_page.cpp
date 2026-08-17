@@ -71,12 +71,6 @@ BindersPage::BindersPage(BinderService& service, BinderGuideService& guide,
     for (int col = 1; col < table_->columnCount(); ++col) {
         table_->horizontalHeader()->setSectionResizeMode(col, QHeaderView::ResizeToContents);
     }
-    // The two layout columns are optional per binder, so say what an em-dash means.
-    table_->horizontalHeaderItem(2)->setToolTip(
-        tr("How many cards the album holds, when recorded. Set it in the binder's edit "
-           "screen."));
-    table_->horizontalHeaderItem(3)->setToolTip(
-        tr("The pocket grid of one page, rows×columns — what the binder guide pages by."));
     // Cell padding so content clears the edges and the overlay scrollbar.
     table_->setStyleSheet("QTableView::item { padding-left: 8px; padding-right: 16px; }");
 
@@ -102,6 +96,15 @@ BindersPage::BindersPage(BinderService& service, BinderGuideService& guide,
         sortOrder_ = order;
         repopulate();
     });
+    // The two layout columns are optional per binder, so say what an em-dash means. After
+    // installHeaderSort, which gives every header its own plain tooltip — these compose on
+    // top of it and would be overwritten if they ran first.
+    setHeaderTooltip(table_, 2,
+                     tr("How many cards the album holds, when recorded. Set it in the "
+                        "binder's edit screen."));
+    setHeaderTooltip(
+        table_, 3,
+        tr("The pocket grid of one page, rows×columns — what the binder guide pages by."));
 
     auto* buttons = new QHBoxLayout;
     buttons->addWidget(newButton);
@@ -137,10 +140,13 @@ BindersPage::BindersPage(BinderService& service, BinderGuideService& guide,
 void BindersPage::refresh() {
     // (Re)load the binders from storage, then rebuild the table. A header-sort goes
     // through repopulate() directly, so reordering never re-hits storage.
+    // Loaded into naturalBinders_, the service's own order: binders_ is sorted in place by
+    // a header click, and clearing that sort has to restore an order no sort has touched
+    // (sortBinders rebuilds binders_ from this every repopulate).
     try {
-        binders_ = service_.list();
+        naturalBinders_ = service_.list();
     } catch (const std::exception& e) {
-        binders_.clear();
+        naturalBinders_.clear();
         QMessageBox::critical(this, tr("Pokedex TCG"),
                               tr("Could not load your binders:\n%1")
                                   .arg(QString::fromUtf8(e.what())));
@@ -188,7 +194,9 @@ void BindersPage::repopulate() {
 void BindersPage::sortBinders() {
     // The name and region columns each allocate a QString, so precompute each row's keys
     // once (via sortByKeys) rather than rebuilding them for both operands on every
-    // comparison. A sortColumn_ < 0 keeps the natural load order.
+    // comparison. Every sort starts from naturalBinders_, so a sortColumn_ < 0 (the third
+    // click on a header) RESTORES the service's load order instead of leaving the previous
+    // sort in place — binders_ is sorted in place.
     struct Key {
         QString name;
         QString region;
@@ -201,7 +209,7 @@ void BindersPage::sortBinders() {
     };
     const bool ascending = sortOrder_ == Qt::AscendingOrder;
     sortByKeys(
-        binders_, sortColumn_, sortOrder_,
+        binders_, naturalBinders_, sortColumn_, sortOrder_,
         [](const CardBinder& b) {
             // Sort the grid by how many cards a page holds, so 3×3 orders below 4×3
             // rather than by the string, where "10×2" would land beside "1×2".

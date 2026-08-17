@@ -486,13 +486,9 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
         // Trainer/Energy card) its printed card name so the row isn't blank.
         table_->setItem(row, 0, cell(speciesOrCardName(c)));
         // Set shows the human name with its abbreviation ("Base Set (BS)"). It's the
-        // eliding Stretch column, so carry the full value as a tooltip — a long set name
-        // truncates ("…") in a narrow window and would otherwise be unreadable on hover
-        // (mirrors the Binder column below).
-        const QString setText = setLabel(c.cardRef);
-        auto* setCell = cell(setText);
-        setCell->setToolTip(setText);
-        table_->setItem(row, 1, setCell);
+        // eliding Stretch column, so a long set name truncates ("…") in a narrow window —
+        // cell() carries the full value as the tooltip.
+        table_->setItem(row, 1, cell(setLabel(c.cardRef)));
         table_->setItem(row, 2, cell(QString::fromStdString(c.cardRef.collectorNumber)));
         table_->setItem(row, 3, cell(QString::fromStdString(c.cardRef.language)));
         // Condition is optional (ungraded copies) — blank renders as an em-dash.
@@ -511,10 +507,7 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
                 binder = &it->second;
             }
         }
-        const QString binderName = binder ? binder->name : QString();
-        auto* binderCell = cell(binderName);
-        binderCell->setToolTip(binderName);
-        table_->setItem(row, 8, binderCell);
+        table_->setItem(row, 8, cell(binder ? binder->name : QString()));
         // The copy's cached market prices, inline ("$… · €…"); blank when unlinked, never
         // fetched, or Removed (frozen history — matches the inspector). Cache-only
         // (pricesByExternalId_), so this stays a pure in-memory rebuild.
