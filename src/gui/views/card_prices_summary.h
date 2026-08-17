@@ -74,7 +74,9 @@ private:
                                    // fetch / a successful one / a copy change)
 
     QLabel* headline_;         // per-vendor figures; each vendor name links to a marketplace search
-    QToolButton* infoButton_;  // "ⓘ" — the metrics + freshness popover
+    QToolButton* infoButton_;  // "ⓘ" — opens the modal explaining the metrics + freshness
+    QString infoHtml_;         // that modal's body: rebuilt per render (it names THIS card's
+                               // dates), read by the button's provider at click time
     QLabel* status_;           // muted one-liner for the not-priced / fetching / error states
     QPushButton* fetchButton_;   // inline "Fetch"/"Refresh"; shown whenever a fetch is possible
     QPushButton* manageButton_;  // "Manage prices" — opens the dedicated page

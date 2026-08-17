@@ -3,6 +3,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <exception>
@@ -16,6 +17,7 @@
 #include "gui/services/card_price_lookup_service.h"
 #include "gui/views/card_copy_labels.h"  // speciesName(dexNumber)
 #include "gui/views/card_price_fetch_controller.h"
+#include "gui/views/info_button.h"  // makeInfoButton — the ⓘ that opens the explainer
 #include "gui/views/price_headline.h"
 #include "gui/views/price_labels.h"
 
@@ -37,8 +39,12 @@ CardPricesSummary::CardPricesSummary(CardPriceLookupService& lookup, CardCopySer
     headline_->setTextInteractionFlags(Qt::TextBrowserInteraction);
     headline_->setStyleSheet(QStringLiteral("font-weight: 600;"));
 
-    // "ⓘ" popover explaining the metrics + freshness — the shared idiom (makeInfoButton).
-    infoButton_ = makeInfoButton(this);
+    // "ⓘ" explaining the metrics + freshness — the shared idiom (info_button.h), opening the
+    // modal InfoDialog. Its body is rebuilt per render (it names this card's dates), so the
+    // button asks for it at click time rather than holding a snapshot from construction.
+    infoHtml_ = priceInfoHtml();
+    infoButton_ = makeInfoButton(this, tr("What these prices mean"),
+                                 [this] { return infoHtml_; });
 
     auto* headlineRow = new QHBoxLayout;
     headlineRow->setContentsMargins(0, 0, 0, 0);
@@ -131,6 +137,11 @@ void CardPricesSummary::onFetchClicked() {
 }
 
 void CardPricesSummary::render() {
+    // Drop any freshness carried over from the last card up front — it names dates, and the
+    // has-headline branch below is the only one entitled to state them. Doing it here covers
+    // every hide path at once, so a ⓘ can never quote the previously shown copy.
+    infoHtml_ = priceInfoHtml();
+
     // A soft-Removed copy is frozen history and nothing is selected → no price block at all.
     if (copyId_.empty() || copyRemoved_) {
         headline_->hide();
@@ -183,9 +194,9 @@ void CardPricesSummary::render() {
         headline_->setText(headline);
         headline_->show();
         // "as of" is the newest vendor date across the rows; also carry when WE fetched. Both
-        // live on the ⓘ tooltip, mirroring the panel (shared newestObservedAt).
-        infoButton_->setToolTip(priceInfoWithFreshness(
-            priceDateOf(newestObservedAt(cached)), fetchedAt ? priceDateOf(*fetchedAt) : QString()));
+        // live in the ⓘ dialog, mirroring the panel (shared newestObservedAt).
+        infoHtml_ = priceInfoWithFreshness(priceDateOf(newestObservedAt(cached)),
+                                           fetchedAt ? priceDateOf(*fetchedAt) : QString());
         infoButton_->show();
     } else {
         headline_->hide();

@@ -254,7 +254,7 @@ the crowded inspector.** Every owned-copy surface (the Edit page, the My Cards d
 `OwnedCardsView`, and the binder-guide / Pokémon-browser copy detail `PokemonDetailPanel` copy
 mode) shows `gui/views/CardPricesSummary` (`showCopy(copy)` / `clear()`): the per-vendor headline
 figures (suppressed vendors filtered out), each vendor **name itself the link** to a marketplace
-search, the ⓘ metrics/freshness popover, an inline **Fetch/Refresh**, and a **"Manage prices"**
+search, the ⓘ metrics/freshness dialog, an inline **Fetch/Refresh**, and a **"Manage prices"**
 button. It never networks on mere selection (renders the cache, re-renders on `pricesReady`); its
 one active affordance is the inline Fetch/Refresh, which drives the **shared
 `gui/views/CardPriceFetchController`** — the fetch/resolve/link state machine BOTH this summary
@@ -283,7 +283,7 @@ panel (unchanged) is driven by `showCopy(copy)` / `clear()` (it carries the copy
 context — id, `CardReference` — not just an `external_card_id`) and renders the states
 [nothing-selected / unresolvable (no set/number) / ready-to-fetch (resolvable OR already
 linked) / has-prices (a headline of one figure per vendor, one vendor **per line**, each with
-a ✕ hide affordance; the "as of"/fetched dates live on the ⓘ tooltip) / fetched-empty], plus
+a ✕ hide affordance; the "as of"/fetched dates live in the ⓘ dialog) / fetched-empty], plus
 Fetch/Refresh, Clear, and per-vendor hide/restore. There is **no "show all prices" table** —
 the full per-metric spread is deliberately left to the marketplace links, so the panel stays
 a compact headline + Fetch/Refresh + hide + ⓘ. The push is wired through two host helpers:
@@ -314,8 +314,11 @@ too little data (no set/number) shows a hint to complete it in Edit. (There is n
 manual "Link prices to this card" button on the Edit page — that was pokemontcg-specific and
 is superseded by the invisible set+number resolution; disambiguating a genuinely ambiguous
 set name is a possible future enhancement.) The panel also carries an
-"ⓘ" popover (same idiom as the card-attribute pickers) explaining the metrics **and the
-price freshness** (the vendor "as of" date + the day we fetched, set per-render). The
+"ⓘ" (`makeInfoButton`, same idiom as the card-attribute pickers) opening the modal
+explanation of the metrics **and the price freshness** (the vendor "as of" date + the day
+we fetched — rebuilt per render into `infoHtml_`, the body the button's provider reads at
+click time, and RESET to the title-less `priceInfoHtml()` on every hide path so a ⓘ can
+never quote the previously shown card's dates). The
 per-vendor **listing links** are merged **into the headline** — the vendor name is itself
 the link ("TCGplayer ↗ $350.00"), pointing at a **marketplace name-search** for the card
 (tcgdex carries no stable per-listing URL we persist, so the vendor name searches that
@@ -1228,7 +1231,10 @@ list/detail splits have room without the user having to maximize first. Prefer n
 in a `QStackedWidget` (as `BindersPage` does: binder table ⇄ binder guide, with
 a Back button) — over opening a second top-level window. A separate window or
 modal dialog is a deliberate, rare exception (the first-run setup, the
-`BinderPickerDialog`, and the About box), not the default for showing more
+`BinderPickerDialog`, the About box, and the shared `InfoDialog` behind every ⓘ —
+a long explanation cannot live in a tooltip, which Qt clamps to the screen and
+auto-closes, and a pushed page would cost the user their place in a half-filled
+form), not the default for showing more
 detail. **Prefer a dedicated screen (or, more rarely, an inline form) over a modal
 for CRUD.** Creating/editing a record is done on a full page pushed onto the host's
 `QStackedWidget` with a Back top bar — not a `QDialog` or a `QInputDialog`. Binder
@@ -1276,20 +1282,56 @@ first must drop its separator (`BinderView`'s Listed / Captured / Cards / value 
 reference — it hides Listed and Captured together when the binder lists no species, and
 switches Cards to a separator-less variant for exactly that case).
 
-**A small glyph that reveals an explanation is built by `makeGlyphButton`.**
-`gui/views/glyph_button.h` is the one recipe: a flat `QToolButton` showing a single
-character whose rich text is BOTH its tooltip (hover) and what it pops via
-`QToolTip::showText` on click, so it serves either mouse habit; `Qt::WhatsThisCursor`
-signals "this reveals help" and `Qt::NoFocus` keeps it out of the form's tab order (it
-explains a field, it isn't one). The click reads whatever tooltip the button CURRENTLY
-holds, so a caller may re-word it per render without re-wiring (the price surfaces fold
-their freshness dates in that way). Two glyphs use it today — "ⓘ" (what these
-options/figures mean: `CardCopyForm`'s attribute pickers, and both price surfaces via
-`price_headline.h`'s `makeInfoButton`, which now only pins the glyph and the price wording
-onto it) and "⚠" (`CardCopyForm`'s "the catalog couldn't fill this in" markers, muted with
-`applyMutedText` so they read as a hint rather than an error — which is also why
-`applyMutedText` covers the `ButtonText` role: a button ignores `WindowText`). Build a
-third the same way rather than re-spelling the recipe.
+**A small glyph that reveals an explanation is built from `glyph_button.h` — but HOW it
+reveals depends on how much it has to say.** `makeGlyphButton` is the shared LOOK (a flat
+`QToolButton` showing one character, `Qt::NoFocus` so it stays out of the form's tab order —
+it explains a field, it isn't one). Two behaviors sit on top, and picking the wrong one is
+the bug this split exists to prevent:
+
+- **`makeHintButton` (same header) — a SENTENCE, as a tooltip.** The rich text is both the
+  hover tooltip and what a click pops via `QToolTip::showText`, so it serves either mouse
+  habit, with `Qt::WhatsThisCursor` signalling "this reveals help". The click reads whatever
+  tooltip the button CURRENTLY holds, so a caller may re-word it per render without
+  re-wiring. Used by "⚠" (`CardCopyForm`'s "the catalog couldn't fill this in" markers,
+  muted with `applyMutedText` so they read as a hint rather than an error — which is also
+  why `applyMutedText` covers the `ButtonText` role: a button ignores `WindowText`).
+- **`makeInfoButton` (`gui/views/info_button.h`) — a REFERENCE, as a modal.** Used by "ⓘ"
+  (what these options/figures mean: `CardCopyForm`'s Rarity/Condition/Foil pickers, and both
+  price surfaces). It opens `InfoDialog`; its own tooltip carries only the short TITLE, and
+  the cursor is `PointingHandCursor`, because it opens something rather than hovering
+  something. **A tooltip could not hold these**: `QToolTip` doesn't scroll and Qt clamps it
+  to the screen, so the rarity list (17 definition entries) auto-closed unread on a laptop —
+  which is exactly the report that produced this split. The body is a `std::function<QString()>`
+  called at CLICK time, not a string: it keeps each `…InfoHtml()` static lazy, and lets the
+  price surfaces rebuild theirs per render (freshness dates) while the button holds no stale
+  snapshot. The provider may capture the host's `this` — the connection's context is the
+  button, a CHILD of that host — but never anything shorter-lived than the button.
+
+So: a sentence gets `makeHintButton`, a reference gets `makeInfoButton`. Anything new goes
+through one of them rather than re-spelling the recipe.
+
+**`InfoDialog` (`gui/views/info_dialog.{h,cpp}`) is the modal behind every ⓘ** — a sanctioned
+exception to "prefer a pushed page over a dialog" (see "GUI navigation"), because it is a
+read-and-dismiss aside from a half-filled form, and pushing a page would cost the user their
+place. Three things in it are load-bearing:
+- **The body is a `QTextBrowser`, not a word-wrapped `QLabel` in a `QScrollArea`.** A
+  `QScrollArea` only consults `heightForWidth` when the child's size policy carries the flag,
+  and `setWordWrap(true)` does NOT set it — the label would be clipped with no scrollbar.
+- **Measure the content through a SEPARATE `QTextDocument`, never `body_->document()`.** A
+  `QTextEdit` in its default `WidgetWidth` wrap mode owns its document's text width and snaps
+  it back to the (still unlaid-out, ~100 px) viewport the moment the layout changes, so
+  `setTextWidth(w)` + `size().height()` on the live document silently reported every body 3–6×
+  too tall and sent even a five-entry list to the screen cap.
+- **The window height is `layout->totalMinimumSize()` with the body pinned** to
+  `clamp(content, 120, 0.7 × screen)`, then the pin is relaxed so the user can still resize.
+  Not `sizeHint()` (a `QTextBrowser`'s hint ignores its content, and the cached one doesn't
+  see the pin) and never `adjustSize()`, which inflates any window with an expanding layout to
+  ⅔ of the screen in BOTH dimensions — the oversized box this feature exists to remove. The
+  window's own minimum comes from `totalMinimumSize()` too: an EXPLICIT `setMinimumSize`
+  suppresses the one `QLayout::SetDefaultConstraint` would install, so a hardcoded pair
+  shorter than the layout needs lets the user drag Close out of reach.
+
+A body carries no title of its own: the dialog renders the button's title as its heading.
 
 **A form's primary/submit button gets the shared accent affordance.** Every
 in-window CRUD form's commit button — "Add copy" (`AddCardCopyPage`), "Save

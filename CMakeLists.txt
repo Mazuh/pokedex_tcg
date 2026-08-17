@@ -221,6 +221,7 @@ qt_add_executable(pokedex_tcg
     src/gui/views/move_card_dialog.cpp
     src/gui/views/main_window.cpp
     src/gui/views/about_dialog.cpp
+    src/gui/views/info_dialog.cpp
     src/gui/views/binders_page.cpp
     src/gui/views/binder_view.cpp
     src/gui/views/pokemon_list_view.cpp

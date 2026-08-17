@@ -1,12 +1,9 @@
 #pragma once
 
 #include <QLatin1Char>
-#include <QObject>
 #include <QString>
 #include <QStringList>
-#include <QToolButton>
 #include <QUrl>
-#include <QWidget>
 
 #include <algorithm>
 #include <string>
@@ -16,7 +13,6 @@
 #include "core/domain/card_reference.h"
 #include "core/domain/types.h"
 #include "core/storage/codecs.h"  // timestampToIso
-#include "gui/views/glyph_button.h"
 #include "gui/views/price_labels.h"
 
 namespace pokedex {
@@ -24,7 +20,7 @@ namespace pokedex {
 // GUI — the shared "market prices" presentation helpers, drawn on by BOTH the read-only
 // inspector summary (CardPricesSummary) and the interactive management page's panel
 // (CardPricesPanel). Extracted here so the two can never format money, build a marketplace
-// link, or word the ⓘ popover differently — the same reason price_labels.h houses the
+// link, or word the ⓘ explanation differently — the same reason price_labels.h houses the
 // money/vendor-pick helpers. The only difference between the two surfaces is the management
 // affordances (per-vendor hide/restore), gated by headlineHtml's `withHideLinks` flag: the
 // read-only summary passes false (figures + marketplace links only, suppressed vendors simply
@@ -36,7 +32,7 @@ inline QString priceDateOf(Timestamp when) {
     return QString::fromStdString(timestampToIso(when)).left(10);
 }
 
-// The newest vendor "as of" moment across a card's cached rows — the date the ⓘ tooltip shows.
+// The newest vendor "as of" moment across a card's cached rows — the date the ⓘ dialog shows.
 // Both price surfaces (the summary and the panel) derive it identically, so it lives here.
 // Precondition: `prices` is non-empty (callers only reach it once a headline was built).
 inline Timestamp newestObservedAt(const std::vector<CardPrice>& prices) {
@@ -92,10 +88,12 @@ inline QString marketSearchTerm(const CardReference& ref, const QString& species
     return parts.join(QLatin1Char(' '));
 }
 
-// The "ⓘ" popover: what each figure means, so a lone "Cardmarket €26" isn't a mystery.
+// The "ⓘ" dialog's body: what each figure means, so a lone "Cardmarket €26" isn't a
+// mystery. It carries no title of its own — InfoDialog renders the button's title as the
+// dialog heading.
 inline const QString& priceInfoHtml() {
     static const QString kHtml = QStringLiteral(
-        "<p><b>What these prices mean</b><br>Aggregated market estimates from two "
+        "<p>Aggregated market estimates from two "
         "marketplaces, via the tcgdex pricing provider — a free aggregator, not an official "
         "valuation. Refreshed roughly daily; treat them as rough guidance.</p>"
         "<p><b>The headline</b> shows one figure per source:<br>"
@@ -103,25 +101,15 @@ inline const QString& priceInfoHtml() {
         "going rate from recent sales and listings (not a min, median, or max).<br>"
         "• <b>TCGplayer</b> (USD) — its <i>market</i> price: the current market value; when "
         "a card has several finishes the highest such value is shown.</p>"
-        "<p>Follow the marketplace links above to search the card for its full price "
+        "<p>Follow the marketplace link on each figure to search the card for its full price "
         "breakdown and live listings.</p>");
     return kHtml;
 }
 
-// The shared "ⓘ" info button both price surfaces carry (the summary and the page's panel): a
-// flat tool button that pops the metrics/freshness explanation on click. Defined once here so
-// the two can't drift on the same affordance. Callers keep the returned button (to update its
-// tooltip per render with freshness) and lay it out themselves; the click reads whatever tooltip
-// it currently holds. The button itself is the app-wide glyph affordance (glyph_button.h) — this
-// only pins the glyph and the price wording onto it.
-inline QToolButton* makeInfoButton(QWidget* parent) {
-    return makeGlyphButton(parent, QStringLiteral("ⓘ"), priceInfoHtml(),
-                           QObject::tr("What these prices mean"));
-}
-
-// The "ⓘ" tooltip/popover text for a priced card: the static metric explanation plus a
-// freshness paragraph carrying the vendor "as of" date and the day WE fetched — the
-// figures that used to sit on a visible status line now live here, on request.
+// The "ⓘ" dialog body for a priced card: the static metric explanation plus a freshness
+// paragraph carrying the vendor "as of" date and the day WE fetched — the figures that used
+// to sit on a visible status line now live here, on request. Rebuilt per render by both
+// price surfaces and handed to makeInfoButton (info_button.h) as the body provider.
 inline QString priceInfoWithFreshness(const QString& asOf, const QString& fetched) {
     QString html = priceInfoHtml();
     html += QStringLiteral("<p><b>Freshness</b><br>Prices as of %1").arg(asOf);

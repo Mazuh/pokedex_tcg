@@ -35,7 +35,7 @@ struct CardCopy;
 // States it renders: nothing selected → hidden; unresolvable (no set/number, unlinked) → a
 // hint; ready-to-fetch (resolvable, or already linked) → a "Fetch prices" button; has-prices
 // → a headline summary (one representative figure per vendor, each vendor name linking to a
-// marketplace search; the "as of"/fetched dates live on the ⓘ tooltip) + a Refresh button;
+// marketplace search; the "as of"/fetched dates live in the ⓘ dialog) + a Refresh button;
 // fetched-but-empty → "no market prices found". The full per-metric spread is deliberately
 // left to the marketplace (the listing links) rather than shown as a raw cache table.
 class CardPricesPanel : public QWidget {
@@ -95,7 +95,9 @@ private:
     bool copyRemoved_ = false;  // a soft-Removed copy — frozen history, never auto-resolved
 
     QLabel* headline_;         // per-vendor figures; each vendor name links to a marketplace search
-    QToolButton* infoButton_;  // "ⓘ" — explains the metrics + price freshness, on click
+    QToolButton* infoButton_;  // "ⓘ" — opens the modal explaining the metrics + price freshness
+    QString infoHtml_;         // that modal's body: rebuilt per render (it names THIS card's
+                               // dates), read by the button's provider at click time
     QLabel* status_;
     QPushButton* fetchButton_;
     QPushButton* clearButton_;  // "Clear" — shown once a card has been fetched (has prices or a

@@ -4,6 +4,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
 
@@ -18,6 +19,7 @@
 #include "gui/services/card_price_lookup_service.h"
 #include "gui/views/card_copy_labels.h"  // speciesName(dexNumber)
 #include "gui/views/card_price_fetch_controller.h"
+#include "gui/views/info_button.h"       // makeInfoButton — the ⓘ that opens the explainer
 #include "gui/views/price_headline.h"    // headlineHtml, marketSearchTerm, priceInfo…
 #include "gui/views/price_labels.h"
 
@@ -45,10 +47,13 @@ CardPricesPanel::CardPricesPanel(CardPriceLookupService& lookup, CardCopyService
             &CardPricesPanel::onHeadlineLinkActivated);
     headline_->setStyleSheet(QStringLiteral("font-weight: 600;"));
 
-    // "ⓘ" popover explaining the metrics — the shared idiom (makeInfoButton). Its tooltip also
-    // carries the price freshness (vendor "as of" + our fetch date), set per-render; the click
-    // shows whatever the current tooltip holds.
-    infoButton_ = makeInfoButton(this);
+    // "ⓘ" explaining the metrics — the shared idiom (info_button.h), opening the modal
+    // InfoDialog. Its body also carries the price freshness (vendor "as of" + our fetch
+    // date) and is rebuilt per render, so the button asks for it at click time rather than
+    // holding a snapshot from construction.
+    infoHtml_ = priceInfoHtml();
+    infoButton_ = makeInfoButton(this, tr("What these prices mean"),
+                                 [this] { return infoHtml_; });
 
     // The ⓘ sits at the far right, top-aligned so it pairs with the first headline line
     // (the headline can span two lines, one per vendor).
@@ -124,6 +129,11 @@ void CardPricesPanel::clear() {
 void CardPricesPanel::resetToMessage(const QString& text) {
     headline_->hide();
     infoButton_->hide();
+    // Drop the freshness with the figures it described: this is the panel's single hide
+    // path, and a body left behind would quote the PREVIOUS card's dates the next time the
+    // ⓘ opens. (render()'s isFetching early return deliberately keeps the old body — the
+    // headline it belongs to is still on screen.)
+    infoHtml_ = priceInfoHtml();
     fetchButton_->hide();
     clearButton_->hide();  // re-shown by render() only once the card has been fetched
     if (text.isEmpty()) {
@@ -226,12 +236,12 @@ void CardPricesPanel::render() {
     headline_->show();
 
     // "as of" is the newest vendor date across the rows; also carry when WE fetched. Both
-    // move onto the ⓘ tooltip (no separate visible line), so a glance stays uncluttered
+    // move into the ⓘ dialog (no separate visible line), so a glance stays uncluttered
     // (shared newestObservedAt).
-    infoButton_->setToolTip(priceInfoWithFreshness(
-        priceDateOf(newestObservedAt(cached)), fetchedAt ? priceDateOf(*fetchedAt) : QString()));
+    infoHtml_ = priceInfoWithFreshness(priceDateOf(newestObservedAt(cached)),
+                                       fetchedAt ? priceDateOf(*fetchedAt) : QString());
     infoButton_->show();
-    status_->hide();  // freshness lives on the ⓘ tooltip now, not a visible line
+    status_->hide();  // freshness lives in the ⓘ dialog now, not a visible line
     fetchButton_->show();
     fetchButton_->setEnabled(true);
     fetchButton_->setText(QStringLiteral("Refresh"));

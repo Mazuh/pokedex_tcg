@@ -16,13 +16,16 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <functional>
 #include <iterator>
+#include <utility>
 
 #include "gui/views/binder_combo.h"
 #include "gui/views/condition_labels.h"
 #include "gui/views/empty_option.h"
 #include "gui/views/foil_labels.h"
 #include "gui/views/glyph_button.h"
+#include "gui/views/info_button.h"
 #include "gui/views/language_codes.h"
 #include "gui/views/muted_text.h"
 #include "gui/views/ownership_labels.h"
@@ -68,49 +71,52 @@ QString definitionListHtml(const Range& values, LabelFn label, DescFn desc) {
     return html;
 }
 
-// The three "info" popovers are constant markup over compile-time enum ranges, so
-// each is built once (function-local static) and returned by reference — every
-// CardCopyForm (a fresh one per Add/Edit page open) then reuses it instead of
-// re-escaping and re-concatenating the same definition list. The app has no
-// runtime language switching, so freezing the translation at first build is fine.
+// The three "info" bodies are constant markup over compile-time enum ranges, so each is
+// built once (function-local static) and returned by reference — every CardCopyForm (a
+// fresh one per Add/Edit page open) then reuses it instead of re-escaping and
+// re-concatenating the same definition list. The app has no runtime language switching, so
+// freezing the translation at first build is fine. Each is built LAZILY, on the first click
+// that opens the dialog, since makeInfoButton takes a provider rather than a string.
+//
+// None of them repeats its own title: InfoDialog renders the title the button was given as
+// the dialog's heading.
 
-// The condition-picker "info" popover: every grade, each with its description.
+// The condition-picker explanation: every grade, each with its description.
 const QString& conditionInfoHtml() {
-    static const QString html =
-        QStringLiteral("<p><b>What the condition grades mean</b></p>") +
-        definitionListHtml(kConditions, conditionLabel, conditionDescription);
+    static const QString html = definitionListHtml(kConditions, conditionLabel,
+                                                   conditionDescription);
     return html;
 }
 
-// The rarity-picker "info" popover: the modern scale, then a "Legacy rarities"
-// subheading with the older-era rarities — mirroring the two tables the terms come
-// from, so the legacy ones read as a distinct, secondary group.
+// The rarity-picker explanation: the modern scale, then a "Legacy rarities" subheading with
+// the older-era rarities — mirroring the two tables the terms come from, so the legacy ones
+// read as a distinct, secondary group. The longest of the three by far, and the reason
+// these moved off QToolTip onto a scrollable dialog.
 const QString& rarityInfoHtml() {
     static const QString html =
-        QStringLiteral("<p><b>What the rarities mean</b></p>") +
         definitionListHtml(kModernRarities, rarityLabel, rarityDescription) +
         QStringLiteral("<p><b>Legacy rarities</b> (older eras)</p>") +
         definitionListHtml(kLegacyRarities, rarityLabel, rarityDescription);
     return html;
 }
 
-// The foil-treatment "info" popover: every finish, each with its description.
+// The foil-treatment explanation: every finish, each with its description.
 const QString& foilInfoHtml() {
-    static const QString html =
-        QStringLiteral("<p><b>What the foil treatments mean</b></p>") +
-        definitionListHtml(kFoils, foilLabel, foilDescription);
+    static const QString html = definitionListHtml(kFoils, foilLabel, foilDescription);
     return html;
 }
 
-// The two glyphs the form's field rows carry, both built by makeGlyphButton: "ⓘ" explains
-// what a picker's options mean, "⚠" flags a field the card catalog left empty.
-const QString kInfoGlyph = QStringLiteral("ⓘ");
+// The "⚠" glyph the form's field rows carry, flagging a field the card catalog left empty
+// (makeHintButton — a tooltip, since these are a sentence). Its "ⓘ" neighbour explaining
+// what a picker's options mean is infoGlyph() / makeInfoButton — a dialog, since those run
+// long.
 const QString kMissingGlyph = QStringLiteral("⚠");
 
 // The "⚠" popovers. Each says the same two things — nothing filled this in, and it is
 // optional anyway — but names the reason per field, since the reasons genuinely differ (an
 // English-only catalog, a grade only the holder can judge, a finish a scan can't tell
-// apart). Static authored markup, so it bypasses tooltipText() exactly like the ⓘ popovers.
+// apart). Static authored markup, so it bypasses tooltipText() — these are now the form's
+// only tooltip-borne text, the ⓘ explanations having moved into a dialog.
 QString missingHintHtml(const QString& why) {
     return QStringLiteral("<p><b>Not filled in for you</b><br>%1</p>"
                           "<p>It's optional — a card can be recorded without it.</p>")
@@ -268,9 +274,13 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
 
     // One builder for every row that carries a glyph beside its field. Right of the field
     // come, in order, the "⚠" marker (this field was left empty — see setMissingFieldHints)
-    // and the "ⓘ" popover explaining the picker's terms (opaque abbreviations / jargon
-    // otherwise, and the same source as the options themselves). Either may be absent; both
-    // are built by makeGlyphButton, so the affordance can't drift row to row.
+    // and the "ⓘ" explaining the picker's terms (opaque abbreviations / jargon otherwise,
+    // and the same source as the options themselves). Either may be absent; both wear
+    // makeGlyphButton's look, so the affordance can't drift row to row — but they reveal
+    // themselves differently: the ⚠'s sentence is a tooltip, the ⓘ's reference opens the
+    // modal InfoDialog (its body would be clipped unread as a tooltip). Hence the ⓘ is
+    // named by a TITLE plus a body PROVIDER, which is what keeps each …InfoHtml() static
+    // lazy until the first click.
     //
     // The marker is muted (a hint, not an error — applyMutedText rather than
     // setEnabled(false), which would swallow the click that pops the explanation) and keeps
@@ -284,7 +294,7 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
         QToolButton probe;  // measured, never shown: one column width for every row
         probe.setAutoRaise(true);
         int width = 0;
-        for (const QString& glyph : {kInfoGlyph, kMissingGlyph}) {
+        for (const QString& glyph : {infoGlyph(), kMissingGlyph}) {
             probe.setText(glyph);
             width = std::max(width, probe.sizeHint().width());
         }
@@ -292,8 +302,8 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     }();
     const auto fieldRow = [this, form, glyphSlot](
                               const QString& label, QWidget* field, const QString& missingWhy,
-                              const QString& missingName, const QString& infoHtml,
-                              const QString& infoName,
+                              const QString& missingName, const QString& infoTitle,
+                              std::function<QString()> infoBody,
                               Qt::Alignment glyphAlign = Qt::Alignment()) -> QToolButton* {
         // An absent glyph leaves an empty WIDGET of the same width behind, not addSpacing:
         // a spacer item and a widget lay out a few pixels apart, which is visible as a
@@ -317,7 +327,7 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
         if (missingWhy.isEmpty()) {
             row->addWidget(emptySlot());
         } else {
-            missing = makeGlyphButton(this, kMissingGlyph, missingHintHtml(missingWhy), missingName);
+            missing = makeHintButton(this, kMissingGlyph, missingHintHtml(missingWhy), missingName);
             applyMutedText(missing);
             missing->setFixedWidth(glyphSlot);
             QSizePolicy policy = missing->sizePolicy();
@@ -326,10 +336,10 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
             missing->hide();  // armed only by setMissingFieldHints(true)
             row->addWidget(missing, 0, glyphAlign);
         }
-        if (infoHtml.isEmpty()) {
+        if (!infoBody) {
             row->addWidget(emptySlot());
         } else {
-            auto* info = makeGlyphButton(this, kInfoGlyph, infoHtml, infoName);
+            auto* info = makeInfoButton(this, infoTitle, std::move(infoBody));
             info->setFixedWidth(glyphSlot);
             row->addWidget(info, 0, glyphAlign);
         }
@@ -348,8 +358,8 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     form->addRow(tr("Collector number"), collectorNumber_);
     rarityHint_ = fieldRow(tr("Rarity"), rarity_,
                            tr("The card catalog gave no rarity for this printing."),
-                           tr("Rarity was not filled in"), rarityInfoHtml(),
-                           tr("What the rarities mean"));
+                           tr("Rarity was not filled in"), tr("What the rarities mean"),
+                           [] { return rarityInfoHtml(); });
 
     form->addRow(tr("Ownership"), ownership_);
     // The binder combo pairs with an optional "Remove from binder" button (hidden unless
@@ -364,19 +374,21 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     languageHint_ = fieldRow(tr("Language"), language_,
                              tr("The card catalog is English-only, so it can't tell which "
                                 "language print you hold. Settings can pre-select a default."),
-                             tr("Language was not filled in"), QString(), QString());
+                             tr("Language was not filled in"), QString(), nullptr);
     conditionHint_ = fieldRow(tr("Condition"), condition_,
                               tr("Only you can see the card in hand, so nothing can grade it "
                                  "for you."),
-                              tr("Condition was not filled in"), conditionInfoHtml(),
-                              tr("What the condition grades mean"));
+                              tr("Condition was not filled in"),
+                              tr("What the condition grades mean"),
+                              [] { return conditionInfoHtml(); });
     foilHint_ = fieldRow(tr("Foil treatment"), foil_,
                          tr("The card catalog doesn't record which finish a printing came in."),
-                         tr("Foil treatment was not filled in"), foilInfoHtml(),
-                         tr("What the foil treatments mean"));
+                         tr("Foil treatment was not filled in"),
+                         tr("What the foil treatments mean"),
+                         [] { return foilInfoHtml(); });
     commentsHint_ = fieldRow(tr("Comments"), comments_,
                              tr("Nothing to autofill here — it's your own note about this copy."),
-                             tr("Comments were not filled in"), QString(), QString(), Qt::AlignTop);
+                             tr("Comments were not filled in"), QString(), nullptr, Qt::AlignTop);
 
     // Qt derives tab order from CONSTRUCTION order, which no longer matches the rows above,
     // so spell the traversal out — otherwise Tab jumps from Collector number back up to
