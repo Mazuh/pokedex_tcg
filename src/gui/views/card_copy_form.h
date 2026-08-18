@@ -53,6 +53,11 @@ protected:
     // ownership / binder — a footgun now that these fields are editable on the edit page.
     bool eventFilter(QObject* watched, QEvent* event) override;
 
+    // Repaint the amber "⚠" markers when the theme changes. applyWarningText writes a
+    // concrete colour into the palette, which is exactly what a PaletteChange would
+    // otherwise overwrite (or leave stranded at the previous theme's tone).
+    void changeEvent(QEvent* event) override;
+
 public:
     // Populate the binder combo and select `selected` (nullopt → "— None —"). When
     // `enabled` is false the combo is shown but locked (scoped-add and edit cases).
@@ -174,6 +179,10 @@ private:
     QToolButton* foilHint_ = nullptr;
     QToolButton* commentsHint_ = nullptr;
     bool missingHintsArmed_ = false;
+    // Whether the printed-identity fields are editable — the add page's state, and the
+    // default. Read by changeEvent, which must re-apply the locked look after a theme
+    // switch and cannot ask a QLineEdit whether its grey was deliberate.
+    bool referenceEditable_ = true;
 };
 
 }  // namespace pokedex

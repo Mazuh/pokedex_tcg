@@ -30,6 +30,7 @@
 #include "gui/views/muted_text.h"
 #include "gui/views/ownership_labels.h"
 #include "gui/views/rarity_labels.h"
+#include "gui/views/warning_text.h"
 
 namespace pokedex {
 
@@ -282,9 +283,11 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     // named by a TITLE plus a body PROVIDER, which is what keeps each …InfoHtml() static
     // lazy until the first click.
     //
-    // The marker is muted (a hint, not an error — applyMutedText rather than
-    // setEnabled(false), which would swallow the click that pops the explanation) and keeps
-    // its size while hidden, so raising one never shifts the ⓘ or resizes the field.
+    // The marker is amber (a hint, not an error — applyWarningText rather than
+    // setEnabled(false), which would swallow the click that pops the explanation, and rather
+    // than red, which would claim an optional field is invalid) and keeps its size while
+    // hidden, so raising one never shifts the ⓘ or resizes the field. Its colour is an
+    // explicit palette entry, so changeEvent below re-applies it when the theme flips.
     // Returns the marker for the caller to keep; nullptr when the row has none.
     //
     // Both glyphs occupy a fixed-width slot, and a row missing one still reserves it — so
@@ -328,7 +331,7 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
             row->addWidget(emptySlot());
         } else {
             missing = makeHintButton(this, kMissingGlyph, missingHintHtml(missingWhy), missingName);
-            applyMutedText(missing);
+            applyWarningText(missing);
             missing->setFixedWidth(glyphSlot);
             QSizePolicy policy = missing->sizePolicy();
             policy.setRetainSizeWhenHidden(true);
@@ -421,6 +424,34 @@ bool CardCopyForm::eventFilter(QObject* watched, QEvent* event) {
     return QWidget::eventFilter(watched, event);
 }
 
+void CardCopyForm::changeEvent(QEvent* event) {
+    QWidget::changeEvent(event);
+    if (event->type() != QEvent::PaletteChange &&
+        event->type() != QEvent::ApplicationPaletteChange) {
+        return;
+    }
+    // Both of this form's hand-coloured looks pin a CONCRETE colour into a child's own
+    // palette, and the new theme's palette does not replace one of those — so re-derive
+    // them against the fresh background. Resetting first is what makes the widget inherit
+    // the incoming theme before the tone is picked off it.
+    for (QToolButton* hint :
+         {rarityHint_, languageHint_, conditionHint_, foilHint_, commentsHint_}) {
+        if (hint != nullptr) {
+            hint->setPalette(QPalette{});
+            applyWarningText(hint);
+        }
+    }
+    if (!referenceEditable_) {
+        // The locked printed-identity fields, greyed by setReferenceEditable(false) — their
+        // grey came from the OLD theme's Disabled entry, which reads washed out (or too
+        // dark) once the appearance flips.
+        for (QLineEdit* field : {cardName_, expansionCode_, setName_, collectorNumber_}) {
+            field->setPalette(QPalette{});
+            applyMutedText(field);
+        }
+    }
+}
+
 void CardCopyForm::setupBinderPicker(const std::vector<CardBinder>& binders,
                                      std::optional<CardBinderId> selected, bool enabled) {
     fillBinderCombo(*binder_, binders, selected);
@@ -468,6 +499,7 @@ void CardCopyForm::setReferenceEditable(bool editable) {
     // text though, which reads as confusing; so when locked we also mute the text to
     // the theme's disabled colour, matching a greyed-out read-only look while keeping
     // copy-out.
+    referenceEditable_ = editable;  // changeEvent has to re-grey these on a theme switch
     for (QLineEdit* field : {cardName_, expansionCode_, setName_, collectorNumber_}) {
         field->setReadOnly(!editable);
         if (editable) {

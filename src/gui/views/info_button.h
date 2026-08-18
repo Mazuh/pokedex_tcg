@@ -16,8 +16,9 @@ namespace pokedex {
 // GUI — the shared "ⓘ" affordance: the flat glyph beside a picker or a figure that opens
 // the modal InfoDialog explaining it. Every info affordance in the app is built here (the
 // card form's Rarity / Condition / Foil pickers, and both price surfaces) so they cannot
-// drift on the glyph, the cursor, or what a click does. The look is makeGlyphButton's, the
-// same one the "⚠" hints wear.
+// drift on the glyph, the cursor, or what a click does. The shape is makeGlyphButton's, the
+// same one the "⚠" hints wear — but only the shape: the ⚠ is amber (applyWarningText),
+// since it flags something to look at, while the ⓘ is always there and stays neutral.
 //
 // The click used to be QToolTip::showText over the same rich text. A tooltip does not
 // scroll and Qt clamps it to the screen, so a long explanation (the rarity list runs to 17

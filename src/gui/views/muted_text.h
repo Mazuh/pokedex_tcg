@@ -14,13 +14,15 @@ namespace pokedex {
 // and covers the three foreground roles widgets actually draw text with —
 // WindowText (labels), Text (line edits) and ButtonText (buttons) — each sourced
 // from its own Disabled entry, so a QLabel, a read-only QLineEdit and a flat
-// QToolButton all grey to the same tone. ButtonText is why CardCopyForm's "⚠"
-// markers can read as a hint rather than an alarm: a button ignores WindowText.
+// QToolButton all grey to the same tone. ButtonText covers a flat QToolButton,
+// which ignores WindowText — the same reason warning_text.h sets it.
 //
 // Header-only alongside the other GUI view helpers; shared by the About box's
-// muted lines, CardCopyForm's locked printed-identity fields and its "couldn't be
-// autofilled" markers. To undo it, reset the widget to a default palette
-// (`w->setPalette(QPalette{})`).
+// muted lines, the capture-progress figures and CardCopyForm's locked
+// printed-identity fields. Its counterpart for text that must be NOTICED rather
+// than receded is applyWarningText (warning_text.h), which the form's "⚠ not
+// filled in for you" markers wear. To undo either, reset the widget to a default
+// palette (`w->setPalette(QPalette{})`).
 inline void applyMutedText(QWidget* widget) {
     QPalette pal = widget->palette();
     const QColor mutedWindow = pal.color(QPalette::Disabled, QPalette::WindowText);

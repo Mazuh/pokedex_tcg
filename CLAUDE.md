@@ -1348,8 +1348,14 @@ the bug this split exists to prevent:
   habit, with `Qt::WhatsThisCursor` signalling "this reveals help". The click reads whatever
   tooltip the button CURRENTLY holds, so a caller may re-word it per render without
   re-wiring. Used by "⚠" (`CardCopyForm`'s "the catalog couldn't fill this in" markers,
-  muted with `applyMutedText` so they read as a hint rather than an error — which is also
-  why `applyMutedText` covers the `ButtonText` role: a button ignores `WindowText`).
+  painted amber by `applyWarningText` (`gui/views/warning_text.h`) — a hint to look at, not
+  an error: red would claim an optional field is invalid, and the disabled-grey they wore
+  before was so quiet that the one thing they exist for went unnoticed. Two tones picked off
+  the window lightness, since one saturated yellow can't be legible on both a light and a
+  dark form. Like `applyMutedText` it must set the `ButtonText` role — a button ignores
+  `WindowText` — and because an explicit palette colour does NOT follow a theme switch,
+  `CardCopyForm::changeEvent` re-applies it on `PaletteChange`, the palette-side counterpart
+  of `PrimaryButtonStyler`).
 - **`makeInfoButton` (`gui/views/info_button.h`) — a REFERENCE, as a modal.** Used by "ⓘ"
   (what these options/figures mean: `CardCopyForm`'s Rarity/Condition/Foil pickers, and both
   price surfaces). It opens `InfoDialog`; its own tooltip carries only the short TITLE, and
