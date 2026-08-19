@@ -14,6 +14,7 @@
 #include "core/domain/card_reference.h"
 #include "core/domain/types.h"
 
+class QCheckBox;
 class QComboBox;
 class QHBoxLayout;
 class QLineEdit;
@@ -123,6 +124,10 @@ public:
     // row, left-aligned in insertion order. The form takes ownership.
     void addAction(QPushButton* button);
 
+    // Set the "no fixed position" box WITHOUT emitting noFixedPositionChanged — a load,
+    // not a user decision.
+    void setNoFixedPosition(bool noFixedPosition);
+
     // Read the current field values.
     CardReference cardReference() const;
     CardOwnership ownership() const;
@@ -130,6 +135,7 @@ public:
     std::optional<CardRarity> rarity() const;
     std::optional<CardFoil> foil() const;
     std::optional<CardBinderId> binderId() const;
+    bool noFixedPosition() const;
     std::string comments() const;
 
 Q_SIGNALS:
@@ -145,6 +151,10 @@ Q_SIGNALS:
     // an edit host persist the reassignment immediately.
     void binderChanged();
 
+    // The "no fixed position" box was toggled BY THE USER (setNoFixedPosition and loadCopy
+    // are silent), so an edit host can persist it immediately, exactly as it does the binder.
+    void noFixedPositionChanged();
+
 private:
     // Enable the "Remove from binder" button only while the combo is editable and a
     // binder is actually selected — there is nothing to remove from "— None —".
@@ -155,6 +165,10 @@ private:
     // box's textChanged, and the SILENT setters (setRarity / setLanguage / setCondition /
     // loadCopy), which emit nothing and are how the prefill flows write their values.
     void refreshMissingFieldHints();
+
+    // Enable the "no fixed position" box only while a binder is selected — it names a
+    // position in one. Called from every path the binder selection changes by.
+    void updateNoFixedPositionEnabled();
 
     QLineEdit* cardName_;
     QLineEdit* expansionCode_;
@@ -167,6 +181,7 @@ private:
     QComboBox* ownership_;
     QComboBox* binder_;
     QPushButton* unassignBinder_;  // "Remove from binder", hidden until setBinderRemovable(true)
+    QCheckBox* noFixedPosition_;   // "keep this one at the end of the binder"
     QPlainTextEdit* comments_;
     QHBoxLayout* actions_;  // bottom row the host fills via addAction()
 

@@ -50,6 +50,11 @@ struct CardBinderEntry {
     std::optional<CardCopyId> cardCopyId;  // nullopt = a species placeholder, or a blank
     std::optional<CollectionStatus> status;  // nullopt = a blank pocket: nothing to report
     bool placedByHand = false;  // this copy was pinned to this pocket, not derived into it
+    // This copy declared it has NO fixed position (CardCopy::noFixedPosition), so it sits
+    // in the loose run at the very end rather than anywhere the derivation chose. Published
+    // for the same reason placedByHand is: the view (blank page/pocket), the header stats
+    // and the move planner all read it, and re-deriving it per caller is how they drift.
+    bool noFixedPosition = false;
 };
 
 // Whether this row occupies a physical pocket in the album — the predicate that

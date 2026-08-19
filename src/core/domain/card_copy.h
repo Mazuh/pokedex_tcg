@@ -43,6 +43,14 @@ struct CardCopy {
                                        // independent of rarity
     std::optional<CardBinderId> binderId;  // filed in this binder, if any;
                                            // clearing it never affects the copy
+    // Filed in the binder, but with no home sleeve: a card the user keeps in a loose
+    // run at the BACK of the album and rearranges on demand (duplicates, trade fodder,
+    // the odd Trainer card). The binder guide then leaves it out of the Pokédex
+    // checklist and out of the arrangement machinery entirely, listing it after
+    // everything else. It qualifies the FILING, not the card, so it is inert while
+    // binderId is unset — and it is the opposite of a CardBinderPlacement, which pins a
+    // card to one exact pocket.
+    bool noFixedPosition = false;
     std::string comments;                  // multiline free text: capture story,
                                            // price, seller, imperfections, dates…
     std::string externalCardId;            // link to the external catalog card (a

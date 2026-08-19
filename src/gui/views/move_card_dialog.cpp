@@ -178,8 +178,11 @@ int MoveCardDialog::rowAtEnteredPocket() const {
 void MoveCardDialog::updateTargetPreview() {
     const int row = rowAtEnteredPocket();
     if (row < 0) {
+        // "the arranged cards", not "the binder": the caller hands this dialog the rows up
+        // to the loose run (cards with no fixed position), which the guide keeps after
+        // everything else — so a card sent past the end lands ahead of them, not last.
         preview_->setText(tr("That pocket is past the last card — this one will go at the "
-                             "end of the binder."));
+                             "end of the arranged cards."));
         return;
     }
     if (isBlankPocket(rows_[row])) {

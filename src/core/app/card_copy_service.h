@@ -45,13 +45,15 @@ public:
     // `foil` are the card's optional rarity classification and foil treatment.
     // `externalCardId` links the copy to its external catalog card (a pokemontcg.io
     // id) so its prices can be looked up; pass "" when the copy is not linked (a
-    // hand-entered card, or one added without picking from the finder). Both audit
-    // stamps are set to now(). Returns the persisted copy with its freshly minted id.
+    // hand-entered card, or one added without picking from the finder).
+    // `noFixedPosition` files the copy in the binder with no home sleeve (see
+    // CardCopy). Both audit stamps are set to now(). Returns the persisted copy with
+    // its freshly minted id.
     CardCopy create(std::optional<PokemonDexNum> pokemonDexNum, CardReference cardRef,
                     CardOwnership ownership, std::optional<CardCondition> condition,
                     std::optional<CardRarity> rarity, std::optional<CardFoil> foil,
                     std::optional<CardBinderId> binderId, std::string comments,
-                    std::string externalCardId = "");
+                    std::string externalCardId = "", bool noFixedPosition = false);
 
     // Edit a copy's mutable details — its printed reference (the copy's language is
     // the field the edit surface actually changes; the printing identity is otherwise
@@ -70,6 +72,14 @@ public:
     // no copy has that id (a bad binder id is rejected by the storage FK), or if the
     // copy is soft-Removed — frozen history is not refiled.
     void assignToBinder(const CardCopyId& id, std::optional<CardBinderId> binderId);
+
+    // Declare (or withdraw) that the copy keeps no home sleeve in its binder — the
+    // guide then lists it in the loose run at the very end instead of in the Pokédex
+    // checklist (see CardCopy::noFixedPosition). Persists immediately, like
+    // assignToBinder, because it is the same kind of decision: where the card lives,
+    // not what it is. Throws CardCopyError if no copy has that id, or if the copy is
+    // soft-Removed — frozen history is not refiled.
+    void setNoFixedPosition(const CardCopyId& id, bool noFixedPosition);
 
     // Attach (or replace) the copy's link to an external catalog card so its prices
     // can be looked up — the way an existing, unlinked copy gets a link after the fact

@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <optional>
 #include <string>
 #include <vector>
@@ -82,6 +83,15 @@ struct MoveTest : ::testing::Test {
         copies.add(copy);
     }
 
+    // File a card that keeps no home sleeve: the guide lists it in the loose run at the
+    // very end, and nothing there is an arrangement target.
+    void fileLoose(std::string id, std::optional<PokemonDexNum> dex, int hour = 9) {
+        file(id, dex, hour);
+        CardCopy loose = *copies.find(id);
+        loose.noFixedPosition = true;
+        copies.update(loose);
+    }
+
     void wish(PokemonDexNum dex) {
         pokedex::Wishlist w;
         w.pokemonDexNum = dex;
@@ -139,6 +149,19 @@ struct MoveTest : ::testing::Test {
     static int pocketCount(const std::vector<CardBinderEntry>& entries) {
         int n = 0;
         for (const CardBinderEntry& e : entries) {
+            n += pokedex::holdsPocket(e) ? 1 : 0;
+        }
+        return n;
+    }
+
+    // How many pockets the ARRANGED album occupies — the loose run at the end excluded,
+    // since no pocket there is a move target.
+    static int arrangedPocketCount(const std::vector<CardBinderEntry>& entries) {
+        int n = 0;
+        for (const CardBinderEntry& e : entries) {
+            if (e.noFixedPosition) {
+                break;
+            }
             n += pokedex::holdsPocket(e) ? 1 : 0;
         }
         return n;
@@ -223,6 +246,64 @@ TEST_F(MoveTest, ProjectedRowsMatchTheGuideWhenAMoveVacatesAReservedSlot) {
     EXPECT_EQ(pokedex::listedSpecies(binder, rows()).size(), 151u);
 }
 
+// The sweep once more, this time with cards that keep NO fixed position filed alongside.
+// Their rows trail every other one and are not move targets, so the planner reasons about
+// the arranged prefix alone while still having to project the loose run verbatim — exactly
+// the kind of split that drifts from buildEntries when only one side knows about it.
+TEST_F(MoveTest, ProjectedRowsMatchTheGuideWithLooseCardsAtTheEnd) {
+    openBinder();
+    file("a", 1);
+    file("b", 25, 10);
+    fileLoose("loose", 25, 11);
+    file("trainer", std::nullopt, 12);
+    fileLoose("looseTrainer", std::nullopt, 13);
+    binder = service.insertBlanks("b1", {.beforeDexNum = 25, .blanks = 2});
+
+    for (const std::string& copyId : {"trainer", "a", "b"}) {
+        for (int pocket = 0; pocket < 8; ++pocket) {
+            const BinderMovePlan p = plan(copyId, pocket);
+            apply(p);
+            const auto actual = rows();
+            EXPECT_EQ(layout(p.projectedRows), layout(actual))
+                << "moving " << copyId << " to pocket " << pocket;
+            // A pocket past the arranged album lands the card in the LAST ARRANGED sleeve,
+            // never among the loose ones — that run is not somewhere a card can be sent.
+            ASSERT_EQ(pocketOf(actual, copyId),
+                      std::min(pocket, arrangedPocketCount(actual) - 1))
+                << "moving " << copyId << " to pocket " << pocket;
+            // And the loose run itself is exactly where it was, in filed order.
+            const auto layoutRows = layout(actual);
+            ASSERT_GE(layoutRows.size(), 2u);
+            EXPECT_EQ(layoutRows[layoutRows.size() - 2], "loose");
+            EXPECT_EQ(layoutRows.back(), "looseTrainer");
+        }
+    }
+}
+
+// A card that gave its position up has no pocket to be moved from or to, so the planner
+// refuses rather than quietly pinning it — which would be the exact opposite of what the
+// flag asks for. (The GUI disables the button; this is the contract behind it.)
+TEST_F(MoveTest, ALooseCardCannotBeMoved) {
+    openBinder();
+    file("a", 1);
+    fileLoose("loose", 25);
+
+    EXPECT_THROW(plan("loose", 0), BinderMoveError);
+}
+
+// The planner truncates the loose run off the end, which is only sound because the guide
+// emits it strictly last. Rows that break that (hand-built, or re-sorted by a view) are
+// refused rather than indexing the truncated span past its end.
+TEST_F(MoveTest, RowsWithALooseCardBeforeAnArrangedOneAreRefused) {
+    openBinder();
+    file("a", 1);
+    fileLoose("loose", 25);
+
+    std::vector<CardBinderEntry> reversed = rows();
+    std::reverse(reversed.begin(), reversed.end());  // the loose card now comes first
+    EXPECT_THROW(planCardMove(binder, reversed, "a", 0, nullptr), BinderMoveError);
+}
+
 // A move must never DELETE a page break recorded against a species that has become an
 // extra. canonicalBlankSets only spares a run whose anchor names no row at all, so this
 // held only once the guide started emitting those anchors in the extras.
@@ -281,6 +362,24 @@ int placeholdersFor(const std::vector<CardBinderEntry>& entries, PokemonDexNum d
         }
     }
     return n;
+}
+
+// A loose sibling is not holding its species' reserved slot: it sits at the back of the
+// album, so moving the copy that WAS in the Pokédex sleeve must still leave a placeholder
+// there. (vacatesReservedSlot's sibling scan is what decides this.)
+TEST_F(MoveTest, ALooseSiblingDoesNotHoldTheReservedSlot) {
+    openBinder({Region::Kanto});
+    file("pika", 25);
+    fileLoose("loosePika", 25, 10);
+    ASSERT_EQ(placeholdersFor(rows(), 25), 0);  // the natural copy is in the sleeve
+
+    apply(plan("pika", 0));  // move it to the front, off its slot
+
+    const auto after = rows();
+    EXPECT_EQ(placeholdersFor(after, 25), 1) << "the loose copy does not stand in for it";
+    EXPECT_EQ(pocketOf(after, "pika"), 0);
+    // The loose one never moved, and is still last.
+    EXPECT_EQ(layout(after).back(), "loosePika");
 }
 
 // Pulling a card off its Pokédex slot and dropping it into a blank is a pure swap: the

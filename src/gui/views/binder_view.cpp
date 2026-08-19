@@ -273,7 +273,9 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     capturedStat_ = new QLabel(statsRow);
     capturedStat_->setToolTip(tr("How many of those reserved pockets hold an owned card, "
                                  "and what share of the listed species that is. A card you "
-                                 "moved out of its Pokédex pocket leaves it uncollected."));
+                                 "moved out of its Pokédex pocket leaves it uncollected; a "
+                                 "card with no fixed position still counts — you own it, it "
+                                 "just lives at the end."));
     cardsStat_ = new QLabel(statsRow);
     cardsStat_->setToolTip(tr("Card copies physically filed in this binder right now. "
                               "Duplicates count separately and Trainer/Energy cards are "
@@ -625,6 +627,12 @@ void BinderView::updateStats(const std::vector<CardCopy>& filedCopies) {
     // binder emits no placeholder when a card is pinned elsewhere, so excluding it there
     // would drop the species from the count with nothing standing in for it — the binder
     // would read "Listed 1 · Captured 0" over a single Owned card.
+    // A card with NO FIXED POSITION is deliberately NOT excluded here, even though its
+    // slot renders as a placeholder just as a moved card's does. The two say different
+    // things: a moved card chose another pocket, so its Pokédex sleeve is genuinely
+    // standing empty and waiting; a loose card chose no pocket at all — it is in this
+    // binder, you own it, it simply lives at the back. The row and the figure disagree on
+    // purpose, and the tooltip says so.
     const bool reserved = !binder_.pokemonRegions.empty();
     std::unordered_set<int> filledSlots;
     for (const CardBinderEntry& entry : entries_) {
@@ -752,7 +760,11 @@ void BinderView::repopulate() {
             // the move planner counts pockets with the same function, and a disagreement
             // on any row would land a moved card in the wrong sleeve.
             const bool takesPocket = holdsPocket(entry);
-            const bool numbered = showPockets && takesPocket;
+            // A card with no fixed position still occupies a sleeve — the count advances
+            // over it — but it is deliberately NOT numbered: it sits in the loose run the
+            // user reshuffles on demand, so a page and pocket would be a coordinate that is
+            // wrong by tomorrow. Blanking costs nothing downstream, since the run is last.
+            const bool numbered = showPockets && takesPocket && !entry.noFixedPosition;
             const int indexInPage = perPage > 0 ? pocket % perPage : 0;
             // Columns 0/1 are ALWAYS given an item, even when empty: the Removed-graying
             // pass below walks every column and would dereference a null cell otherwise.
@@ -786,12 +798,26 @@ void BinderView::repopulate() {
             }
             table_->setItem(i, 0, page);
             table_->setItem(i, 1, pocketCell);
+            if (entry.noFixedPosition) {
+                // Says why those two cells are blank — and says it on the name column too,
+                // which is where the eye lands when a row looks unlike its neighbours.
+                const QString loose = tr("No fixed position — kept at the end of the binder "
+                                         "and rearranged on demand. Untick it in Edit to "
+                                         "give this card a place.");
+                addToolTip(page, loose);
+                addToolTip(pocketCell, loose);
+            }
             // "#" is blank for a species-free card — it has no Pokédex number.
             auto* number =
                 cell(entry.pokemon ? QString::number(entry.pokemon->dexNumber) : QString());
             number->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
             table_->setItem(i, 2, number);
-            table_->setItem(i, 3, cell(rowLabel(entry, copy)));
+            auto* name = cell(rowLabel(entry, copy));
+            if (entry.noFixedPosition) {
+                addToolTip(name, tr("No fixed position — kept at the end of the binder and "
+                                    "rearranged on demand."));
+            }
+            table_->setItem(i, 3, name);
             // The row's OWN filed copy fills the printed-identity columns; a placeholder
             // row leaves them blank (rendered as an em-dash by cell()). Set is the eliding
             // Stretch column ("Base Set (BS)"); cell() carries the full value as the
@@ -1267,6 +1293,12 @@ std::optional<CardBinderBlank> BinderView::blankAnchorForRow(int row) const {
         return std::nullopt;
     }
     const CardBinderEntry& entry = entries_[row];
+    if (entry.noFixedPosition) {
+        // It sits past the arranged album and shuffles on demand, so a gap recorded before
+        // it would describe a page break that moves — and the guide ignores such a record
+        // anyway (see BinderGuideService).
+        return std::nullopt;
+    }
     CardBinderBlank anchor;
     anchor.blanks = 1;
     // A card the user MOVED here anchors to itself even when it has a species: its row no
@@ -1323,6 +1355,13 @@ void BinderView::updateBlankButtonState() {
     if (onBlank) {
         blankButton_->setEnabled(true);
         blankButton_->setToolTip(tr("Remove this deliberately empty pocket."));
+        return;
+    }
+    if (haveRow && entries_[row].noFixedPosition) {
+        blankButton_->setEnabled(false);
+        blankButton_->setToolTip(
+            tr("This card keeps no fixed position, so there is no page break to open before "
+               "it. Untick that in Edit to give it a place."));
         return;
     }
     blankButton_->setEnabled(haveRow && blankAnchorForRow(row).has_value());
@@ -1384,8 +1423,10 @@ bool BinderView::rowIsMovable(int row) const {
     }
     const CardCopy* copy = copyFor(entries_[row]);
     // A placeholder and a blank hold a pocket but no card, and a Removed copy is frozen
-    // history that isn't in a sleeve at all — none of the three is a card to re-file.
-    return copy != nullptr && !isRemoved(*copy);
+    // history that isn't in a sleeve at all — none of the three is a card to re-file. Nor
+    // is a card that declared it keeps no fixed position: pinning it to one pocket is the
+    // exact opposite of what it asked for, so that has to be withdrawn first.
+    return copy != nullptr && !isRemoved(*copy) && !entries_[row].noFixedPosition;
 }
 
 void BinderView::updateMoveButtonState() {
@@ -1409,6 +1450,13 @@ void BinderView::updateMoveButtonState() {
                "to return to it."));
         return;
     }
+    if (haveRow && entries_[row].noFixedPosition) {
+        moveButton_->setEnabled(false);
+        moveButton_->setToolTip(
+            tr("This card keeps no fixed position — it stays at the end of the binder. "
+               "Untick that in Edit to put it in a pocket."));
+        return;
+    }
     moveButton_->setEnabled(haveRow && rowIsMovable(row));
     moveButton_->setToolTip(
         haveRow && rowIsMovable(row)
@@ -1425,11 +1473,22 @@ void BinderView::moveSelectedCard() {
     }
     const CardCopyId copyId = *entries_[row].cardCopyId;
 
+    // Only the ARRANGED album is a target. The loose run trails every other row (see
+    // BinderGuideService) and nothing may be pinned inside it, so the dialog is shown the
+    // rows up to it: its page range then stops where arranging stops, instead of offering
+    // pockets the planner would only clamp back. The planner rejects them too — this is so
+    // the user never aims at one.
+    const auto looseAt = std::find_if(entries_.begin(), entries_.end(),
+                                      [](const CardBinderEntry& e) { return e.noFixedPosition; });
+    const std::span<const CardBinderEntry> arrangedRows(entries_.data(),
+                                                        static_cast<std::size_t>(
+                                                            looseAt - entries_.begin()));
+
     // Label every row the way the table's own Name column does, so the dialog's "that
     // pocket holds…" line names a card exactly as the row the user is looking at.
     std::vector<QString> rowLabels;
-    rowLabels.reserve(entries_.size());
-    for (const CardBinderEntry& entry : entries_) {
+    rowLabels.reserve(arrangedRows.size());
+    for (const CardBinderEntry& entry : arrangedRows) {
         rowLabels.push_back(rowLabel(entry, copyFor(entry)));
     }
 
@@ -1439,7 +1498,7 @@ void BinderView::moveSelectedCard() {
     // contradict the table about the same row.
     const bool placed = entries_[row].placedByHand;
 
-    MoveCardDialog dialog(binder_, entries_, rowLabels, copyId,
+    MoveCardDialog dialog(binder_, arrangedRows, rowLabels, copyId,
                           rowLabel(entries_[row], copyFor(entries_[row])), placed, this);
     if (dialog.exec() != QDialog::Accepted) {
         return;

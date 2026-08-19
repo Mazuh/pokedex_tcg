@@ -116,10 +116,21 @@ real, so the guide displays how full it is and blocks nothing; v13 added `card_b
 pockets** that let a user control where a page breaks — see the blank-pockets note below); v14
 added `card_binder_placement` [`(binder_id, card_copy_id)` PK, `ON DELETE CASCADE` on **both**
 binder and copy], a card pulled OUT of the guide's derived order and pinned before another row —
-the "this goes at page 18, pocket 2×2" gesture; see the moved-cards note below),
+the "this goes at page 18, pocket 2×2" gesture; see the moved-cards note below); v15 added
+`card_copy.no_fixed_position` [`INTEGER NOT NULL DEFAULT 0`, so `DEFAULT 0` *is* the backfill],
+a copy filed in a binder that keeps **no home sleeve** — the exact opposite of v14's placement,
+and the reason it rides on `card_copy` rather than a third binder-scoped table: filing already
+does [`card_copy.binder_id`], so a per-copy flag needs no key of its own and a card the user
+treats as loose stays loose if it is refiled; see the loose-cards note below),
 so a fresh DB runs the whole chain and an existing one
 only the tail — bump `kSchemaVersion` and add a step (never edit `kSchemaV1`) when
 the schema changes.
+
+**A hand-built older-schema fixture must stand up every table a LATER step touches, not just
+the one under test.** v15's `ALTER TABLE card_copy` broke the v8 and v9 fixtures, which had no
+`card_copy` at all — the same way v14's foreign key broke the v11 one. The failure reads "no such
+table" from a step the test wasn't thinking about, so when adding a step, run the whole
+`DatabaseTest` suite rather than only the new case.
 
 **From v12 on, a migration step ALTERs a v1 table, so "migrate a fresh DB, then roll
 `user_version` back and re-migrate" is no longer a safe way to exercise a step in a test** — the
@@ -160,16 +171,18 @@ moved-cards note below), `BinderGuideService`
 (the `buildBinderEntries` the inferred zone refers to — the binder's CHECKLIST (one row per
 card filed against a species in one of the binder's regions, duplicates adjacent in filed
 order, plus a placeholder row for every reserved slot holding nothing) followed by the
-EXTRAS (everything the checklist doesn't claim, in filed order), with one row per **blank
-pocket** and one per **moved card** interleaved before the row their anchor names; a row is
-a slot, not a species — see the reserved-slots note below. It also exposes the free function
+EXTRAS (everything the checklist doesn't claim, in filed order) and finally the LOOSE run
+(the cards that keep no home sleeve — see the loose-cards note below), with one row per
+**blank pocket** and one per **moved card** interleaved before the row their anchor names; a
+row is a slot, not a species — see the reserved-slots note below. It also exposes the free function
 `listedSpecies(binder, rows)` [the checklist itself, for the GUI's Listed stat] and
 `placeholderStatusFor(binderId, dexNum)` [the verdict a placeholder would carry, published
 for the move planner, which must project one but can't reach the wishlist]),
 `PokemonBrowseService`
 (`listAll` → every catalog species paired with its owned-copy count, the unscoped
 Pokédex browser's data), `CardCopyService` (the copy verbs —
-`create`/`editDetails`/`assignToBinder`/`remove`[soft, with an optional
+`create`/`editDetails`/`assignToBinder`/`setNoFixedPosition`[the loose-filing verb, an
+immediate write like `assignToBinder`]/`remove`[soft, with an optional
 note-append]/`hardDelete`/`listAll`/`listByBinder` — with an injectable clock and
 id generator like `BinderService`), `WishlistService` (the manage-sources verbs), and the
 **card-catalog seam** — `CardCatalogApi` (Qt-free interface, parallel to
@@ -384,7 +397,8 @@ species and a row without the binder ever reserving it a slot] · `Captured` [ch
 that are FILLED: a listed species with ≥1 Owned copy row that is `!placedByHand`.
 Deliberately not `ownedCountsByDex_`'s key set, which counts a species owned anywhere in the
 binder — a card moved out to the extras leaves its slot reading Missing, and the figure above
-it has to agree with the row] · `Cards` [Owned copies filed here; duplicates and
+it has to agree with the row. A card with NO FIXED POSITION is the one deliberate exception:
+it is counted although its slot shows a placeholder — see the loose-cards note] · `Cards` [Owned copies filed here; duplicates and
 non-Pokémon cards each count — rendered as "Cards 42 of 360 (12%)" when the binder records a
 capacity, and deliberately UNCLAMPED, since an over-full album is exactly what the figure
 exists to reveal] · market value. Its first two columns, `Page` and `Pocket`, say where a row
@@ -401,7 +415,8 @@ existing save-binder path rather than adding a second unassign verb, and is enab
 while a binder is actually selected. **Its row ORDER is load-bearing, not cosmetic:**
 everything a picked card can autofill comes first (card name, expansion code, set name,
 collector number, then the catalog's best-effort rarity), and everything only the person
-holding the card can answer comes after (ownership, binder, language, condition, foil,
+holding the card can answer comes after (ownership, binder, the "no fixed position" box
+that qualifies it, language, condition, foil,
 comments) — so after a pick the eye runs straight down to the first field still needing
 attention instead of hunting a form whose filled and unfilled rows interleave. Keep a new
 field on the side of that line it belongs to. Because Qt derives tab order from
@@ -1029,6 +1044,50 @@ labels so it reads exactly like the table's Name column. Capacity, when recorded
 range; without it the cap is the last page in use plus one, so a card can always be sent past the
 end. A placed row's Page/Pocket cells carry a "moved here by hand" tooltip — otherwise it is
 indistinguishable from one the dex put there.
+
+**Cards with NO fixed position: the loose run at the back.** Some cards never get a home
+sleeve — duplicates, trade fodder, a Trainer card the user reshuffles on demand. `CardCopy`
+records that as `noFixedPosition` (schema v15), a checkbox on `CardCopyForm` sitting directly
+under the binder picker because it qualifies the same decision. The guide then emits a **third
+run** after the checklist and the extras — after even a card pinned "at the very end" — and
+`CardBinderEntry::noFixedPosition` publishes the verdict per row, for the same reason
+`placedByHand` is published: the view, the stats and the move planner all read it.
+
+It is the exact opposite of a `CardBinderPlacement`, and every rule follows from that:
+
+- **It is out of the arrangement machinery in BOTH directions.** A loose copy anchors no blank
+  and no placement (`blankAnchorForRow` returns nullopt, `rowIsMovable` is false), and none may
+  be anchored to it — `buildEntries` drops a placement naming it as `cardCopyId` AND rejects any
+  whose `beforeCopyId` is one. Those records are **ignored, never pruned**, exactly like an
+  orphaned blank, so unticking the box restores the arrangement intact
+  (`NothingAnchorsToALooseCopyAndItIsNeverPlaced` pins the round trip).
+- **The planner works on the ARRANGED PREFIX only.** `planCardMove` splits the loose run off
+  (`arrangedRowCount`), plans against what is left, and reattaches it to `projectedRows` at the
+  very end — after the anchor, the blank runs and `shiftedCards` have all been derived. So a
+  target past the arranged album lands the card in the last arranged sleeve rather than inside
+  the pile, loose cards never count as "shifted" (they are fluid by declaration — counting them
+  would cry wolf on every move), and `canonicalBlankSets` skips them. `BinderView` truncates the
+  rows it hands `MoveCardDialog` at the first loose row so the page range can't even offer one.
+- **Its Pokédex slot stays reserved and reads as Missing**, like a card moved out to the extras
+  — the sleeve really is empty. `listedSpecies`'s region-less branch skips loose rows too, or a
+  region-less binder would list a species with no checklist row anywhere.
+- **But `Captured` still counts it**, which is a DELIBERATE asymmetry with `placedByHand` (which
+  is excluded). The two say different things: a moved card chose another pocket, so its sleeve
+  stands empty and waiting; a loose card chose no pocket at all — you own it, it just lives at
+  the back. The row and the figure disagree on purpose, and the stat's tooltip says so.
+- **Page and Pocket render blank** (with a tooltip), because a coordinate for a card that is
+  reshuffled weekly is wrong by tomorrow. The pocket counter still advances over the row — it
+  does hold a sleeve — which costs nothing, since the run is last.
+- **The checkbox is disabled while no binder is selected** (`updateNoFixedPositionEnabled`,
+  kept in step from every path the picker changes by): it names a position IN a binder, so
+  left live it would let the add page report itself dirty — and the edit page toast "kept at
+  the end of its binder" — over a card filed in none.
+- **`planCardMove` refuses rows that break the trailing-run invariant** (a non-loose row
+  after a loose one). It is a public core entry point taking an arbitrary span, and the
+  truncation would otherwise index past the end of it.
+- **On the edit page it is an immediate write** (`CardCopyService::setNoFixedPosition`, refused
+  for a Removed copy), matching the binder picker beside it rather than the staged "Save
+  changes" — it is the same kind of decision, where the card lives rather than what it is.
 
 **Finding a card again: "Scroll to page".** A third selection-scoped button sits beside those
 two (`BinderView::revealSelectedRow` / `updateRevealButtonState`). It exists for a journey that

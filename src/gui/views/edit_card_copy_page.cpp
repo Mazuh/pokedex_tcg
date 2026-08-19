@@ -86,6 +86,8 @@ EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardPriceLookupSer
     form_->setupBinderPicker(binders, copy_.binderId, /*enabled=*/true);
     form_->setBinderRemovable(true);
     connect(form_, &CardCopyForm::binderChanged, this, &EditCardCopyPage::saveBinder);
+    connect(form_, &CardCopyForm::noFixedPositionChanged, this,
+            &EditCardCopyPage::saveNoFixedPosition);
     // Only the printed identity is locked; language/condition/ownership stay editable.
     form_->setReferenceEditable(false);
 
@@ -281,6 +283,24 @@ void EditCardCopyPage::saveBinder() {
     copy_.binderId = target;
     showToast(this, target ? tr("Card filed in its binder.")
                            : tr("Card removed from its binder."));
+}
+
+void EditCardCopyPage::saveNoFixedPosition() {
+    const bool wanted = form_->noFixedPosition();
+    if (wanted == copy_.noFixedPosition) {
+        return;
+    }
+    try {
+        copies_.setNoFixedPosition(copy_.id, wanted);
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, tr("Pokedex TCG"),
+                             tr("Could not refile the card:\n%1").arg(QString::fromUtf8(e.what())));
+        form_->setNoFixedPosition(copy_.noFixedPosition);  // the box lied; put it back
+        return;
+    }
+    copy_.noFixedPosition = wanted;
+    showToast(this, wanted ? tr("Card kept at the end of its binder.")
+                           : tr("Card returned to its place in the binder."));
 }
 
 void EditCardCopyPage::handleBack() {

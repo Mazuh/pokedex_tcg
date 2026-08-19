@@ -139,6 +139,30 @@ TEST(CardCopyRepositoryTest, ExternalCardIdRoundTripsAndUpdates) {
     EXPECT_EQ(repo.find("c2")->externalCardId, "base1-4");
 }
 
+TEST(CardCopyRepositoryTest, NoFixedPositionRoundTripsAndUpdates) {
+    Database db(":memory:");
+    db.migrate();
+    CardCopyRepository repo(db);
+
+    CardCopy loose = makeCopy("c1", 6, CardOwnership::Owned, std::nullopt);
+    loose.noFixedPosition = true;
+    repo.add(loose);
+    EXPECT_TRUE(repo.find("c1")->noFixedPosition);
+
+    // The default: a copy takes its derived place in the guide.
+    repo.add(makeCopy("c2", 6, CardOwnership::Owned, std::nullopt));
+    EXPECT_FALSE(repo.find("c2")->noFixedPosition);
+
+    // update() carries it both ways — the flag is changed after the fact from the edit page.
+    CardCopy edited = *repo.find("c2");
+    edited.noFixedPosition = true;
+    repo.update(edited);
+    EXPECT_TRUE(repo.find("c2")->noFixedPosition);
+    edited.noFixedPosition = false;
+    repo.update(edited);
+    EXPECT_FALSE(repo.find("c2")->noFixedPosition);
+}
+
 TEST(CardCopyRepositoryTest, UngradedConditionRoundTripsAsNullopt) {
     Database db(":memory:");
     db.migrate();

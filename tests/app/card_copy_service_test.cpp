@@ -232,6 +232,48 @@ TEST(CardCopyServiceTest, AssignToBinderFilesAndClearsWithoutTouchingOwnership) 
     EXPECT_FALSE(f.repo.find("copy-1")->binderId.has_value());
 }
 
+TEST(CardCopyServiceTest, NoFixedPositionIsRecordedAtCreationAndChangedAfterwards) {
+    Fixture f;
+    f.db.exec(
+        "INSERT INTO card_binder(id,name,region,inserted_at,updated_at)"
+        " VALUES('b1','Kanto',NULL,'2026-07-16T10:00:00Z','2026-07-16T10:00:00Z');");
+
+    // Created loose: filed in the binder, but keeping no home sleeve.
+    const CardCopy loose =
+        f.service.create(6, ref(), CardOwnership::Owned, CardCondition::NearMint, std::nullopt,
+                         std::nullopt, std::string("b1"), "", "", /*noFixedPosition=*/true);
+    EXPECT_TRUE(loose.noFixedPosition);
+    EXPECT_TRUE(f.repo.find("copy-1")->noFixedPosition);
+
+    // The default is the ordinary derived place.
+    f.service.create(6, ref(), CardOwnership::Owned, std::nullopt, std::nullopt, std::nullopt,
+                     std::string("b1"), "");
+    EXPECT_FALSE(f.repo.find("copy-2")->noFixedPosition);
+
+    // And it is changed after the fact, stamping updatedAt like the other filing verb.
+    const int before = f.service.revision();
+    f.now = at("2026-07-17T08:00:00Z");
+    f.service.setNoFixedPosition("copy-2", true);
+    CardCopy edited = *f.repo.find("copy-2");
+    EXPECT_TRUE(edited.noFixedPosition);
+    EXPECT_EQ(edited.updatedAt, at("2026-07-17T08:00:00Z"));
+    EXPECT_GT(f.service.revision(), before);
+    EXPECT_EQ(*edited.binderId, "b1");  // filing itself is untouched
+
+    f.service.setNoFixedPosition("copy-2", false);
+    EXPECT_FALSE(f.repo.find("copy-2")->noFixedPosition);
+}
+
+TEST(CardCopyServiceTest, NoFixedPositionIsRefusedForARemovedCopy) {
+    Fixture f;
+    f.service.create(6, ref(), CardOwnership::Owned, std::nullopt, std::nullopt, std::nullopt,
+                     std::nullopt, "");
+    f.service.remove("copy-1");
+    // Frozen history is not refiled — the same rule assignToBinder enforces.
+    EXPECT_THROW(f.service.setNoFixedPosition("copy-1", true), CardCopyError);
+    EXPECT_THROW(f.service.setNoFixedPosition("nope", true), CardCopyError);
+}
+
 TEST(CardCopyServiceTest, CreateFilesIntoABinderWhenGiven) {
     Fixture f;
     // The storage FK requires a real binder row to file into.

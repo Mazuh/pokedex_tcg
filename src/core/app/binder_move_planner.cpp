@@ -95,7 +95,11 @@ bool vacatesReservedSlot(const CardBinder& binder, std::span<const CardBinderEnt
         return false;
     }
     for (int i = 0; i < rowCount(rows); ++i) {
-        if (i == source || !rows[i].cardCopyId || rows[i].placedByHand) {
+        // A loose sibling holds nothing either — same reason as a pinned one. (Callers hand
+        // this the arranged rows only, so it is belt and braces, but the two predicates
+        // must not disagree.)
+        if (i == source || !rows[i].cardCopyId || rows[i].placedByHand ||
+            rows[i].noFixedPosition) {
             continue;
         }
         if (rows[i].pokemon && rows[i].pokemon->dexNumber == src.pokemon->dexNumber) {
@@ -103,6 +107,19 @@ bool vacatesReservedSlot(const CardBinder& binder, std::span<const CardBinderEnt
         }
     }
     return true;
+}
+
+// Where the ARRANGED album ends: the index of the first loose row (a card that declared no
+// fixed position), or the row count when there is none. The guide emits that run strictly
+// last and pins nothing inside it, so everything this planner reasons about — pockets,
+// anchors, the shift count — stops here. Those rows are carried across untouched.
+int arrangedRowCount(std::span<const CardBinderEntry> rows) {
+    for (int i = 0; i < rowCount(rows); ++i) {
+        if (rows[i].noFixedPosition) {
+            return i;
+        }
+    }
+    return rowCount(rows);
 }
 
 // Every card that RIDES on `copyId` — pinned before it, or before something pinned before
@@ -193,8 +210,9 @@ std::vector<CardBinderBlank> canonicalBlankSets(const CardBinder& binder,
     std::set<PokemonDexNum> speciesWithACardRow;
     for (int i = 0; i < rowCount(projected); ++i) {
         const CardBinderEntry& row = projected[i];
-        if (isBlankPocket(row)) {
-            continue;
+        if (isBlankPocket(row) || row.noFixedPosition) {
+            continue;  // a loose card anchors nothing: it is past the arranged album, and
+                       // recording a run against it would strand the gap when it shuffles
         }
         if (row.cardCopyId) {
             desiredByCopy[*row.cardCopyId] = blanksBefore(projected, i);
@@ -247,6 +265,28 @@ BinderMovePlan planCardMove(const CardBinder& binder,
     if (!holdsPocket(currentRows[source])) {
         throw BinderMoveError("a removed card is not in a sleeve, so it cannot be moved");
     }
+    if (currentRows[source].noFixedPosition) {
+        throw BinderMoveError("that card keeps no fixed position, so it has no pocket to "
+                              "move: " +
+                              copyId);
+    }
+
+    // Everything below plans over the ARRANGED album only. The loose run trails it and is
+    // reattached, untouched, at the end: no pocket in it is a target (a too-far pocket
+    // therefore lands the card immediately BEFORE the run, which is the last arranged
+    // sleeve), nothing anchors to it, and its cards are left out of shiftedCards — they are
+    // fluid by declaration, so counting them would cry wolf on every move.
+    const auto arranged = static_cast<std::size_t>(arrangedRowCount(currentRows));
+    if (static_cast<std::size_t>(source) >= arranged) {
+        // The guide emits the loose run strictly last, so a non-loose row after a loose one
+        // means these rows didn't come from it. Say so rather than indexing a truncated span
+        // past its end, which is how a caller passing hand-built or re-sorted rows would
+        // otherwise be met with undefined behaviour instead of an error.
+        throw BinderMoveError("these rows are not in guide order: a card sits after one with "
+                              "no fixed position");
+    }
+    const std::span<const CardBinderEntry> looseRows = currentRows.subspan(arranged);
+    currentRows = currentRows.first(arranged);
 
     // Take the card out FIRST, so the target pocket names a position in the final
     // arrangement rather than the current one — the physical gesture, and what keeps a
@@ -382,6 +422,11 @@ BinderMovePlan planCardMove(const CardBinder& binder,
             ++plan.shiftedCards;
         }
     }
+
+    // Reattached last, once the anchor, the blank runs and the shift count have all been
+    // derived from the arranged album alone — projectedRows still has to read exactly like
+    // the guide's own output, loose run included, or the anti-drift test is lying.
+    plan.projectedRows.insert(plan.projectedRows.end(), looseRows.begin(), looseRows.end());
     return plan;
 }
 

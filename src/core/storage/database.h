@@ -51,11 +51,14 @@ public:
     //        guide's derived order and pinned immediately before another row — the "this
     //        goes at page 18, pocket 2×2" gesture. Anchors to a copy by preference (both
     //        anchors unset = at the very end); `ordinal` orders same-anchor placements.
+    //   v15 — card_copy.no_fixed_position: this copy is filed in its binder but keeps no
+    //        home sleeve — the guide lists it in a loose run at the very end instead of in
+    //        the Pokédex checklist. 0 = it takes its derived place, which is the backfill.
     //
     // NOTE: from v12 on, a step ALTERs a v1 table, so "migrate a fresh DB, then roll the
     // stamp back and re-migrate" is no longer a safe way to exercise a step in a test — the
     // replayed ADD COLUMN fails as a duplicate. Stand the older shape up by hand instead.
-    static constexpr int kSchemaVersion = 14;
+    static constexpr int kSchemaVersion = 15;
 
     // Open (creating if absent) the database at `path`, or an in-memory database
     // when path == ":memory:". Throws StorageError on failure.

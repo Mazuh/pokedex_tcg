@@ -287,6 +287,20 @@ CREATE TABLE card_binder_placement (
 );
 )sql";
 
+// v14 → v15: CARDS WITH NO FIXED POSITION — a copy filed in a binder that keeps no home
+// sleeve, because the user rearranges it on demand (duplicates, trade fodder, a Trainer
+// card that moves around). It is the exact opposite of v14's placement: a placement pins a
+// card to ONE pocket, and these cards want none, so neither the Pokédex checklist nor the
+// blank/placement arrangement machinery should account for them. The guide lists them in a
+// loose run after everything else.
+//
+// It rides on card_copy rather than a third binder-scoped table because filing already
+// does (card_copy.binder_id): a copy sits in at most one binder, so a per-copy flag needs
+// no key of its own, and a card the user treats as loose stays loose if it is refiled.
+// 0 = it takes its derived place, so DEFAULT 0 IS the backfill for every existing copy.
+constexpr char kMigrationV15[] =
+    "ALTER TABLE card_copy ADD COLUMN no_fixed_position INTEGER NOT NULL DEFAULT 0;";
+
 }  // namespace
 
 Database::Database(const std::filesystem::path& path) {
@@ -434,6 +448,9 @@ void Database::migrate() {
         }
         if (from < 14) {
             exec(kMigrationV14);
+        }
+        if (from < 15) {
+            exec(kMigrationV15);
         }
         setUserVersion(kSchemaVersion);
     });

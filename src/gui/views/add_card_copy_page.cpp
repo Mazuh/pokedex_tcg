@@ -397,7 +397,7 @@ bool AddCardCopyPage::isDirty() const {
         return true;
     }
     // An uploaded-but-unsaved photo would be lost on Back — worth confirming.
-    if (!uploadedImage_.isNull()) {
+    if (!uploadedImage_.isNull() || form_->noFixedPosition()) {
         return true;
     }
     // The binder combo only counts when unscoped (scoped is pre-filled and locked, so
@@ -440,7 +440,8 @@ void AddCardCopyPage::submitCopy() {
     try {
         created = copies_.create(dexNumber_, form_->cardReference(), form_->ownership(),
                                  form_->condition(), form_->rarity(), form_->foil(), binderId,
-                                 form_->comments(), /*externalCardId=*/std::string());
+                                 form_->comments(), /*externalCardId=*/std::string(),
+                                 form_->noFixedPosition());
     } catch (const std::exception& e) {
         QMessageBox::warning(this, tr("Pokedex TCG"),
                              tr("Could not add the copy:\n%1").arg(QString::fromUtf8(e.what())));

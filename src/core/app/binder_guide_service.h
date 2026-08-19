@@ -52,6 +52,14 @@ public:
     //      whose dex number doesn't resolve, and copies of a species outside the
     //      binder's regions all land here, with no derived order to speak of —
     //      the user arranges them by hand (see CardBinderPlacement).
+    //   3. The LOOSE run, in filed order, after everything else — including any card
+    //      pinned "at the very end": the copies that declared they keep no home sleeve
+    //      (CardCopy::noFixedPosition). They are out of the checklist (their species'
+    //      slot stays reserved and falls back to a placeholder) and out of the
+    //      arrangement machinery altogether: they anchor no blank and no placement, they
+    //      carry none of their own, and they can't be pinned. Records naming them are
+    //      IGNORED, never pruned — clearing the flag restores the arrangement, exactly as
+    //      an orphaned blank does.
     //
     // Interleaved through both: the binder's BLANK POCKETS (CardBinderBlank), one row
     // each, immediately before the row their anchor names — a species (ahead of all its
@@ -61,8 +69,8 @@ public:
     // so restoring the region restores the layout.
     //
     // A regionless binder therefore shows exactly what is filed in it — and only there
-    // does a species stop being listed once its last copy is moved away, since it was
-    // never a reserved slot to begin with. "Filed order" is the repository's
+    // does a species stop being listed once its last copy is moved away (or declares no
+    // fixed position), since it was never a reserved slot to begin with. "Filed order" is the repository's
     // inserted_at, rowid ordering.
     std::vector<CardBinderEntry> buildEntries(const CardBinder& binder);
 

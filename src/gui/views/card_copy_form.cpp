@@ -1,5 +1,6 @@
 #include "gui/views/card_copy_form.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QEvent>
 #include <QFormLayout>
@@ -8,6 +9,7 @@
 #include <QPalette>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QStringList>
 #include <QTextCursor>
@@ -104,6 +106,24 @@ const QString& rarityInfoHtml() {
 // The foil-treatment explanation: every finish, each with its description.
 const QString& foilInfoHtml() {
     static const QString html = definitionListHtml(kFoils, foilLabel, foilDescription);
+    return html;
+}
+
+// What "no fixed position" means, for the ⓘ beside the checkbox. Long enough to want the
+// dialog rather than a tooltip: it has to say where the card goes, what it gives up, and
+// that nothing is lost by changing your mind.
+const QString& noFixedPositionInfoHtml() {
+    static const QString html = QStringLiteral(
+        "<p>Some cards never get a home sleeve — duplicates, trade fodder, a Trainer card "
+        "that moves around. Tick this and the card is still filed in the binder, but it is "
+        "listed in a loose run at the very <b>end</b> of the binder's guide, where you can "
+        "reshuffle it as often as you like.</p>"
+        "<p>Such a card takes no page or pocket number, holds no place in the Pokédex "
+        "checklist (its species keeps reading as missing until another copy fills that "
+        "sleeve), and cannot be moved to a named pocket. It still counts as captured in the "
+        "binder's totals — you do own it, it just lives at the back.</p>"
+        "<p>Untick it at any time and the card returns to its derived place, along with any "
+        "arrangement that was recorded for it.</p>");
     return html;
 }
 
@@ -233,6 +253,7 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     binder_ = new QComboBox(this);
     connect(binder_, &QComboBox::activated, this, [this](int) {
         updateBinderRemoveEnabled();  // a manual pick may move to/from "— None —"
+        updateNoFixedPositionEnabled();
         Q_EMIT binderChanged();
     });
 
@@ -251,8 +272,18 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
         }
         binder_->setCurrentIndex(0);
         updateBinderRemoveEnabled();
+        updateNoFixedPositionEnabled();
         Q_EMIT binderChanged();
     });
+
+    // "No fixed position" — the copy is filed in the binder but keeps no home sleeve, so
+    // the guide lists it in a loose run at the end (see CardCopy). It sits with the binder
+    // picker because it qualifies the same decision, and reports through its own signal so
+    // an edit host can persist it the instant it is toggled, exactly as it does the binder.
+    noFixedPosition_ = new QCheckBox(tr("No fixed position — keep at the end"), this);
+    connect(noFixedPosition_, &QCheckBox::toggled, this,
+            [this](bool) { Q_EMIT noFixedPositionChanged(); });
+    updateNoFixedPositionEnabled();  // no binder picked yet, so nothing to keep at the end of
 
     comments_ = new QPlainTextEdit(this);
     comments_->setPlaceholderText(
@@ -373,6 +404,11 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     binderRow->addWidget(binder_, 1);
     binderRow->addWidget(unassignBinder_);
     form->addRow(tr("Binder"), binderRow);
+    // No label of its own: the checkbox's own text reads as the sentence, and an empty
+    // label keeps it visually attached to the binder row it qualifies.
+    fieldRow(QString(), noFixedPosition_, QString(),
+             QString(), tr("Cards with no fixed position"),
+             [] { return noFixedPositionInfoHtml(); });
 
     languageHint_ = fieldRow(tr("Language"), language_,
                              tr("The card catalog is English-only, so it can't tell which "
@@ -396,9 +432,10 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     // Qt derives tab order from CONSTRUCTION order, which no longer matches the rows above,
     // so spell the traversal out — otherwise Tab jumps from Collector number back up to
     // Language. The glyph buttons are NoFocus and stay out of it.
-    QWidget* const tabChain[] = {cardName_, expansionCode_, setName_, collectorNumber_,
-                                 rarity_,   ownership_,     binder_,  unassignBinder_,
-                                 language_, condition_,     foil_,    comments_};
+    QWidget* const tabChain[] = {cardName_, expansionCode_,   setName_,  collectorNumber_,
+                                 rarity_,   ownership_,       binder_,   unassignBinder_,
+                                 noFixedPosition_, language_, condition_, foil_,
+                                 comments_};
     for (std::size_t i = 1; i < std::size(tabChain); ++i) {
         setTabOrder(tabChain[i - 1], tabChain[i]);
     }
@@ -457,6 +494,7 @@ void CardCopyForm::setupBinderPicker(const std::vector<CardBinder>& binders,
     fillBinderCombo(*binder_, binders, selected);
     binder_->setEnabled(enabled);
     updateBinderRemoveEnabled();  // reflect the loaded selection on the Remove button
+    updateNoFixedPositionEnabled();
 }
 
 void CardCopyForm::setMissingFieldHints(bool armed) {
@@ -574,6 +612,13 @@ void CardCopyForm::setCondition(std::optional<CardCondition> condition) {
     refreshMissingFieldHints();
 }
 
+void CardCopyForm::setNoFixedPosition(bool noFixedPosition) {
+    // Silent by design, like the other setters: toggled() would fire noFixedPositionChanged
+    // and an edit host would persist a value it had just loaded.
+    const QSignalBlocker blocker(noFixedPosition_);
+    noFixedPosition_->setChecked(noFixedPosition);
+}
+
 void CardCopyForm::loadCopy(const CardCopy& copy) {
     cardName_->setText(QString::fromStdString(copy.cardRef.name));
     expansionCode_->setText(QString::fromStdString(copy.cardRef.expansionCode));
@@ -590,6 +635,7 @@ void CardCopyForm::loadCopy(const CardCopy& copy) {
     foil_->setCurrentIndex(fi >= 0 ? fi : 0);
     ownership_->setCurrentIndex(ownership_->findData(static_cast<int>(copy.ownership)));
     comments_->setPlainText(QString::fromStdString(copy.comments));
+    setNoFixedPosition(copy.noFixedPosition);
     refreshMissingFieldHints();  // foil was set inline above, so refresh after it too
 }
 
@@ -631,6 +677,22 @@ std::optional<CardFoil> CardCopyForm::foil() const {
 
 std::optional<CardBinderId> CardCopyForm::binderId() const {
     return binderComboSelection(*binder_);
+}
+
+bool CardCopyForm::noFixedPosition() const { return noFixedPosition_->isChecked(); }
+
+void CardCopyForm::updateNoFixedPositionEnabled() {
+    // "Keep at the end" names a position IN A BINDER, so with no binder picked there is
+    // nothing for it to mean — and left live it would let the add page report itself dirty,
+    // and the edit page toast "kept at the end of its binder", over a card that is in none.
+    // Shown-but-disabled with the reason in the tooltip, the idiom the guide's row actions
+    // use; the box keeps whatever it holds, so unfiling a loose card hides nothing and
+    // refiling it makes the setting editable again.
+    const bool filed = binderId().has_value();
+    noFixedPosition_->setEnabled(filed);
+    noFixedPosition_->setToolTip(
+        filed ? QString()
+              : tr("File this card in a binder first — this decides where it sits in one."));
 }
 
 std::string CardCopyForm::comments() const {

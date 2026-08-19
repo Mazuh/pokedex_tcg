@@ -23,7 +23,7 @@ CardCopy CardCopyService::create(std::optional<PokemonDexNum> pokemonDexNum, Car
                                  CardOwnership ownership, std::optional<CardCondition> condition,
                                  std::optional<CardRarity> rarity, std::optional<CardFoil> foil,
                                  std::optional<CardBinderId> binderId, std::string comments,
-                                 std::string externalCardId) {
+                                 std::string externalCardId, bool noFixedPosition) {
     cardRef.expansionCode = trim(cardRef.expansionCode);
     cardRef.language = trim(cardRef.language);
     cardRef.collectorNumber = trim(cardRef.collectorNumber);
@@ -45,6 +45,7 @@ CardCopy CardCopyService::create(std::optional<PokemonDexNum> pokemonDexNum, Car
     copy.binderId = std::move(binderId);
     copy.comments = std::move(comments);
     copy.externalCardId = trim(externalCardId);
+    copy.noFixedPosition = noFixedPosition;
     copy.insertedAt = now;
     copy.updatedAt = now;
     repo_.add(copy);
@@ -94,6 +95,17 @@ void CardCopyService::assignToBinder(const CardCopyId& id, std::optional<CardBin
         throw CardCopyError("A removed card is frozen history and cannot be filed in a binder.");
     }
     copy.binderId = std::move(binderId);
+    copy.updatedAt = clock_();
+    repo_.update(copy);
+    ++revision_;
+}
+
+void CardCopyService::setNoFixedPosition(const CardCopyId& id, bool noFixedPosition) {
+    CardCopy copy = require(id);
+    if (copy.ownership == CardOwnership::Removed) {
+        throw CardCopyError("A removed card is frozen history and cannot be refiled.");
+    }
+    copy.noFixedPosition = noFixedPosition;
     copy.updatedAt = clock_();
     repo_.update(copy);
     ++revision_;

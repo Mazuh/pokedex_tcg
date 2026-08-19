@@ -76,6 +76,16 @@ CardCopy makeCopy(std::string id, std::optional<PokemonDexNum> dex, CardOwnershi
     return copy;
 }
 
+// A copy filed in a binder that keeps NO home sleeve: the guide lists it in the loose run
+// at the very end and leaves it out of the checklist and the arrangement entirely.
+CardCopy makeLooseCopy(std::string id, std::optional<PokemonDexNum> dex,
+                       CardOwnership ownership, std::optional<std::string> binderId,
+                       const char* insertedAt = "2026-07-14T09:00:00Z") {
+    CardCopy copy = makeCopy(std::move(id), dex, ownership, std::move(binderId), insertedAt);
+    copy.noFixedPosition = true;
+    return copy;
+}
+
 // Fixture wiring the migrated DB + the three repositories + the service.
 struct GuideTest : ::testing::Test {
     Database db{":memory:"};
@@ -1043,6 +1053,129 @@ TEST_F(GuideTest, ListedSpeciesIsTheRegionChecklistNotTheRowSpecies) {
     // carries a species and has a row.
     EXPECT_EQ(pokedex::listedSpecies(binder, entries).size(), 343u);
     EXPECT_EQ(entries.size(), 344u);
+}
+
+// --- cards with no fixed position -----------------------------------------------------
+
+// The whole point of the flag: however the card would otherwise be ordered — a checklist
+// species, an out-of-region extra, a species-free Trainer — it renders after every other
+// row, where the user can reshuffle the pile without disturbing the arrangement in front.
+TEST_F(GuideTest, CardsWithNoFixedPositionComeAfterEveryOtherRow) {
+    const CardBinder binder = makeBinder("b1", {Region::Kanto});
+    binders.add(binder);
+    copies.add(makeCopy("mew", kMew, CardOwnership::Owned, "b1"));
+    // Filed FIRST, and a Kanto species — so nothing but the flag can send it to the back.
+    copies.add(makeLooseCopy("loosePika", kPikachu, CardOwnership::Owned, "b1",
+                             "2026-07-14T08:00:00Z"));
+    copies.add(makeCopy("trainer", std::nullopt, CardOwnership::Owned, "b1",
+                        "2026-07-14T10:00:00Z"));
+
+    const auto entries = guide.buildEntries(binder);
+    // 151 Kanto slots (Mew's is its copy, Pikachu's falls back to a placeholder) + the
+    // Trainer extra + the loose card.
+    ASSERT_EQ(entries.size(), 153u);
+    EXPECT_EQ(entries[151].cardCopyId, "trainer");
+    EXPECT_EQ(entries[152].cardCopyId, "loosePika");
+    EXPECT_TRUE(entries[152].noFixedPosition);  // published on the row, not re-derived
+    EXPECT_FALSE(entries[151].noFixedPosition);
+}
+
+// It gives its Pokédex sleeve up, exactly as a card moved out to the extras does — the
+// slot stays reserved and reads as uncollected until something actually fills it.
+TEST_F(GuideTest, ALooseCopyLeavesItsSpeciesSlotReserved) {
+    const CardBinder binder = makeBinder("b1", {Region::Kanto});
+    binders.add(binder);
+    addWish(kPikachu);
+    copies.add(makeLooseCopy("loosePika", kPikachu, CardOwnership::Owned, "b1"));
+
+    const auto entries = guide.buildEntries(binder);
+    // Two rows for Pikachu: the reserved slot (still wished for) and the loose card.
+    EXPECT_EQ(copyIdsOf(entries, kPikachu), (std::vector<std::string>{"", "loosePika"}));
+    EXPECT_EQ(statusesOf(entries, kPikachu),
+              (std::vector<CollectionStatus>{CollectionStatus::Wished,
+                                             CollectionStatus::Completed}));
+    // A second copy that DOES take its place fills the slot again, and the loose one is
+    // still listed after everything.
+    copies.add(makeCopy("pika", kPikachu, CardOwnership::Owned, "b1"));
+    const auto refilled = guide.buildEntries(binder);
+    EXPECT_EQ(copyIdsOf(refilled, kPikachu), (std::vector<std::string>{"pika", "loosePika"}));
+    EXPECT_EQ(refilled.back().cardCopyId, "loosePika");
+}
+
+// A loose card is not part of the arrangement in either direction: nothing may be pinned
+// before it (its row moves whenever the pile is reshuffled), and it cannot itself be
+// pinned. Both records are IGNORED, never pruned — this projection stays read-only, so
+// clearing the flag brings the arrangement back.
+TEST_F(GuideTest, NothingAnchorsToALooseCopyAndItIsNeverPlaced) {
+    CardBinder binder = makeBinder("b1", {});  // region-less: only what is filed is listed
+    binders.add(binder);
+    copies.add(makeCopy("mew", kMew, CardOwnership::Owned, "b1"));
+    copies.add(makeLooseCopy("loose", std::nullopt, CardOwnership::Owned, "b1",
+                             "2026-07-14T10:00:00Z"));
+    copies.add(makeCopy("trainer", std::nullopt, CardOwnership::Owned, "b1",
+                        "2026-07-14T11:00:00Z"));
+
+    binder.pocketBlanks = {{.beforeCopyId = "loose", .blanks = 2}};
+    binder.cardPlacements = {
+        {.cardCopyId = "loose", .beforeDexNum = kMew},      // it cannot be pinned…
+        {.cardCopyId = "trainer", .beforeCopyId = "loose"}  // …nor pinned against
+    };
+    const auto entries = guide.buildEntries(binder);
+
+    // Three rows and no blanks: the arrangement in front is exactly what it would be with
+    // no records at all, and the loose card is last and unpinned.
+    ASSERT_EQ(entries.size(), 3u);
+    EXPECT_EQ(entries[0].cardCopyId, "mew");
+    EXPECT_EQ(entries[1].cardCopyId, "trainer");
+    EXPECT_FALSE(entries[1].placedByHand) << "a placement anchored to a loose card is orphaned";
+    EXPECT_EQ(entries[2].cardCopyId, "loose");
+    EXPECT_FALSE(entries[2].placedByHand);
+
+    // Clearing the flag restores every one of those records untouched — they were ignored,
+    // never pruned.
+    CardCopy restored = *copies.find("loose");
+    restored.noFixedPosition = false;
+    copies.update(restored);
+    const auto after = guide.buildEntries(binder);
+    // The Trainer rides ahead of the loose card, its two blanks render again, and both sit
+    // before Mew, which is where the loose card was pinned.
+    ASSERT_EQ(after.size(), 5u);
+    EXPECT_EQ(after[0].cardCopyId, "trainer");
+    EXPECT_TRUE(after[0].placedByHand);
+    EXPECT_TRUE(pokedex::isBlankPocket(after[1]));
+    EXPECT_TRUE(pokedex::isBlankPocket(after[2]));
+    EXPECT_EQ(after[3].cardCopyId, "loose");
+    EXPECT_TRUE(after[3].placedByHand);
+    EXPECT_EQ(after[4].cardCopyId, "mew");
+}
+
+// Among themselves they keep filed order, like the extras — there is no derived order
+// left to give them.
+TEST_F(GuideTest, LooseCopiesKeepFiledOrderAmongThemselves) {
+    const CardBinder binder = makeBinder("b1", {});
+    binders.add(binder);
+    // Added newest-first, so the asserted order can only come from insertedAt.
+    copies.add(makeLooseCopy("l2", kMew, CardOwnership::Owned, "b1", "2026-07-14T10:00:00Z"));
+    copies.add(makeLooseCopy("l1", kPikachu, CardOwnership::Owned, "b1",
+                             "2026-07-14T09:00:00Z"));
+
+    const auto entries = guide.buildEntries(binder);
+    ASSERT_EQ(entries.size(), 2u);
+    EXPECT_EQ(entries[0].cardCopyId, "l1");
+    EXPECT_EQ(entries[1].cardCopyId, "l2");
+}
+
+// A region-less binder derives its checklist from the rows, so the exclusion has to hold
+// there too: a loose card reserves nothing, hence lists nothing. (Counting it would leave
+// the guide claiming a slot that has no checklist row anywhere.)
+TEST_F(GuideTest, ARegionlessBinderDoesNotListALooseCopysSpecies) {
+    const CardBinder binder = makeBinder("b1", {});
+    binders.add(binder);
+    copies.add(makeCopy("mew", kMew, CardOwnership::Owned, "b1"));
+    copies.add(makeLooseCopy("loosePika", kPikachu, CardOwnership::Owned, "b1"));
+
+    const auto entries = guide.buildEntries(binder);
+    EXPECT_EQ(pokedex::listedSpecies(binder, entries), (std::set<PokemonDexNum>{kMew}));
 }
 
 TEST_F(GuideTest, ListedSpeciesOfARegionlessBinderIsWhateverItHolds) {

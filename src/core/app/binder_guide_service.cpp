@@ -74,7 +74,9 @@ std::set<PokemonDexNum> listedSpecies(const CardBinder& binder,
         // precisely because such a binder files nothing as an extra: with no scope to fall
         // outside of, every species-bearing row is one it lists.
         for (const CardBinderEntry& row : rows) {
-            if (row.pokemon) {
+            // …with the one exception the rows themselves declare: a card with no fixed
+            // position is filed here but reserves nothing, so its species is not listed.
+            if (row.pokemon && !row.noFixedPosition) {
                 listed.insert(row.pokemon->dexNumber);
             }
         }
@@ -156,11 +158,23 @@ std::vector<CardBinderEntry> BinderGuideService::buildEntries(const CardBinder& 
     // asked for, so they keep filed order and are arranged by hand from there.
     //
     // The pointers reference copiesInBinder, which outlives this whole function.
+    //
+    // A third bucket sits beyond both: the copies that declared they keep NO home sleeve.
+    // They are filed here, so the guide still accounts for them, but they reserve nothing
+    // and anchor nothing — they are a loose pile at the back of the album that the user
+    // reshuffles on demand.
     std::map<PokemonDexNum, std::vector<const CardCopy*>> copiesByDex;
     std::vector<const CardCopy*> tail;
+    std::vector<const CardCopy*> loose;
     std::unordered_map<CardCopyId, const CardCopy*> copyById;
+    std::unordered_set<CardCopyId> looseIds;
     for (const CardCopy& copy : copiesInBinder) {
         copyById.emplace(copy.id, &copy);
+        if (copy.noFixedPosition) {
+            loose.push_back(&copy);
+            looseIds.insert(copy.id);
+            continue;
+        }
         const bool onChecklist = copy.pokemonDexNum &&
                                  speciesAt(*copy.pokemonDexNum, catalog) != nullptr &&
                                  (!reserved || dexNums.contains(*copy.pokemonDexNum));
@@ -207,6 +221,10 @@ std::vector<CardBinderEntry> BinderGuideService::buildEntries(const CardBinder& 
         if (!copyById.contains(placement.cardCopyId)) {
             continue;  // names a card that isn't filed here
         }
+        if (looseIds.contains(placement.cardCopyId)) {
+            continue;  // that card gave its position up; the record waits for it to want
+                       // one again, exactly as an orphaned blank waits for its anchor
+        }
         placementByCopy.emplace(placement.cardCopyId, &placement);
     }
 
@@ -232,7 +250,10 @@ std::vector<CardBinderEntry> BinderGuideService::buildEntries(const CardBinder& 
                 anchorEmits = anchorableDex.contains(*placement->beforeDexNum);
             } else if (placement->beforeCopyId) {
                 const CardCopyId& anchor = *placement->beforeCopyId;
-                anchorEmits = copyById.contains(anchor) &&
+                // A loose card has a row, but not one anything can be pinned before: it
+                // sits past the end of the arranged album and moves whenever the user
+                // reshuffles the pile.
+                anchorEmits = copyById.contains(anchor) && !looseIds.contains(anchor) &&
                               (!placementByCopy.contains(anchor) || placed.contains(anchor));
             }
             if (anchorEmits) {
@@ -295,7 +316,8 @@ std::vector<CardBinderEntry> BinderGuideService::buildEntries(const CardBinder& 
         const Pokemon* species =
             copy.pokemonDexNum ? speciesAt(*copy.pokemonDexNum, catalog) : nullptr;
         entries.push_back({species != nullptr ? std::optional<Pokemon>(*species) : std::nullopt,
-                           copy.id, statusOfCopy(copy.ownership), placed.contains(copy.id)});
+                           copy.id, statusOfCopy(copy.ownership), placed.contains(copy.id),
+                           copy.noFixedPosition});
     };
 
     // Everything the user arranged to sit immediately before one row, in the order that
@@ -409,6 +431,15 @@ std::vector<CardBinderEntry> BinderGuideService::buildEntries(const CardBinder& 
     // so only placements land here — and they must, since every other target is phrased
     // as "before some row" and the last pocket has nothing after it to name.
     emitPlacements(&placedAtEnd);
+
+    // The LOOSE run, past even those: the cards that keep no home sleeve, in filed order.
+    // They are emitted bare — no emitBefore — because they anchor nothing and nothing
+    // anchors to them: a blank recorded before one of them, or a placement naming one,
+    // simply waits (unpruned) for the flag to be cleared. Being last is what makes their
+    // rows free to shuffle: the arrangement in front of them cannot notice.
+    for (const CardCopy* copy : loose) {
+        pushCopyRow(*copy);
+    }
     return entries;
 }
 

@@ -69,6 +69,10 @@ private:
     bool isDirty() const;   // any editable field diverged from the stored record?
     void updateSaveEnabled();  // enable "Save changes" only while isDirty()
     void saveBinder();      // persist a binder pick via assignToBinder (revert combo on failure)
+    // persist the "no fixed position" box the moment it is ticked (revert it on failure) —
+    // the same immediate-write treatment as the binder picker it sits under, since it is
+    // the same kind of decision: where the card lives, not what it is.
+    void saveNoFixedPosition();
     void handleBack();      // guard Back on unsaved edits (save/discard/cancel), then leave
     void saveFromFinder();  // persist the picked card's (loaded) preview as the image
     void uploadPhoto();     // pick a local image file and persist it as the image

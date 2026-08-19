@@ -131,6 +131,12 @@ TEST(DatabaseTest, UpgradesAnExistingV8SetCachePreservingPokemontcgRows) {
     db.exec(
         "CREATE TABLE card_binder(id TEXT PRIMARY KEY, name TEXT NOT NULL, region TEXT,"
         " inserted_at TEXT NOT NULL, updated_at TEXT NOT NULL);");
+    // card_copy has existed since v1 and the v14/v15 steps reach it (a placement's foreign
+    // key, then an ADD COLUMN), so this fixture has to stand it up even though the step
+    // under test doesn't touch it — an absent table fails the whole migration.
+    db.exec(
+        "CREATE TABLE card_copy(id TEXT PRIMARY KEY, binder_id TEXT"
+        " REFERENCES card_binder(id) ON DELETE SET NULL);");
     db.setUserVersion(8);
 
     db.migrate();
@@ -175,6 +181,12 @@ TEST(DatabaseTest, UpgradesAnExistingV9DatabaseByAddingPriceSuppression) {
     db.exec(
         "INSERT INTO card_binder(id,name,region,inserted_at,updated_at)"
         " VALUES('b1','Kanto Journey','Kanto','2026-07-14T00:00:00Z','2026-07-14T00:00:00Z');");
+    // card_copy has existed since v1 and the v14/v15 steps reach it (a placement's foreign
+    // key, then an ADD COLUMN), so this fixture has to stand it up even though the step
+    // under test doesn't touch it — an absent table fails the whole migration.
+    db.exec(
+        "CREATE TABLE card_copy(id TEXT PRIMARY KEY, binder_id TEXT"
+        " REFERENCES card_binder(id) ON DELETE SET NULL);");
     db.setUserVersion(9);
 
     db.migrate();
@@ -193,6 +205,44 @@ TEST(DatabaseTest, UpgradesAnExistingV9DatabaseByAddingPriceSuppression) {
                              " VALUES('sv3-125','tcgplayer');"));
 }
 
+// v15 lets a copy declare it keeps no home sleeve. An existing copy must come through
+// reading "it takes its derived place" (the 0 default IS the backfill) rather than being
+// silently sent to the back of every binder it is filed in.
+TEST(DatabaseTest, UpgradesAnExistingV14DatabaseAddingNoFixedPosition) {
+    Database db(":memory:");
+    // The v14 shape of the two tables this step's read-back touches, by hand (see the note
+    // on kSchemaVersion — migrate-then-replay would fail the ADD COLUMN as a duplicate).
+    // Only the columns asserted below matter; card_copy carries its v1 identity plus the
+    // ones later steps added, since the repository reads them all.
+    db.exec(
+        "CREATE TABLE card_binder(id TEXT PRIMARY KEY, name TEXT NOT NULL, region TEXT,"
+        " inserted_at TEXT NOT NULL, updated_at TEXT NOT NULL);");
+    db.exec(
+        "CREATE TABLE card_copy(id TEXT PRIMARY KEY, pokemon_dex_num INTEGER NOT NULL,"
+        " binder_id TEXT REFERENCES card_binder(id) ON DELETE SET NULL,"
+        " comments TEXT NOT NULL DEFAULT '');");
+    db.exec(
+        "INSERT INTO card_binder(id,name,region,inserted_at,updated_at)"
+        " VALUES('b1','Kanto Journey','Kanto','2026-07-14T00:00:00Z','2026-07-14T00:00:00Z');");
+    db.exec("INSERT INTO card_copy(id,pokemon_dex_num,binder_id) VALUES('c1',25,'b1');");
+    db.setUserVersion(14);
+
+    db.migrate();
+    EXPECT_EQ(db.userVersion(), Database::kSchemaVersion);
+
+    // The existing copy is unchanged and reads as "takes its derived place".
+    Statement copy(db, "SELECT binder_id, no_fixed_position FROM card_copy WHERE id = 'c1';");
+    ASSERT_TRUE(copy.step());
+    EXPECT_EQ(copy.columnText(0), "b1");
+    EXPECT_EQ(copy.columnInt(1), 0);
+
+    // And the column is writable, so the flag can be set after the fact.
+    db.exec("UPDATE card_copy SET no_fixed_position = 1 WHERE id = 'c1';");
+    Statement loose(db, "SELECT no_fixed_position FROM card_copy WHERE id = 'c1';");
+    ASSERT_TRUE(loose.step());
+    EXPECT_EQ(loose.columnInt(0), 1);
+}
+
 // v12/v13/v14 give a binder its optional physical layout, its blank pockets and its moved
 // cards. An existing binder must survive the upgrade with its layout reading "unset" (the
 // 0 sentinel) rather than being handed a fabricated 3×3, and with no manual arrangement.
@@ -207,9 +257,9 @@ TEST(DatabaseTest, UpgradesAnExistingV11DatabaseAddingLayoutBlanksAndPlacements)
         "CREATE TABLE card_binder_region(binder_id TEXT NOT NULL"
         " REFERENCES card_binder(id) ON DELETE CASCADE, region TEXT NOT NULL,"
         " PRIMARY KEY (binder_id, region));");
-    // card_copy has existed since v1 and v14's placement table keys into it, so the
-    // fixture has to stand it up: with foreign_keys ON, ANY write that cascades into
-    // card_binder_placement must resolve that parent, and an absent one fails the whole
+    // card_copy has existed since v1 and v14's placement table keys into it (and v15 ALTERs
+    // it), so the fixture has to stand it up: with foreign_keys ON, ANY write that cascades
+    // into card_binder_placement must resolve that parent, and an absent one fails the whole
     // statement with "no such table". Only the id column matters here.
     db.exec(
         "CREATE TABLE card_copy(id TEXT PRIMARY KEY, binder_id TEXT"
