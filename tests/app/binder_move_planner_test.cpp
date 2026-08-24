@@ -198,7 +198,7 @@ TEST_F(MoveTest, ProjectedRowsMatchWhatTheGuideActuallyEmits) {
 
     // Every card into every pocket, one move at a time, each verified against reality
     // before the next is planned on top of it.
-    for (const std::string& copyId : {"trainer", "a", "energy", "c", "b"}) {
+    for (const std::string copyId : {"trainer", "a", "energy", "c", "b"}) {
         for (int pocket = 0; pocket < 8; ++pocket) {
             const BinderMovePlan p = plan(copyId, pocket);
             apply(p);
@@ -229,7 +229,7 @@ TEST_F(MoveTest, ProjectedRowsMatchTheGuideWhenAMoveVacatesAReservedSlot) {
     file("trainer", std::nullopt, 12);
     binder = service.insertBlanks("b1", {.beforeDexNum = 25, .blanks = 2});
 
-    for (const std::string& copyId : {"bulba", "trainer", "pika", "mew"}) {
+    for (const std::string copyId : {"bulba", "trainer", "pika", "mew"}) {
         for (int pocket = 0; pocket < 10; ++pocket) {
             const BinderMovePlan p = plan(copyId, pocket);
             apply(p);
@@ -259,7 +259,7 @@ TEST_F(MoveTest, ProjectedRowsMatchTheGuideWithLooseCardsAtTheEnd) {
     fileLoose("looseTrainer", std::nullopt, 13);
     binder = service.insertBlanks("b1", {.beforeDexNum = 25, .blanks = 2});
 
-    for (const std::string& copyId : {"trainer", "a", "b"}) {
+    for (const std::string copyId : {"trainer", "a", "b"}) {
         for (int pocket = 0; pocket < 8; ++pocket) {
             const BinderMovePlan p = plan(copyId, pocket);
             apply(p);
