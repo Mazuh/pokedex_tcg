@@ -69,10 +69,10 @@ ctest --test-dir build --output-on-failure
 ./dev.sh clean    # delete the build dir (forces a fresh configure)
 ```
 
-### Install (run `pokedex` from anywhere)
+### Install (Spotlight *and* the terminal)
 
 `dev.sh` is for iteration — an unoptimized build you run in place. When you want
-a *stable* app you can launch from any directory, use `install.sh`:
+a *stable* app you can launch like any other installed app, use `install.sh`:
 
 ```sh
 ./install.sh
@@ -80,16 +80,27 @@ a *stable* app you can launch from any directory, use `install.sh`:
 
 This does an optimized **Release** build in its own `build-release/` directory
 (kept separate from `dev.sh`'s `./build`, and skipping the test build), then
-installs the binary to `/usr/local/bin/pokedex` via CMake's install rule. The
-install step writes under `/usr/local`, so it runs with `sudo` and will prompt
-for your password (only that step — the build runs as you).
+installs it **two ways** via CMake's install rules. On macOS:
 
-Since `/usr/local/bin` is already on your PATH, no alias or shell-config edit is
-needed — just run `pokedex` from any directory:
+- **`/Applications/Pokédex TCG by Mazuh.app`** — a real installed app, so ⌘Space
+  (Spotlight), Launchpad and Finder all find it. This is the reason the bundle
+  goes to `/Applications` rather than next to the command: Spotlight indexes the
+  standard application folders and does *not* index `/usr/local/bin`.
+- **`/usr/local/bin/pokedex`** — a symlink pointing into that bundle, so the
+  terminal command still works exactly as before (and, because it resolves to the
+  real path inside the `.app`, the camera permission works from there too).
+
+On Linux there's no bundle, so it's just `/usr/local/bin/pokedex`.
+
+Both destinations need root, so the install step runs with `sudo` and will prompt
+for your password (only that step — the build runs as you). Afterwards, launch it
+however you prefer:
 
 ```sh
-pokedex
+pokedex          # from any directory — /usr/local/bin is already on your PATH
 ```
+
+or press **⌘Space** and type "Pok".
 
 If you can't (or don't want to) `sudo`, the script falls back to printing an
 `alias` line pointing at the built binary — paste it into your shell config and

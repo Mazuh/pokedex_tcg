@@ -689,7 +689,32 @@ else `QCameraPermission` has no handler ("Could not find permission plugin"). Be
 the binary is `build/<app>.app/Contents/MacOS/<app>` — where `<app>` is `POKEDEX_APP_NAME`,
 today "Pokédex TCG by Mazuh" (see the app-name note below): **dev.sh** runs that inner path
 (bundle-recognized, logs still in the terminal), **install.sh**/CMake install the whole `.app` + a
-`pokedex` symlink into it, README points at the `.app`. Reset the grant with `tccutil reset Camera
+`pokedex` symlink into it, README points at the `.app`. **The two installed pieces go to different
+places on purpose**: the bundle to `/Applications` (`POKEDEX_MACOS_APP_DIR`, an ABSOLUTE install
+destination that deliberately does not follow `--prefix`, since Spotlight/Launchpad/Finder index the
+standard application folders and pointedly do NOT index `/usr/local/bin` — a bundle installed beside
+the CLI tools is launchable only from a terminal), the `pokedex` symlink to `${CMAKE_INSTALL_BINDIR}`
+pointing at the bundle's inner binary by ABSOLUTE path. Consequences, each of which cost a fix:
+(1) an `install(CODE "file(REMOVE_RECURSE …)")` runs BEFORE the `install(DIRECTORY)`, because that
+command MERGES — a resource a later version drops would linger in the installed `.app`, and one
+stray file under `Contents/` invalidates the ad-hoc signature ("a sealed resource is missing or
+invalid"), which is the seal TCC ties the camera grant to. So a merged reinstall would silently cost
+the INSTALLED app its scanner while the build tree kept working; (2) the symlink's `install(CODE)`
+must `file(MAKE_DIRECTORY)` the bindir first, because nothing else installs there on macOS any more
+and `CREATE_LINK` fails outright on a machine with no `/usr/local/bin` yet; (3) that generated code
+resolves the bindir at INSTALL time (`IS_ABSOLUTE` check — GNUInstallDirs permits an absolute
+`CMAKE_INSTALL_BINDIR`, which must not be pasted after the prefix) but deliberately does NOT use
+`CMAKE_INSTALL_FULL_BINDIR`, which would bake in the CONFIGURE-time prefix and ignore install.sh's
+`--prefix`; (4) install.sh sweeps superseded bundles out of BOTH `bin/` (the old layout) and the apps
+folder (where a future rename would leave the old name beside the new one, giving LaunchServices two
+registrations for one app), matched by **`CFBundleIdentifier`, never by name** — the name is exactly
+what changes — and skipping the one just installed. It finds that one by `readlink`ing the symlink
+CMake just wrote rather than scanning for it, so the app name and install dir stay CMake's alone. It
+also runs `lsregister -f` on it so ⌘Space finds it on that run rather than whenever the indexer next
+wakes. Verify an install-layout change with a `DESTDIR=<tmp> cmake --install` — it needs no sudo,
+stages absolute destinations under the DESTDIR, and is what caught both the missing bindir and the
+merge-vs-replace signature break (drop a stray file into the staged bundle, reinstall, and check
+`codesign --verify --deep --strict`). Reset the grant with `tccutil reset Camera
 com.mazuh.pokedex-tcg` (after first launch). The captured frame is not persisted — see
 `docs/ai-assistant.md`.
 `gui/services/` holds `MediaService` (Pokémon artwork fetch+cache), `CardSearchService`

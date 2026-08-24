@@ -397,14 +397,53 @@ if(APPLE)
     # inside the .app, so [NSBundle mainBundle] still finds Contents/Info.plist and the
     # camera permission keeps working from the installed command. (A bare copy of the
     # inner binary would run but couldn't scan cards.)
+    #
+    # BOTH entry points are installed, and they are deliberately in DIFFERENT places:
+    #   - the .app goes to /Applications, because Spotlight (⌘Space), Launchpad and the
+    #     Open-With menu index the standard application folders and pointedly do NOT index
+    #     /usr/local/bin — a bundle installed beside the CLI tools is invisible to every
+    #     macOS way of launching an app and reachable only from a terminal;
+    #   - the `pokedex` command stays on PATH under the install prefix, pointing INTO that
+    #     installed bundle, so the terminal launch is unchanged (camera permission included).
+    # The app path is ABSOLUTE on purpose — /Applications is a fixed OS location, not
+    # something that should follow --prefix. Override with
+    # -DPOKEDEX_MACOS_APP_DIR="$HOME/Applications" for a per-user install; both are indexed.
+    set(POKEDEX_MACOS_APP_DIR "/Applications" CACHE PATH
+        "Where the macOS .app bundle is installed (must be a Spotlight-indexed apps folder)")
+    # Wipe the destination bundle before copying, exactly as the POST_BUILD publish step
+    # does and for a sharper reason: install(DIRECTORY) MERGES, so a resource this version
+    # dropped or renamed would linger inside the installed .app. An extra file under
+    # Contents/ invalidates the ad-hoc signature ("a sealed resource is missing or
+    # invalid") — and that seal is what TCC ties the camera grant to, so a merged reinstall
+    # would silently cost the installed app its card scanner while the build tree still works.
+    install(CODE "file(REMOVE_RECURSE
+        \"\$ENV{DESTDIR}${POKEDEX_MACOS_APP_DIR}/${POKEDEX_APP_NAME}.app\")")
     # The PUBLISHED bundle, not $<TARGET_BUNDLE_DIR> (which is the ASCII-named staged one).
     install(DIRECTORY "${POKEDEX_APP_BUNDLE}"
-            DESTINATION "${CMAKE_INSTALL_BINDIR}" USE_SOURCE_PERMISSIONS)
+            DESTINATION "${POKEDEX_MACOS_APP_DIR}" USE_SOURCE_PERMISSIONS)
     # The link spans both names — accented directory, ASCII executable — so it follows the
-    # app name automatically; a hardcoded path here would dangle the `pokedex` command.
-    install(CODE "file(CREATE_LINK
-        \"${POKEDEX_APP_NAME}.app/Contents/MacOS/${POKEDEX_EXE_NAME}\"
-        \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/pokedex\"
+    # app name automatically; a hardcoded path here would dangle the `pokedex` command. It
+    # is absolute now that the bundle no longer sits next to it, and it points at the
+    # INSTALLED bundle rather than the build tree, so `pokedex` keeps working after the
+    # build dir is wiped.
+    #
+    # Two things the generated code has to resolve at INSTALL time, not here:
+    #   - the bindir, because GNUInstallDirs allows an absolute CMAKE_INSTALL_BINDIR
+    #     (-DCMAKE_INSTALL_BINDIR=/opt/bin), which must NOT be pasted after the prefix;
+    #   - the prefix itself, which is why this stays a \${CMAKE_INSTALL_PREFIX} string and
+    #     not CMAKE_INSTALL_FULL_BINDIR: install.sh passes --prefix at install time, and the
+    #     FULL_ variable would have baked in whatever the prefix was at CONFIGURE time.
+    # MAKE_DIRECTORY first: the bundle no longer lands in bin/, so on a machine without
+    # a /usr/local/bin yet nothing else would create it and CREATE_LINK fails outright.
+    install(CODE "
+    set(_pokedex_bindir \"${CMAKE_INSTALL_BINDIR}\")
+    if(NOT IS_ABSOLUTE \"\${_pokedex_bindir}\")
+        set(_pokedex_bindir \"\${CMAKE_INSTALL_PREFIX}/\${_pokedex_bindir}\")
+    endif()
+    file(MAKE_DIRECTORY \"\$ENV{DESTDIR}\${_pokedex_bindir}\")
+    file(CREATE_LINK
+        \"${POKEDEX_MACOS_APP_DIR}/${POKEDEX_APP_NAME}.app/Contents/MacOS/${POKEDEX_EXE_NAME}\"
+        \"\$ENV{DESTDIR}\${_pokedex_bindir}/pokedex\"
         SYMBOLIC)")
 else()
     # Elsewhere it's a plain binary: install it renamed to `pokedex` (PROGRAMS + RENAME;
