@@ -1,16 +1,12 @@
 #pragma once
 
-#include <QFont>
-#include <QGuiApplication>
 #include <QHash>
 #include <QIcon>
-#include <QPainter>
-#include <QPixmap>
-#include <QRect>
 #include <QSize>
 #include <QString>
 #include <QStringList>
 
+#include "gui/views/emoji_icon.h"
 #include "gui/views/empty_option.h"
 
 namespace pokedex {
@@ -62,27 +58,13 @@ inline QString languageFlag(const QString& code) {
 // "F" would stop matching "FR" and land on the bare "F" (Traditional Chinese) entry
 // instead. As an icon the flag sits beside the code without joining the text it is
 // searched by, and the icons line up in a column that a variable-width prefix wouldn't.
-// Rendered rather than shipped as assets: an emoji is the one "image" the system font
-// already has at every size. Deliberately NOT cached in a static — a QPixmap outliving
-// QGuiApplication is a documented crash-at-exit, and repainting a dozen glyphs when a
-// page opens is far too cheap to be worth that hazard.
+// The painting itself is the shared emojiIcon (see its header for the DPR, the
+// don't-cache-a-QPixmap rule, and why the ink size is a separate argument from the box);
+// this only picks the flag and the picker's icon size. A flag's ink is wide and short, so
+// it fits this box at a pixel size equal to the box's height — which a square emoji would
+// not, hence the constant is passed rather than assumed.
 inline QIcon languageFlagIcon(const QString& code) {
-    const QString flag = languageFlag(code);
-    if (flag.isEmpty()) return {};
-
-    const int width = kLanguageFlagIconSize.width();
-    const int height = kLanguageFlagIconSize.height();
-    QPixmap pixmap(kLanguageFlagIconSize * qApp->devicePixelRatio());
-    pixmap.setDevicePixelRatio(qApp->devicePixelRatio());
-    pixmap.fill(Qt::transparent);
-    {
-        QPainter painter(&pixmap);
-        QFont font = QGuiApplication::font();
-        font.setPixelSize(height);
-        painter.setFont(font);
-        painter.drawText(QRect(0, 0, width, height), Qt::AlignCenter, flag);
-    }
-    return QIcon(pixmap);
+    return emojiIcon(languageFlag(code), kLanguageFlagIconSize, kLanguageFlagIconSize.height());
 }
 
 // GUI — how a language code is DISPLAYED in a picker: the bare code, and the shared

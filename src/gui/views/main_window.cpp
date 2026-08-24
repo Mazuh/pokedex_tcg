@@ -9,6 +9,7 @@
 #include <QMenuBar>
 #include <QPushButton>
 #include <QSet>
+#include <QSize>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QVBoxLayout>
@@ -27,6 +28,7 @@
 #include "gui/views/assistant_prompt_dialog.h"
 #include "gui/views/binders_page.h"
 #include "gui/views/card_copy_labels.h"
+#include "gui/views/emoji_icon.h"
 #include "gui/views/owned_cards_view.h"
 #include "gui/views/pokemon_list_view.h"
 #include "gui/views/scan_card_view.h"
@@ -46,6 +48,15 @@ namespace {
 // rows are captured from addWidget instead, since they are the tail.
 constexpr int kPokemonRow = 1;
 constexpr int kMyCardsRow = 2;
+
+// The box each sidebar row's section glyph is painted into, and how big the glyph is
+// drawn inside it (see emojiIcon, which explains why those are two numbers). Square,
+// unlike the language pickers' wider flag box — these are ordinary emoji, and at 18px
+// their ink measures ~22x21, so the box carries the headroom that keeps a star's points
+// and a gear's teeth from being shaved off. The list must set the box as its iconSize or
+// Qt shrinks the icon into its default 16x16 one.
+constexpr QSize kSidebarIconSize{24, 24};
+constexpr int kSidebarGlyphPixelSize = 18;
 
 // The single set in the loaded set table that the read code/name unambiguously names, or
 // null. Exact printed code (unique per set) wins; then an exact set name; then, only if the
@@ -138,11 +149,23 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
         // mode), so the current section always reads.
         "QListWidget::item:selected:!active { background: rgba(128, 128, 128, 0.32);"
         " color: palette(text); }");
-    new QListWidgetItem(tr("Binders"), sidebar);
-    new QListWidgetItem(tr("All Pokémon"), sidebar);
-    new QListWidgetItem(tr("My Cards"), sidebar);
-    new QListWidgetItem(tr("Wishlist"), sidebar);
-    new QListWidgetItem(tr("Settings"), sidebar);
+    // One glyph per section, so a row can be found by shape rather than by reading it.
+    // It is an ICON, never a prefix on the label: the list's type-ahead matches the
+    // displayed text, so a glyph in the text would break jumping to a section by
+    // keyboard (the same rule languageFlagIcon records for the language pickers).
+    // Each glyph is picked for a SATURATED fill — yellow, orange, red, white — because
+    // the app follows the system theme and a black-ink emoji (🐾, 📷) is invisible
+    // against a dark sidebar. ⚙️'s mid grey is the one muted glyph, and reads on both.
+    sidebar->setIconSize(kSidebarIconSize);
+    const auto addSection = [sidebar](const QString& glyph, const QString& label) {
+        (new QListWidgetItem(label, sidebar))
+            ->setIcon(emojiIcon(glyph, kSidebarIconSize, kSidebarGlyphPixelSize));
+    };
+    addSection(QStringLiteral("📒"), tr("Binders"));
+    addSection(QStringLiteral("🐱"), tr("All Pokémon"));
+    addSection(QStringLiteral("🃏"), tr("My Cards"));
+    addSection(QStringLiteral("⭐"), tr("Wishlist"));
+    addSection(QStringLiteral("⚙️"), tr("Settings"));
 
     // An "About" affordance pinned at the bottom of the sidebar, so the same dialog
     // is reachable inside the window (not only via the native macOS menu). Flat, so

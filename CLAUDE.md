@@ -1410,7 +1410,28 @@ consequences worth remembering:
 
 **GUI navigation.** The app is a macOS-style shell: `MainWindow` has a left
 sidebar (a `QListWidget` source list, Finder/Settings-style) selecting sections
-in an outer `QStackedWidget`. `main.cpp` opens it with `showMaximized()` so the
+in an outer `QStackedWidget`. Each sidebar row carries a section emoji (📒 Binders ·
+🐱 All Pokémon · 🃏 My Cards · ⭐ Wishlist · ⚙️ Settings) so a section can be found by
+shape rather than by reading every label. Two rules govern any glyph added here or to
+another picker/list. It is an **icon, never a prefix on the label** — both `QListWidget`
+and `QComboBox` type-ahead match keystrokes against the DISPLAYED TEXT, so a glyph in
+the text makes the entry unreachable by keyboard (the same trap `languageFlagIcon`
+records) — painted by the shared `emojiIcon(glyph, box, pixelSize)`
+(`gui/views/emoji_icon.h`), which `languageFlagIcon` now also delegates to; the widget must
+set a matching `setIconSize` or Qt falls back to a 16×16 icon (a `QComboBox`'s default box;
+an item view's is invalid and resolves to the style's small-icon size, the same 16 here). The box and
+the glyph's pixel size are **two arguments on purpose**: a box merely equal to the pixel
+size CROPS the glyph, since a colour emoji's ink runs ~1.2× its pixel size and `drawText`
+centres on the font's line box rather than on the ink. Budget ~1.33× (the sidebar draws 18px
+glyphs in a 24×24 box); the helper's header records the measurements and how to re-take
+them — check a candidate size by probing the rendered alpha for border pixels, never by
+reasoning about it. And it must have a
+**saturated fill**: the app follows the system theme, and a black-ink emoji (🐾, 📷)
+is invisible against a dark-theme sidebar — so verify a new glyph on a real dark-mode
+screenshot, not by reasoning about it. The two footer buttons (`✦ Scan card`, `ⓘ About`)
+deliberately keep their glyphs as label text: they are their own band below a divider,
+and `ⓘ` is a repo-wide idiom.
+`main.cpp` opens it with `showMaximized()` so the
 list/detail splits have room without the user having to maximize first. Prefer navigating *within* the window — swap pages
 in a `QStackedWidget` (as `BindersPage` does: binder table ⇄ binder guide, with
 a Back button) — over opening a second top-level window. A separate window or
