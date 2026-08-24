@@ -50,8 +50,9 @@ struct ScannedCard;
 //
 // Submitting creates a copy via CardCopyService and, when a card was picked (or a
 // photo uploaded), saves its image to the workspace (CardImageStore, keyed by the new
-// copy's id) so "My Cards" can show it; it then emits copyAdded() (so the host can
-// refresh any owned-copy counts) and backRequested() to return to the previous screen. The form
+// copy's id) so "My Cards" can show it; it then emits copyAdded() with the new copy's
+// id (so the host can refresh any owned-copy counts, and point the user at the copy that
+// just landed) and backRequested() to return to the previous screen. The form
 // carries an optional binder picker: when opened unscoped (from the Pokémon browser)
 // it defaults to "— None —" and the user may file the copy in any binder; when opened
 // from within a binder it is pre-filled with that binder and locked, so the copy lands
@@ -114,7 +115,11 @@ public:
 Q_SIGNALS:
     void backRequested();
     // A copy was persisted; the host should refresh any owned-copy counts it shows.
-    void copyAdded();
+    // `copyId` names the copy that was just created, so a host can afterwards point the
+    // user at it (BinderView scrolls its guide to the new row — the only sign an add
+    // landed when the row is far below the viewport). A host with nothing to point at
+    // connects a zero-argument slot and lets Qt drop the argument.
+    void copyAdded(const QString& copyId);
 
 protected:
     // Rescales the uploaded-photo preview when its label resizes (window/splitter

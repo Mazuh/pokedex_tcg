@@ -26,6 +26,7 @@
 #include <cstddef>
 #include <exception>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -1204,12 +1205,34 @@ void BinderView::pushAddPage(std::optional<PokemonDexNum> dexNumber, const QStri
                             dexNumber, speciesName, binder_.id);
     // Adding a copy recomputes the guide: the new copy is filed in this binder, so it
     // gains a row of its own, and submit auto-returns — refresh so the guide isn't stale
-    // on the way back.
-    connect(page, &AddCardCopyPage::copyAdded, this, &BinderView::refresh);
-    connect(page, &AddCardCopyPage::backRequested, this, [this, page]() {
+    // on the way back — and then GO TO that row, which is the only sign the add landed:
+    // the new row can be anywhere from a Pokédex slot far above to (for a card with no
+    // fixed position, and for every card in a binder that arranges nothing) the loose run
+    // at the very end, hundreds of rows below the viewport. Returning to an apparently
+    // unchanged list is what made an add feel like it had failed.
+    //
+    // The id has to travel from copyAdded to the backRequested that follows it, because
+    // the jump must happen AFTER this page is popped: scrolling and focusing a table that
+    // is still behind a stacked page aims both at a hidden widget. A shared QString rather
+    // than a member keeps that state per-page — nothing is left on the view between opens,
+    // and a plain Back (no add) leaves it empty.
+    auto added = std::make_shared<QString>();
+    connect(page, &AddCardCopyPage::copyAdded, this, [this, added](const QString& copyId) {
+        *added = copyId;
+        refresh();
+    });
+    connect(page, &AddCardCopyPage::backRequested, this, [this, page, added]() {
         stack_->setCurrentIndex(0);
         stack_->removeWidget(page);
         page->deleteLater();
+        if (!added->isEmpty()) {
+            // Minimal, not FullReset: the user asked to add a card, not to navigate, so an
+            // active sort stays and the search box is emptied only if it hides the newcomer.
+            // Identify the row by the copy id alone (dex = -1): rowOf's species fallback
+            // prefers a PLACEHOLDER row, which would point at the reserved slot rather than
+            // at the card just added.
+            revealRow(*added, /*dex=*/-1, RevealScope::Minimal);
+        }
     });
     stack_->addWidget(page);
     stack_->setCurrentWidget(page);
@@ -1606,32 +1629,52 @@ void BinderView::revealSelectedRow() {
         return;
     }
     // Capture the row's IDENTITY first, by value — and deliberately WITHOUT binding a
-    // reference into entries_ along the way. Both clears below rebuild the row set: the row
-    // INDEX is exactly what they invalidate, and a `const CardBinderEntry&` held across them
-    // would dangle outright, since sortEntries() reassigns the whole vector from
-    // naturalEntries_. Reading the fields inline leaves nothing for a later edit to trip on.
+    // reference into entries_ along the way. The clears revealRow() runs rebuild the row
+    // set: the row INDEX is exactly what they invalidate, and a `const CardBinderEntry&`
+    // held across the call would dangle outright, since sortEntries() reassigns the whole
+    // vector from naturalEntries_. Reading the fields inline leaves nothing to trip on.
     const QString copyId = entries_[row].cardCopyId
                                ? QString::fromStdString(*entries_[row].cardCopyId)
                                : QString();
     const int dex = entries_[row].pokemon ? entries_[row].pokemon->dexNumber : -1;
+    revealRow(copyId, dex, RevealScope::FullReset);
+}
+
+void BinderView::revealRow(const QString& copyId, int dex, RevealScope scope) {
     if (copyId.isEmpty() && dex < 0) {
         return;  // a blank pocket: nothing rowOf can find again (the button is disabled)
     }
 
-    // The search first: a filter only HIDES rows, so this is the cheap half, and doing it
-    // before the rebuild below means that rebuild's trailing content-column measurement
-    // sizes for the rows that will actually be on screen. The guard keeps QLineEdit from
-    // emitting textChanged for a box that is already empty.
-    if (!search_->text().isEmpty()) {
-        search_->clear();  // → textChanged → applyFilter("") shows every row again
-    }
-    // Then any header sort, back to filed order — the only order in which Page/Pocket are
-    // filled, the page breaks are drawn, and the rows above and below this one are its
-    // physical neighbours. This re-enters the view through the installHeaderSort callback
-    // (sortColumn_ = -1 → repopulate()), which restores the selection by identity and
-    // re-applies the filter itself. A no-op when nothing is sorted.
-    if (clearHeaderSort_) {
-        clearHeaderSort_();
+    if (scope == RevealScope::FullReset) {
+        // The search first: a filter only HIDES rows, so this is the cheap half, and doing
+        // it before the rebuild below means that rebuild's trailing content-column
+        // measurement sizes for the rows that will actually be on screen. The guard keeps
+        // QLineEdit from emitting textChanged for a box that is already empty.
+        if (!search_->text().isEmpty()) {
+            search_->clear();  // → textChanged → applyFilter("") shows every row again
+        }
+        // Then any header sort, back to filed order — the only order in which Page/Pocket
+        // are filled, the page breaks are drawn, and the rows above and below this one are
+        // its physical neighbours. This re-enters the view through the installHeaderSort
+        // callback (sortColumn_ = -1 → repopulate()), which restores the selection by
+        // identity and re-applies the filter itself. A no-op when nothing is sorted.
+        if (clearHeaderSort_) {
+            clearHeaderSort_();
+        }
+    } else {
+        // Minimal: the row has to be on screen, but nothing beyond that may be undone.
+        // Resolve it FIRST — a record that isn't in this guide at all (nothing routes one
+        // here today: the add page's binder picker is locked to this binder) must leave the
+        // view untouched rather than fall into reselectRow's not-found path, which would
+        // clear a panel the user never asked to close.
+        const int existing = rowOf(copyId, dex);
+        if (existing < 0) {
+            return;
+        }
+        // Only the search can hide a row; a sort merely moves it, so it is left alone.
+        if (table_->isRowHidden(existing)) {
+            search_->clear();
+        }
     }
 
     // Only now is a row index meaningful again: reselectRow re-finds the record by identity,
@@ -1659,9 +1702,9 @@ void BinderView::revealSelectedRow() {
     }
     // Focus the table so the row just centred renders as an ACTIVE selection rather than the
     // palette's dimmed inactive one — the dimmed row would be the very one being pointed at —
-    // and so the arrow keys walk its neighbours straight away. The only thing losing focus is
-    // the search box this action just emptied. It changes no current cell, so it cannot
-    // re-fire showRow.
+    // and so the arrow keys walk its neighbours straight away. The only thing that can lose
+    // focus is the search box (which this action has either just emptied or left showing a
+    // filter the row survives). It changes no current cell, so it cannot re-fire showRow.
     table_->setFocus();
 }
 

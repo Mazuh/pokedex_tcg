@@ -560,7 +560,7 @@ void AddCardCopyPage::submitCopy() {
         toastText = tr("Card added.");
     }
     showToast(this, toastText);
-    Q_EMIT copyAdded();
+    Q_EMIT copyAdded(QString::fromStdString(created.id));
     // Return to the previous screen after a successful add — the host's
     // backRequested handler pops this page. (Emit last: the handler schedules the
     // page for deletion via deleteLater, so no member is touched afterward.)

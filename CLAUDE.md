@@ -1203,6 +1203,31 @@ rather than dimmed selection and ↑/↓ walk the neighbours immediately. Points
   forward to the next anchorable row" — was rejected: it silently retargets the selection (and
   the inspector, and the other two row actions) at a *different* record than the one selected.
 
+That jump is also what **an add from inside the binder** ends with. Adding a card used to return
+to an apparently unchanged guide — the new row is wherever the derivation puts it, and for a card
+with **no fixed position** (and for every card in a binder that arranges nothing) that is the
+loose run at the very END, hundreds of rows below the viewport — so the only way to tell the add
+had worked was to scroll down hunting for it. So `pushAddPage` now selects and centres the new
+row on return. Three things make it work:
+
+- **`AddCardCopyPage::copyAdded` carries the new copy's id** (`copyAdded(const QString&)`). The
+  other two hosts (`OwnedCardsView`, `PokemonListView`) connect zero-argument slots and let Qt
+  drop it — a host with nothing to point at needs no change.
+- **The jump runs on `backRequested`, NOT on `copyAdded`.** `copyAdded` fires FIRST, while the
+  add page is still the current stack page, so scrolling and focusing there would aim both at a
+  hidden widget (the same trap `CaptureProgressView`'s region click documents). The id travels
+  between the two handlers in a `std::shared_ptr<QString>` captured by both — per-page state, so
+  nothing is left on the view between opens and a plain Back leaves it empty.
+- **It is `RevealScope::Minimal`, not the button's `FullReset`.** The two callers share one body
+  (`BinderView::revealRow`) but ask different questions: the button is a navigation gesture and
+  may put the guide back the way it was found, while an add is not — so the sort is left alone
+  and the search box is emptied only when it would HIDE the new row (adding several cards under
+  one search keeps that search). `Minimal` also resolves the row through `rowOf` up front and
+  bails if it isn't in this guide, rather than falling into `reselectRow`'s not-found path, which
+  would clear a panel the user never asked to close. It identifies the row by copy id alone
+  (`dex = -1`): `rowOf`'s species fallback prefers the PLACEHOLDER row, which would point at the
+  reserved slot instead of the card just added.
+
 **A numeric field is a `QSpinBox`.** `BinderEditPage`'s capacity and rows×columns are the
 first numeric inputs in the app. A spinbox rather than `QLineEdit` + `QIntValidator`: it makes
 an invalid value unrepresentable (so `submit()` needs no parse branch), and

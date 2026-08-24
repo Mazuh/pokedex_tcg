@@ -214,6 +214,24 @@ private:
     // whatever the sorted column happened to put there. It goes through clearHeaderSort_
     // rather than assigning sortColumn_ here — see installHeaderSort's returned reset.
     void revealSelectedRow();
+    // How much of the guide's current state revealRow() is allowed to undo on its way to
+    // the row. The two callers are asking different questions, so they clear different
+    // things — see revealRow().
+    enum class RevealScope {
+        // "Scroll to page": put the guide back the way it was found. Clears the search AND
+        // any header sort, because the question is where this card physically sits and only
+        // filed order answers it.
+        FullReset,
+        // The jump that follows an add: disturb as little as possible. The user did not ask
+        // to navigate, they asked to add a card — so the sort is left alone and the search
+        // is cleared only when it would otherwise HIDE the new row.
+        Minimal,
+    };
+    // Go to the row for copy `copyId` (falling back to species `dex`): make it visible per
+    // `scope`, move the highlight to it by identity, centre it, and focus the table. The
+    // shared body of revealSelectedRow() and the after-add jump — the two must not drift,
+    // since the scroll-into-view sequence below is subtle enough to get wrong twice.
+    void revealRow(const QString& copyId, int dex, RevealScope scope);
     // Re-label/enable the reveal button for the current selection and guide state, from the
     // same places as the blank and move buttons. Two deliberate differences from those two:
     // it stays ENABLED with no pocket grid recorded (a missing grid removes the page
