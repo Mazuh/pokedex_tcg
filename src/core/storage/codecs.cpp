@@ -2,7 +2,7 @@
 
 #include <cstdio>
 #include <ctime>
-#include <initializer_list>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <utility>
@@ -23,12 +23,12 @@ namespace {
 // throw its own typed StorageError. `enumValues` is the canonical enumerator list;
 // `toText` supplies each one's token (the first call's arguments seed the static
 // table — always identical for a given Enum, so caching them is safe).
-template <class Enum, class ToText>
-std::optional<Enum> decodeToken(const std::string& text,
-                                std::initializer_list<Enum> enumValues, ToText toText) {
+template <class Enum, class Range, class ToText>
+std::optional<Enum> decodeToken(const std::string& text, const Range& enumValues,
+                                ToText toText) {
     static const std::vector<std::pair<std::string, Enum>> table = [&] {
         std::vector<std::pair<std::string, Enum>> built;
-        built.reserve(enumValues.size());
+        built.reserve(std::size(enumValues));
         for (const Enum value : enumValues) {
             built.emplace_back(toText(value), value);
         }
@@ -89,9 +89,12 @@ std::string ownershipToText(CardOwnership ownership) {
 }
 
 CardOwnership ownershipFromText(const std::string& text) {
-    if (const auto ownership = decodeToken<CardOwnership>(
-            text, {CardOwnership::Incoming, CardOwnership::Owned, CardOwnership::Removed},
-            ownershipToText)) {
+    // A local constant rather than a braced list: decodeToken takes a range (so the
+    // rarity/foil decoders can read kAllRarities / kAllFoils directly), and a
+    // braced-init-list is a non-deduced context.
+    static constexpr CardOwnership kValues[] = {CardOwnership::Incoming, CardOwnership::Owned,
+                                                CardOwnership::Removed};
+    if (const auto ownership = decodeToken<CardOwnership>(text, kValues, ownershipToText)) {
         return *ownership;
     }
     throw StorageError("unknown ownership token: " + text);
@@ -116,12 +119,10 @@ std::optional<CardCondition> conditionFromText(const std::string& text) {
     if (text.empty()) {
         return std::nullopt;  // unspecified
     }
-    if (const auto condition = decodeToken<CardCondition>(
-            text,
-            {CardCondition::NearMint, CardCondition::LightlyPlayed,
-             CardCondition::ModeratelyPlayed, CardCondition::HeavilyPlayed,
-             CardCondition::Damaged},
-            conditionToText)) {
+    static constexpr CardCondition kValues[] = {
+        CardCondition::NearMint, CardCondition::LightlyPlayed, CardCondition::ModeratelyPlayed,
+        CardCondition::HeavilyPlayed, CardCondition::Damaged};
+    if (const auto condition = decodeToken<CardCondition>(text, kValues, conditionToText)) {
         return condition;
     }
     throw StorageError("unknown condition token: " + text);
@@ -138,19 +139,34 @@ std::string rarityToText(std::optional<CardRarity> rarity) {
         case CardRarity::Uncommon:                return "Uncommon";
         case CardRarity::Rare:                    return "Rare";
         case CardRarity::DoubleRare:              return "DoubleRare";
-        case CardRarity::IllustrationRare:        return "IllustrationRare";
         case CardRarity::UltraRare:               return "UltraRare";
+        case CardRarity::IllustrationRare:        return "IllustrationRare";
         case CardRarity::SpecialIllustrationRare: return "SpecialIllustrationRare";
+        case CardRarity::MegaHyperRare:           return "MegaHyperRare";
+        case CardRarity::AceSpec:                 return "AceSpec";
+        case CardRarity::ShinyRare:               return "ShinyRare";
+        case CardRarity::ShinyUltraRare:          return "ShinyUltraRare";
         case CardRarity::HyperRare:               return "HyperRare";
-        case CardRarity::Promo:                   return "Promo";
+        case CardRarity::BlackWhiteRare:          return "BlackWhiteRare";
+        case CardRarity::MegaAttackRare:          return "MegaAttackRare";
+        case CardRarity::FuturisticRare:          return "FuturisticRare";
         case CardRarity::RareHolo:                return "RareHolo";
         case CardRarity::RareHoloEX:              return "RareHoloEX";
+        case CardRarity::RareHoloGX:              return "RareHoloGX";
+        case CardRarity::RareHoloLvX:             return "RareHoloLvX";
         case CardRarity::RarePrime:               return "RarePrime";
         case CardRarity::RareLegend:              return "RareLegend";
+        case CardRarity::RareBreak:               return "RareBreak";
+        case CardRarity::HoloRareV:               return "HoloRareV";
+        case CardRarity::HoloRareVMAX:            return "HoloRareVMAX";
+        case CardRarity::HoloRareVSTAR:           return "HoloRareVSTAR";
         case CardRarity::AmazingRare:             return "AmazingRare";
-        case CardRarity::Shining:                 return "Shining";
         case CardRarity::Radiant:                 return "Radiant";
-        case CardRarity::AceSpec:                 return "AceSpec";
+        case CardRarity::RainbowRare:             return "RainbowRare";
+        case CardRarity::SecretRare:              return "SecretRare";
+        case CardRarity::RareHoloStar:            return "RareHoloStar";
+        case CardRarity::Promo:                   return "Promo";
+        case CardRarity::Shining:                 return "Shining";
     }
     throw StorageError("unknown CardRarity enum value");
 }
@@ -159,15 +175,7 @@ std::optional<CardRarity> rarityFromText(const std::string& text) {
     if (text.empty()) {
         return std::nullopt;  // unspecified
     }
-    if (const auto rarity = decodeToken<CardRarity>(
-            text,
-            {CardRarity::Common, CardRarity::Uncommon, CardRarity::Rare, CardRarity::DoubleRare,
-             CardRarity::IllustrationRare, CardRarity::UltraRare,
-             CardRarity::SpecialIllustrationRare, CardRarity::HyperRare, CardRarity::Promo,
-             CardRarity::RareHolo, CardRarity::RareHoloEX, CardRarity::RarePrime,
-             CardRarity::RareLegend, CardRarity::AmazingRare, CardRarity::Shining,
-             CardRarity::Radiant, CardRarity::AceSpec},
-            rarityToText)) {
+    if (const auto rarity = decodeToken<CardRarity>(text, kAllRarities, rarityToText)) {
         return rarity;
     }
     throw StorageError("unknown rarity token: " + text);
@@ -180,16 +188,21 @@ std::string foilToText(std::optional<CardFoil> foil) {
     // Stable on-disk tokens for the foil treatment / finish. A new enumerator makes
     // this switch fail -Wswitch under -Werror rather than defaulting.
     switch (*foil) {
-        case CardFoil::NonHolo:        return "NonHolo";
-        case CardFoil::Holo:           return "Holo";
-        case CardFoil::ReverseHolo:    return "ReverseHolo";
-        case CardFoil::CosmosHolo:     return "CosmosHolo";
-        case CardFoil::MirrorHolo:     return "MirrorHolo";
-        case CardFoil::CrackedIceHolo: return "CrackedIceHolo";
-        case CardFoil::ConfettiHolo:   return "ConfettiHolo";
-        case CardFoil::CrosshatchHolo: return "CrosshatchHolo";
-        case CardFoil::HDHolo:         return "HDHolo";
-        case CardFoil::Textured:       return "Textured";
+        case CardFoil::NonHolo:          return "NonHolo";
+        case CardFoil::Holo:             return "Holo";
+        case CardFoil::ReverseHolo:      return "ReverseHolo";
+        case CardFoil::FullCardHolo:     return "FullCardHolo";
+        case CardFoil::Textured:         return "Textured";
+        case CardFoil::CosmosHolo:       return "CosmosHolo";
+        case CardFoil::WaterWebHolo:     return "WaterWebHolo";
+        case CardFoil::VerticalLineHolo: return "VerticalLineHolo";
+        case CardFoil::MirageHolo:       return "MirageHolo";
+        case CardFoil::CrackedIceHolo:   return "CrackedIceHolo";
+        case CardFoil::ConfettiHolo:     return "ConfettiHolo";
+        case CardFoil::CrosshatchHolo:   return "CrosshatchHolo";
+        case CardFoil::MirrorHolo:       return "MirrorHolo";
+        case CardFoil::OtherFoil:        return "OtherFoil";
+        case CardFoil::HDHolo:           return "HDHolo";
     }
     throw StorageError("unknown CardFoil enum value");
 }
@@ -198,12 +211,7 @@ std::optional<CardFoil> foilFromText(const std::string& text) {
     if (text.empty()) {
         return std::nullopt;  // unspecified
     }
-    if (const auto foil = decodeToken<CardFoil>(
-            text,
-            {CardFoil::NonHolo, CardFoil::Holo, CardFoil::ReverseHolo, CardFoil::CosmosHolo,
-             CardFoil::MirrorHolo, CardFoil::CrackedIceHolo, CardFoil::ConfettiHolo,
-             CardFoil::CrosshatchHolo, CardFoil::HDHolo, CardFoil::Textured},
-            foilToText)) {
+    if (const auto foil = decodeToken<CardFoil>(text, kAllFoils, foilToText)) {
         return foil;
     }
     throw StorageError("unknown foil token: " + text);

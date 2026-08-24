@@ -21,8 +21,8 @@ namespace pokedex {
 // since it flags something to look at, while the ⓘ is always there and stays neutral.
 //
 // The click used to be QToolTip::showText over the same rich text. A tooltip does not
-// scroll and Qt clamps it to the screen, so a long explanation (the rarity list runs to 17
-// entries) auto-closed unread on a laptop display — hence the dialog, and hence the
+// scroll and Qt clamps it to the screen, so a long explanation (the rarity list runs to
+// dozens of entries) auto-closed unread on a laptop display — hence the dialog, and hence the
 // button's own tooltip now carries only the SHORT title.
 
 // The "ⓘ" character itself, exposed so a caller laying out a glyph COLUMN can measure it

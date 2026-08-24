@@ -797,6 +797,30 @@ Conventions that hold across the model:
   (`CardReference`) and species (`pokemonDexNum`) directly. A full card
   catalog is a future fetch-and-cache concern, not something this domain
   stores or manages.
+- **`CardRarity` and `CardFoil` are APPEND-ONLY, and hiding an option is a `Retired`
+  classification rather than an omission.** Both are stored as free-text tokens spelled
+  exactly like the enumerator (`codecs.cpp`), and an unknown token **throws** from inside
+  `CardCopyRepository::listAll` — so one stale token fails the whole card-list load, not one
+  row. An enumerator may therefore be reordered or relabelled, never renamed or removed;
+  `tests/storage/codecs_test.cpp`'s `TokensAlreadyInDatabasesStillDecode` pins every token a
+  real database can already hold and may only ever grow. To withdraw an option from the
+  pickers, put it in `CardRarityGroup::Retired` / make `foilIsRetired()` true (today
+  `Shining` and `HDHolo`): the value still decodes, still renders in the card tables (which
+  read `rarityLabel`/`foilLabel` directly), and only `CardCopyForm` withholds it — where it
+  reads as "— None —" and an explicit Save clears it, the one accepted cost. That "explicit"
+  is load-bearing and does not hold for free: `EditCardCopyPage`'s ctor must take its
+  dirty-check baseline for rarity/foil from the FORM, not the record (the same re-read, and
+  the same reason, as the binder id beside it), or a copy carrying a withdrawn value opens
+  permanently dirty and Back's Save-defaulted prompt clears it with no save ever intended. Both enums also
+  publish a canonical `kAllRarities` / `kAllFoils` (the `kRegions` precedent) that the
+  codecs, the picker and the tests all read, so the GUI can no longer keep a second
+  hand-maintained copy of the list and silently drop a value from it; `rarityGroup()` /
+  `foilIsRetired()` are exhaustive switches, so a NEW enumerator fails `-Wswitch` under
+  `-Werror` until it is placed. Declaration order is picker order AND the Rarity/Foil column
+  sort rank, groups are contiguous, and retired values come last. The rarity picker renders
+  its groups as **disabled heading items** carrying `userData = -2` — distinct from
+  `noneOptionLabel()`'s `-1` and from every real value, so `findData` can never land on one
+  and `rarity()`'s existing "negative means nothing picked" test already covers it.
 - **A `CardCopy`'s species is optional.** `pokemonDexNum` is
   `std::optional<PokemonDexNum>`: most cards depict a species, but a TCG
   collection also holds cards that depict none — Trainer/Energy cards, promos.
@@ -1456,7 +1480,7 @@ the bug this split exists to prevent:
   price surfaces). It opens `InfoDialog`; its own tooltip carries only the short TITLE, and
   the cursor is `PointingHandCursor`, because it opens something rather than hovering
   something. **A tooltip could not hold these**: `QToolTip` doesn't scroll and Qt clamps it
-  to the screen, so the rarity list (17 definition entries) auto-closed unread on a laptop —
+  to the screen, so the rarity list (dozens of definition entries) auto-closed unread on a laptop —
   which is exactly the report that produced this split. The body is a `std::function<QString()>`
   called at CLICK time, not a string: it keeps each `…InfoHtml()` static lazy, and lets the
   price surfaces rebuild theirs per render (freshness dates) while the button holds no stale

@@ -95,6 +95,16 @@ EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardPriceLookupSer
     // (an unchanged field is never written) and is exactly right when they don't: the page
     // cannot represent a binder it wasn't given.
     copy_.binderId = form_->binderId();
+    // Same reasoning, same fix, for the two picker fields: a copy can carry a rarity or
+    // foil the picker no longer OFFERS (see CardRarityGroup::Retired / foilIsRetired), and
+    // loadCopy shows those as "— None —" because the combo has no item for them. With the
+    // record's value as the baseline the page would open permanently dirty over a card
+    // nobody touched — and since Back's prompt defaults to Save, merely opening Edit to
+    // READ such a copy and pressing Back+Enter would silently clear the value. Taking the
+    // baseline from the form confines the loss to a deliberate Save, which is the whole
+    // deal a withdrawn option is offered on.
+    copy_.rarity = form_->rarity();
+    copy_.foil = form_->foil();
     // The filing fields stage like every other field on the form: they only mark the page
     // dirty here, and "Save changes" commits them with the rest. They used to write the
     // instant they were touched, which made two of a dozen fields behave unlike the other

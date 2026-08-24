@@ -11,6 +11,7 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSizePolicy>
+#include <QStandardItemModel>
 #include <QStringList>
 #include <QTextCursor>
 #include <QToolButton>
@@ -20,7 +21,9 @@
 #include <cstddef>
 #include <functional>
 #include <iterator>
+#include <optional>
 #include <utility>
+#include <vector>
 
 #include "gui/views/binder_combo.h"
 #include "gui/views/condition_labels.h"
@@ -38,26 +41,19 @@ namespace pokedex {
 
 namespace {
 
-// The enum values each picker and its info popover iterate — the single lists, so a
-// new enumerator flows into both the combo and the explanation automatically. The
-// rarity split matches the CardRarity docstring: the modern scale, then the legacy
-// rarities from older eras (shown as a distinct popover section).
+// The enum values the condition picker and its info popover iterate. Rarity and foil
+// read the domain's own kAllRarities / kAllFoils instead, so neither can drift from the
+// enum — the GUI-side arrays they replaced were a hand-maintained second copy, and a
+// value missing from one silently vanished from the picker (and got wiped on the next
+// save of a copy carrying it).
 constexpr CardCondition kConditions[] = {
     CardCondition::NearMint, CardCondition::LightlyPlayed, CardCondition::ModeratelyPlayed,
     CardCondition::HeavilyPlayed, CardCondition::Damaged};
-constexpr CardRarity kModernRarities[] = {
-    CardRarity::Common,    CardRarity::Uncommon,        CardRarity::Rare,
-    CardRarity::DoubleRare, CardRarity::IllustrationRare, CardRarity::UltraRare,
-    CardRarity::SpecialIllustrationRare, CardRarity::HyperRare, CardRarity::Promo};
-constexpr CardRarity kLegacyRarities[] = {
-    CardRarity::RareHolo,   CardRarity::RareHoloEX,  CardRarity::RarePrime,
-    CardRarity::RareLegend, CardRarity::AmazingRare, CardRarity::Shining,
-    CardRarity::Radiant,    CardRarity::AceSpec};
-constexpr CardFoil kFoils[] = {
-    CardFoil::NonHolo,        CardFoil::Holo,          CardFoil::ReverseHolo,
-    CardFoil::CosmosHolo,     CardFoil::MirrorHolo,    CardFoil::CrackedIceHolo,
-    CardFoil::ConfettiHolo,   CardFoil::CrosshatchHolo, CardFoil::HDHolo,
-    CardFoil::Textured};
+
+// The userData a rarity group HEADING item carries. Distinct from noneOptionLabel()'s
+// -1 and from every real enum value (0..n), so findData() can never land on a heading;
+// rarity()'s existing "negative means nothing picked" test already covers it.
+constexpr int kGroupHeaderData = -2;
 
 // A rich-text <dl> definition list of label/description pairs over a range of enum
 // values, built from the same label/description helpers the picker uses (so the
@@ -91,21 +87,52 @@ const QString& conditionInfoHtml() {
     return html;
 }
 
-// The rarity-picker explanation: the modern scale, then a "Legacy rarities" subheading with
-// the older-era rarities — mirroring the two tables the terms come from, so the legacy ones
-// read as a distinct, secondary group. The longest of the three by far, and the reason
-// these moved off QToolTip onto a scrollable dialog.
+// The rarity-picker explanation: one section per CardRarityGroup — a heading, a line on
+// what the whole branch IS, then that group's definition list. Rarity is not one ladder
+// from Common upward, so the groups carry as much of the meaning as the entries do.
+// Retired values are omitted, matching the picker. By far the longest of the three, and
+// the reason these moved off QToolTip onto a scrollable dialog.
 const QString& rarityInfoHtml() {
-    static const QString html =
-        definitionListHtml(kModernRarities, rarityLabel, rarityDescription) +
-        QStringLiteral("<p><b>Legacy rarities</b> (older eras)</p>") +
-        definitionListHtml(kLegacyRarities, rarityLabel, rarityDescription);
+    static const QString html = [] {
+        QString built;
+        std::vector<CardRarity> group;
+        const auto flush = [&built, &group] {
+            if (group.empty()) {
+                return;
+            }
+            const CardRarityGroup g = rarityGroup(group.front());
+            built += QStringLiteral("<p><b>%1</b> — %2</p>")
+                         .arg(rarityGroupLabel(g).toHtmlEscaped(),
+                              rarityGroupDescription(g).toHtmlEscaped());
+            built += definitionListHtml(group, rarityLabel, rarityDescription);
+            group.clear();
+        };
+        for (const CardRarity r : kAllRarities) {
+            if (rarityGroup(r) == CardRarityGroup::Retired) {
+                continue;
+            }
+            if (!group.empty() && rarityGroup(r) != rarityGroup(group.front())) {
+                flush();
+            }
+            group.push_back(r);
+        }
+        flush();
+        return built;
+    }();
     return html;
 }
 
-// The foil-treatment explanation: every finish, each with its description.
+// The foil-treatment explanation: every offered finish, each with its description.
 const QString& foilInfoHtml() {
-    static const QString html = definitionListHtml(kFoils, foilLabel, foilDescription);
+    static const QString html = [] {
+        std::vector<CardFoil> offered;
+        for (const CardFoil f : kAllFoils) {
+            if (!foilIsRetired(f)) {
+                offered.push_back(f);
+            }
+        }
+        return definitionListHtml(offered, foilLabel, foilDescription);
+    }();
     return html;
 }
 
@@ -213,15 +240,36 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
 
     // Rarity and foil treatment are optional physical-copy attributes (like condition):
     // each has a noneOptionLabel() -1 sentinel first, then one item per enum value with
-    // its label from the app's single source. Rarity lists the modern scale followed by
-    // the legacy rarities (the two info-popover sections). Foil lists every finish.
+    // its label from the app's single source.
+    //
+    // Rarity runs to ~30 options, so it is broken up by CardRarityGroup with a DISABLED
+    // heading item per group (the same sections the ⓘ dialog shows). The heading's text
+    // leads with an em-dash and the item is disabled, so it stays out of both the combo's
+    // letter type-ahead and its keyboard navigation — the same rule as the language
+    // picker's flags: decoration never goes in the text of a *selectable* item.
+    //
+    // Both pickers skip their RETIRED values. A copy already recorded with one still shows
+    // its label everywhere else (the card tables read rarityLabel/foilLabel directly);
+    // only this form withholds it, and setRarity() below says what that costs.
     rarity_ = new QComboBox(this);
     rarity_->addItem(noneOptionLabel(), -1);
-    for (const CardRarity r : kModernRarities) {
-        rarity_->addItem(rarityLabel(r), static_cast<int>(r));
-    }
-    for (const CardRarity r : kLegacyRarities) {
-        rarity_->addItem(rarityLabel(r), static_cast<int>(r));
+    {
+        auto* model = qobject_cast<QStandardItemModel*>(rarity_->model());
+        std::optional<CardRarityGroup> shown;
+        for (const CardRarity r : kAllRarities) {
+            const CardRarityGroup group = rarityGroup(r);
+            if (group == CardRarityGroup::Retired) {
+                continue;
+            }
+            if (shown != group) {
+                shown = group;
+                rarity_->addItem(tr("— %1 —").arg(rarityGroupLabel(group)), kGroupHeaderData);
+                if (model != nullptr) {
+                    model->item(rarity_->count() - 1)->setEnabled(false);
+                }
+            }
+            rarity_->addItem(rarityLabel(r), static_cast<int>(r));
+        }
     }
     connect(rarity_, &QComboBox::activated, this, [this](int) {
         refreshMissingFieldHints();
@@ -230,8 +278,10 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
 
     foil_ = new QComboBox(this);
     foil_->addItem(noneOptionLabel(), -1);
-    for (const CardFoil f : kFoils) {
-        foil_->addItem(foilLabel(f), static_cast<int>(f));
+    for (const CardFoil f : kAllFoils) {
+        if (!foilIsRetired(f)) {
+            foil_->addItem(foilLabel(f), static_cast<int>(f));
+        }
     }
     connect(foil_, &QComboBox::activated, this, [this](int) {
         refreshMissingFieldHints();
@@ -566,7 +616,17 @@ void CardCopyForm::setCardReference(const CardReference& ref) {
 
 void CardCopyForm::setRarity(std::optional<CardRarity> rarity) {
     // Silent (setCurrentIndex, not activated), so autofilling from a picked card emits
-    // no detailsChanged(); nullopt / an unmapped value falls back to "— None —".
+    // no detailsChanged(); nullopt falls back to "— None —".
+    //
+    // So does a value the picker doesn't OFFER — today only a RETIRED one (see
+    // CardRarityGroup). That is deliberate and it has a cost worth knowing: a copy
+    // recorded with a retired rarity reads as "— None —" here, and committing the form
+    // clears it. Nothing is lost on load — the tables still show the stored value — only
+    // on an explicit Save, and EditCardCopyPage's ctor takes its dirty-check baseline from
+    // this form precisely so that stays true: with the record's value as the baseline the
+    // page would open dirty and Back's Save-defaulted prompt could clear it unasked.
+    // rarityGroup()'s exhaustive switch is what keeps this confined to values withdrawn on
+    // purpose, rather than one forgotten from a list.
     const int data = rarity ? static_cast<int>(*rarity) : -1;
     const int index = rarity_->findData(data);
     rarity_->setCurrentIndex(index >= 0 ? index : 0);
@@ -634,7 +694,7 @@ void CardCopyForm::loadCopy(const CardCopy& copy) {
     setRarity(copy.rarity);
     const int fd = copy.foil ? static_cast<int>(*copy.foil) : -1;
     const int fi = foil_->findData(fd);
-    foil_->setCurrentIndex(fi >= 0 ? fi : 0);
+    foil_->setCurrentIndex(fi >= 0 ? fi : 0);  // retired/unset reads as "— None —" (see setRarity)
     ownership_->setCurrentIndex(ownership_->findData(static_cast<int>(copy.ownership)));
     comments_->setPlainText(QString::fromStdString(copy.comments));
     setNoFixedPosition(copy.noFixedPosition);

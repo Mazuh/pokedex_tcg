@@ -91,14 +91,12 @@ TEST(CodecsTest, ConditionOptionalRoundTripsThroughEmptyString) {
     EXPECT_EQ(pokedex::conditionFromText(""), std::nullopt);
 }
 
-// Every rarity (modern + legacy) round-trips through its storage token.
+// Every rarity round-trips through its storage token. Driven off kAllRarities rather
+// than a list spelled out here, so a value added to the enum is covered automatically —
+// and, since rarityFromText decodes off that same array, a value MISSING from it fails
+// the domain suite's ordering test rather than silently going unread here.
 TEST(CodecsTest, RarityRoundTripsForEveryValue) {
-    for (const CardRarity rarity :
-         {CardRarity::Common, CardRarity::Uncommon, CardRarity::Rare, CardRarity::DoubleRare,
-          CardRarity::IllustrationRare, CardRarity::UltraRare, CardRarity::SpecialIllustrationRare,
-          CardRarity::HyperRare, CardRarity::Promo, CardRarity::RareHolo, CardRarity::RareHoloEX,
-          CardRarity::RarePrime, CardRarity::RareLegend, CardRarity::AmazingRare,
-          CardRarity::Shining, CardRarity::Radiant, CardRarity::AceSpec}) {
+    for (const CardRarity rarity : pokedex::kAllRarities) {
         EXPECT_EQ(pokedex::rarityFromText(pokedex::rarityToText(rarity)), rarity);
     }
 }
@@ -107,7 +105,10 @@ TEST(CodecsTest, RarityTokensAreTheExpectedText) {
     EXPECT_EQ(pokedex::rarityToText(CardRarity::Common), "Common");
     EXPECT_EQ(pokedex::rarityToText(CardRarity::DoubleRare), "DoubleRare");
     EXPECT_EQ(pokedex::rarityToText(CardRarity::AceSpec), "AceSpec");
+    EXPECT_EQ(pokedex::rarityToText(CardRarity::MegaHyperRare), "MegaHyperRare");
+    EXPECT_EQ(pokedex::rarityToText(CardRarity::HoloRareVSTAR), "HoloRareVSTAR");
     EXPECT_EQ(pokedex::rarityFromText("HyperRare"), CardRarity::HyperRare);
+    EXPECT_EQ(pokedex::rarityFromText("SecretRare"), CardRarity::SecretRare);
 }
 
 TEST(CodecsTest, UnknownRarityTokenThrows) {
@@ -120,12 +121,10 @@ TEST(CodecsTest, RarityOptionalRoundTripsThroughEmptyString) {
     EXPECT_EQ(pokedex::rarityFromText(""), std::nullopt);
 }
 
-// Every foil treatment round-trips through its storage token.
+// Every foil treatment round-trips through its storage token — driven off kAllFoils, for
+// the reason the rarity case above gives.
 TEST(CodecsTest, FoilRoundTripsForEveryValue) {
-    for (const CardFoil foil :
-         {CardFoil::NonHolo, CardFoil::Holo, CardFoil::ReverseHolo, CardFoil::CosmosHolo,
-          CardFoil::MirrorHolo, CardFoil::CrackedIceHolo, CardFoil::ConfettiHolo,
-          CardFoil::CrosshatchHolo, CardFoil::HDHolo, CardFoil::Textured}) {
+    for (const CardFoil foil : pokedex::kAllFoils) {
         EXPECT_EQ(pokedex::foilFromText(pokedex::foilToText(foil)), foil);
     }
 }
@@ -134,11 +133,37 @@ TEST(CodecsTest, FoilTokensAreTheExpectedText) {
     EXPECT_EQ(pokedex::foilToText(CardFoil::NonHolo), "NonHolo");
     EXPECT_EQ(pokedex::foilToText(CardFoil::ReverseHolo), "ReverseHolo");
     EXPECT_EQ(pokedex::foilToText(CardFoil::Textured), "Textured");
+    EXPECT_EQ(pokedex::foilToText(CardFoil::OtherFoil), "OtherFoil");
     EXPECT_EQ(pokedex::foilFromText("CosmosHolo"), CardFoil::CosmosHolo);
+    EXPECT_EQ(pokedex::foilFromText("MirageHolo"), CardFoil::MirageHolo);
 }
 
 TEST(CodecsTest, UnknownFoilTokenThrows) {
     EXPECT_THROW(pokedex::foilFromText("RainbowHolo"), StorageError);
+}
+
+// THE COMPATIBILITY GUARD. Rarity and foil are stored as free-text tokens and an unknown
+// one THROWS — from inside CardCopyRepository::listAll, so a single stale token fails the
+// whole card-list load, not one row. Every token below is one a real database can already
+// contain, so decoding each of them must keep working forever.
+//
+// This list may only ever GROW. If a value is withdrawn from the pickers, its enumerator
+// (and therefore its token) stays; see CardRarityGroup::Retired and foilIsRetired(). A
+// deletion or a rename here is a data-loss bug, not a cleanup — which is why the tokens
+// are spelled as string LITERALS: writing them as rarityToText(...) would make the test
+// agree with any rename instead of catching it.
+TEST(CodecsTest, TokensAlreadyInDatabasesStillDecode) {
+    for (const char* token :
+         {"Common", "Uncommon", "Rare", "DoubleRare", "IllustrationRare", "UltraRare",
+          "SpecialIllustrationRare", "HyperRare", "Promo", "RareHolo", "RareHoloEX",
+          "RarePrime", "RareLegend", "AmazingRare", "Shining", "Radiant", "AceSpec"}) {
+        EXPECT_NE(pokedex::rarityFromText(token), std::nullopt) << "rarity token " << token;
+    }
+    for (const char* token :
+         {"NonHolo", "Holo", "ReverseHolo", "CosmosHolo", "MirrorHolo", "CrackedIceHolo",
+          "ConfettiHolo", "CrosshatchHolo", "HDHolo", "Textured"}) {
+        EXPECT_NE(pokedex::foilFromText(token), std::nullopt) << "foil token " << token;
+    }
 }
 
 // Foil treatment is optional: nullopt <-> the empty string.

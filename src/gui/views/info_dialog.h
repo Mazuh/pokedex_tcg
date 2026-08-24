@@ -15,8 +15,8 @@ namespace pokedex {
 // their place in what they were typing.
 //
 // It replaced QToolTip::showText, which could not carry these texts: a tooltip does not
-// scroll and Qt clamps it to the screen, so a long explanation — the rarity list is 17
-// definition entries — was simply unreadable on a laptop display (the popup auto-closes
+// scroll and Qt clamps it to the screen, so a long explanation — the rarity list is dozens
+// of definition entries — was simply unreadable on a laptop display (the popup auto-closes
 // rather than being cut off). Hence the body is a QTextBrowser: it scrolls, and (unlike a
 // word-wrapped QLabel, whose size policy carries no heightForWidth flag, so a QScrollArea
 // would clip it with no scrollbar) it reports an exact laid-out height. The dialog opens

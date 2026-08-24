@@ -17,7 +17,7 @@ namespace pokedex {
 //   • makeHintButton (below) — the "⚠" markers: a SHORT hint, shown as the tooltip on hover
 //     and popped by QToolTip::showText on click, so it works with either mouse habit.
 //   • makeInfoButton (info_button.h) — the "ⓘ" explainers: a long rich-text reference
-//     (the rarity list is 17 definition entries), which opens the modal InfoDialog. A
+//     (the rarity list is dozens of definition entries), which opens the modal InfoDialog. A
 //     tooltip cannot hold one — it does not scroll and Qt clamps it to the screen, so it
 //     auto-closed unread on a laptop display. That is why the ⓘ moved off this idiom.
 //

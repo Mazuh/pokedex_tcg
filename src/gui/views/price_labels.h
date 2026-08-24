@@ -15,9 +15,10 @@
 namespace pokedex {
 
 // GUI — the tcgdex pricing FINISH a copy's CardFoil maps to. tcgdex prices only three finishes
-// (normal/holo/reverse); the finer treatments (Cosmos, Mirror, Cracked Ice, …) all price as
-// "holo". An unset foil yields "" — no finish preference, so the pick falls back to the highest
-// figure (the prior behavior), which never under-prices a card whose finish we don't know.
+// (normal/holo/reverse); the finer treatments (Cosmos, Water Web, Mirage, Cracked Ice, …) all
+// price as "holo". An unset foil — or one recorded as Other/Unknown — yields "": no finish
+// preference, so the pick falls back to the highest figure (the prior behavior), which never
+// under-prices a card whose finish we don't know.
 inline std::string finishForFoil(std::optional<CardFoil> foil) {
     if (!foil) {
         return "";
@@ -28,14 +29,22 @@ inline std::string finishForFoil(std::optional<CardFoil> foil) {
         case CardFoil::ReverseHolo:
             return "reverse";
         case CardFoil::Holo:
+        case CardFoil::FullCardHolo:
+        case CardFoil::Textured:
         case CardFoil::CosmosHolo:
-        case CardFoil::MirrorHolo:
+        case CardFoil::WaterWebHolo:
+        case CardFoil::VerticalLineHolo:
+        case CardFoil::MirageHolo:
         case CardFoil::CrackedIceHolo:
         case CardFoil::ConfettiHolo:
         case CardFoil::CrosshatchHolo:
+        case CardFoil::MirrorHolo:
         case CardFoil::HDHolo:
-        case CardFoil::Textured:
             return "holo";
+        case CardFoil::OtherFoil:
+            // A treatment we couldn't name must not bias the pick toward one variant —
+            // same "no preference" as an unset foil, not a guess at "holo".
+            return "";
     }
     return "";  // unreachable — the switch is exhaustive (a new CardFoil fails -Wswitch)
 }
