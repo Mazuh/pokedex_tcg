@@ -1640,6 +1640,18 @@ void BinderView::revealSelectedRow() {
     if (target < 0) {
         return;  // defensive: neither clearing a filter nor a sort can drop a row
     }
+    // Bring the table's geometry up to date BEFORE scrolling. Un-hiding the filtered rows
+    // above only SCHEDULES that: the vertical header emits a resize per row it reveals, and
+    // QTableView batches those onto a zero-millisecond timer, so until the event loop turns
+    // again the vertical scrollbar still carries the FILTERED table's tiny maximum. A scroll
+    // asked for now is silently clamped to it — which is exactly why this used to take two
+    // clicks, the first appearing to do nothing but empty the search box. doItemsLayout() is
+    // the public slot that runs that update (updateGeometries()) synchronously, so the scroll
+    // below sees the full row set's range. Anything Qt still had queued for later is then
+    // either cancelled outright or a repeat of what just ran — harmless either way, since the
+    // range only GROWS here and so cannot clamp the position this lands on. Do NOT reach for
+    // processEvents() here: it would let a section switch re-enter this view mid-action.
+    table_->doItemsLayout();
     // CENTRE it rather than merely scroll it into view: the question being answered is what
     // sits AROUND this card, so its neighbours have to be on screen too.
     if (QTableWidgetItem* item = table_->item(target, 3)) {  // the name column
