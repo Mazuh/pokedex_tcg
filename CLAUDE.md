@@ -532,7 +532,13 @@ dirty — the note is workspace-only); the **default language** applies **live**
 reads it (`readConfigValue(kDefaultLanguageConfigKey)`) fresh per open and pre-selects it on the
 form for a new copy (only a manual pick overrides it), so a change needs no restart.
 The language code list is the shared `gui/views/language_codes.h` (also the config-key constant),
-used by both the card form's Language picker and this screen so they can't drift. Because leaving
+used by both the card form's Language picker and this screen so they can't drift. Both build their
+items through `languageLabel(code)`, which decorates a code with a purely decorative flag emoji
+(`languageFlag`) and renders the blank entry as the shared `noneOptionLabel()`; the item's *data*
+stays the bare code, so nothing decorative can reach a saved `CardReference`. A code with no ONE
+country gets no flag rather than an arbitrary one — `LA` is Latin-American Spanish, and the
+single-letter codes `C`/`F`/`T`/`I` are of unrecorded origin (they predate this file and no commit
+says what they stand for). Because leaving
 a staged form would silently drop edits, `MainWindow` **guards every section switch** (and the
 window close) through `SettingsView::confirmLeave` (Save / Discard / Cancel); on Cancel it snaps
 the sidebar selection back to Settings via a **queued** `setCurrentRow` (an inline revert gets

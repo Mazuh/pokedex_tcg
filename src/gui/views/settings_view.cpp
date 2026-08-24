@@ -89,7 +89,7 @@ SettingsView::SettingsView(BackupService& backups, QWidget* parent)
     // the two pickers never drift; the leading blank entry means "no default".
     languageEdit_ = new QComboBox(this);
     for (const QString& code : languageCodes()) {
-        languageEdit_->addItem(code.isEmpty() ? noneOptionLabel() : code, code);
+        languageEdit_->addItem(languageLabel(code), code);
     }
     connect(languageEdit_, &QComboBox::activated, this, &SettingsView::refreshDirtyState);
 
