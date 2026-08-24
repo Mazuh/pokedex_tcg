@@ -462,22 +462,39 @@ typed, 3+ characters, debounced by the service). The
 `AddCardCopyPage` assembles them editable (finder pick autofills the form; submit
 creates a copy). For the same-booster flow it carries **two narrow shortcuts** off the
 session-static `LastAdded` (the last successful add's set, comment, and display name —
-static because each add is a fresh page instance, in-memory only): **"Reuse comments"**
+static because each add is a fresh page instance, in-memory only): **"💬 Last comments"**
 puts the last add's comment in the box and does NOTHING else — it OVERWRITES what's typed
 (an explicit click should take effect) but through `CardCopyForm::replaceComments`, a
 cursor-based select-all+insert that keeps the edit UNDOABLE, unlike `setComments`, whose
 `setPlainText` clears the undo stack and would put a mis-clicked-over note out of reach;
-it is disabled when the last add had no comment. **"Search last set"** only runs
+it is disabled when the last add had no comment. **"🔍 Last set"** only runs
 `CardFinderPanel::searchFor` on the last set, writing nothing to the form (a programmatic
 `searchFor` deliberately doesn't emit `setChosen`), so the user still picks a printing to
-decide what autofills. It exists only in species mode — the name-search finder takes a
+decide what autofills. It works only in species mode — the name-search finder takes a
 card *name*, so a set query there would search nonsense (the cost, accepted: a booster of
-Trainer/Energy cards added from My Cards has no set shortcut at all). Both labels are
+Trainer/Energy cards added from My Cards has no set shortcut at all).
+
+**The pair is built to be told apart, because it wasn't.** Two identical grey text buttons
+side by side, with labels that both opened on a verb about "last", got clicked
+interchangeably. Three things fix that and each is deliberate: (1) a **glyph each**
+(`emojiIcon`, `gui/views/emoji_icon.h`, under the glyph rules in "GUI navigation" below —
+icon not label prefix, box measurably wider than the pixel size, and light enough to
+survive a dark button; both were checked on a screenshot of each theme, enabled AND
+disabled, the disabled-on-light case being the faintest one they have to pass); (2) short **parallel** labels naming what is carried over, so the whole difference
+sits on the one word that differs; (3) **both buttons are ALWAYS in the row**, disabled
+with a reason rather than absent. "Last set" used not to be *constructed* at all in
+name-search mode, which left the row three buttons wide there and put "Last comments" in
+the position "Last set" holds everywhere else — a control that changes place between
+openings is exactly what trains a mis-click, so a mode that can't use a shortcut greys it
+and says why (`searchLastSet()` re-guards on `dexNumber_` anyway). Both labels stay
 SHORT and static with the card/set named in the **tooltip**: `CardCopyForm`'s action row
-is one non-wrapping `QHBoxLayout` inside a pane capped at 560px, and interpolating a card
-name plus a full set name into two of its four buttons overflows it and clips the trailing
-button — budget for that before adding a fifth action or a longer label. Each disabled
-state explains itself in the tooltip (the same idiom as the guide's Insert blank / Move…).
+is one non-wrapping `QHBoxLayout` inside a pane capped at 560px, it now carries four
+buttons in BOTH modes, and interpolating a card name plus a full set name into two of them
+overflows it and clips the trailing button — the shorter labels roughly pay for the two
+icons (~24px each), so budget for that before adding a fifth action or a longer label.
+Each disabled state explains itself in the tooltip (the same idiom as the guide's Insert
+blank / Move…, minus their `update…ButtonState()` method — this page's state genuinely
+cannot change while it lives, so the four reasons are one construction-time ternary).
 This REPLACED a single "Reuse last info" button that also carried language + condition and
 rewrote the form's `CardReference` to the last set; one click silently rewriting fields the
 user didn't ask about is exactly what made it unpleasant, so don't re-merge them. Language
@@ -1412,8 +1429,10 @@ consequences worth remembering:
 sidebar (a `QListWidget` source list, Finder/Settings-style) selecting sections
 in an outer `QStackedWidget`. Each sidebar row carries a section emoji (📒 Binders ·
 🐱 All Pokémon · 🃏 My Cards · ⭐ Wishlist · ⚙️ Settings) so a section can be found by
-shape rather than by reading every label. Two rules govern any glyph added here or to
-another picker/list. It is an **icon, never a prefix on the label** — both `QListWidget`
+shape rather than by reading every label. The same treatment is what tells the add page's
+two booster shortcuts apart (**💬 Last comments** / **🔍 Last set** — see that note), so
+these rules govern any glyph added here, to another picker/list, or to a push button whose
+neighbour it has to be distinguishable from. It is an **icon, never a prefix on the label** — both `QListWidget`
 and `QComboBox` type-ahead match keystrokes against the DISPLAYED TEXT, so a glyph in
 the text makes the entry unreachable by keyboard (the same trap `languageFlagIcon`
 records) — painted by the shared `emojiIcon(glyph, box, pixelSize)`
@@ -1423,12 +1442,21 @@ an item view's is invalid and resolves to the style's small-icon size, the same 
 the glyph's pixel size are **two arguments on purpose**: a box merely equal to the pixel
 size CROPS the glyph, since a colour emoji's ink runs ~1.2× its pixel size and `drawText`
 centres on the font's line box rather than on the ink. Budget ~1.33× (the sidebar draws 18px
-glyphs in a 24×24 box); the helper's header records the measurements and how to re-take
-them — check a candidate size by probing the rendered alpha for border pixels, never by
-reasoning about it. And it must have a
-**saturated fill**: the app follows the system theme, and a black-ink emoji (🐾, 📷)
-is invisible against a dark-theme sidebar — so verify a new glyph on a real dark-mode
-screenshot, not by reasoning about it. The two footer buttons (`✦ Scan card`, `ⓘ About`)
+glyphs in a 24×24 box; the add page's shortcuts draw 15px in a 22×22 one); the helper's
+header records the measurements and how to re-take them — check a candidate size by probing
+the rendered alpha for border pixels, never by reasoning about it. **1.33× is the budget,
+not the answer**: 15px shipped once in a 20×20 box on the arithmetic alone (15 × 1.33 =
+19.95, apparently fitting) and clipped both glyphs, because `drawText` centres on the line
+box rather than on the ink. Round the budget UP and then probe. Probing takes minutes — a
+throwaway `QGuiApplication` linking `Qt6::Gui`, run under `QT_QPA_PLATFORM=offscreen`, that
+calls `emojiIcon` and reports the max alpha on the border rows/columns; render a size
+already known good (the sidebar's) in the same run as a control. And it must survive BOTH themes: the app
+follows the system theme, and a single-tone emoji disappears against one of them — a
+black-ink glyph (🐾, 📷) against the dark sidebar, a pale one against a light button. A
+saturated fill clears that (the sidebar's picks), and so does a near-white glyph with a
+dark outline (the add page's 💬/🔍, which measure greyscale but read on both). Either way
+verify on real screenshots of both themes — and for a control that can be disabled, on the
+disabled state too, which Qt fades further still. The two footer buttons (`✦ Scan card`, `ⓘ About`)
 deliberately keep their glyphs as label text: they are their own band below a divider,
 and `ⓘ` is a repo-wide idiom.
 `main.cpp` opens it with `showMaximized()` so the

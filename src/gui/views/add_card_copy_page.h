@@ -151,25 +151,27 @@ private:
     CardCopyForm* form_;      // the shared details pane (editable, with a submit action)
     QPushButton* submit_;     // "Add copy" — lives in the form's action row
     QPushButton* uploadButton_;  // "Upload a photo…" — also in the form's action row
-    QPushButton* reuseCommentsButton_;  // "Reuse comments from …" — see reuseLastComments()
-    // "Search set …" — see searchLastSet(). Null in name-search mode: that finder
-    // searches by card name, so pointing it at a set name would search nonsense.
-    QPushButton* searchLastSetButton_ = nullptr;
+    QPushButton* reuseCommentsButton_;  // "💬 Last comments" — see reuseLastComments()
+    // "🔍 Last set" — see searchLastSet(). Always constructed, even in name-search mode
+    // (where it is permanently disabled): a shortcut that is absent in one mode shifts
+    // the button beside it into its place, which is what made the pair confusable.
+    QPushButton* searchLastSetButton_;
     CardFinderPanel* finder_;  // the shared search field + printings list + preview
 
     // Session-lived memory of the last successfully added copy, backing the two
     // one-click shortcuts for entering a whole booster: its comment (reuseLastComments)
     // and its set (searchLastSet, which only drives the finder's search). Nothing else
     // is remembered — a click carries over exactly what its button names, never a
-    // silent form rewrite. displayName labels the comments button. Static because each
-    // add is a brand-new page instance — it must outlive any one page. In-memory only:
+    // silent form rewrite. displayName names the last card in the comments button's
+    // tooltip (the label itself is static — see the width budget there). Static because
+    // each add is a brand-new page instance — it must outlive any one page. In-memory only:
     // never persisted, so it resets when the app is closed.
     struct LastAdded {
         bool has = false;
         std::string expansionCode;
         std::string setName;
         std::string comments;
-        QString displayName;  // the last card/species name, for the button label
+        QString displayName;  // the last card/species name, for the buttons' tooltips
     };
     static LastAdded lastAdded_;
 

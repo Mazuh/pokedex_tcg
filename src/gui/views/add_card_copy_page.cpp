@@ -7,6 +7,7 @@
 #include <QMessageBox>
 #include <QPixmap>
 #include <QPushButton>
+#include <QSize>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
@@ -28,6 +29,7 @@
 #include "gui/views/card_copy_splitter.h"
 #include "gui/views/card_finder_panel.h"
 #include "gui/views/card_price_fetch_controller.h"
+#include "gui/views/emoji_icon.h"
 #include "gui/views/language_codes.h"
 #include "gui/views/photo_upload.h"
 #include "gui/views/primary_button.h"
@@ -38,17 +40,30 @@
 namespace pokedex {
 
 // Set once per successful add, read by the next page's two booster shortcuts — the
-// "Reuse comments from …" and "Search set …" buttons.
+// "Last comments" and "Last set" buttons.
 AddCardCopyPage::LastAdded AddCardCopyPage::lastAdded_;
 
 namespace {
 
-// How the last add's set is named, for both the "Search set …" button's label and the
-// query it runs — so the button can never search something other than what it says.
+// How the last add's set is named, for both the "Last set" button's tooltip and the query
+// it runs — so the button can never search something other than what it names.
 // Prefers the set name (how the finder resolves a set), falling back to its code.
 QString lastSetQuery(const std::string& setName, const std::string& expansionCode) {
     return QString::fromStdString(!setName.empty() ? setName : expansionCode);
 }
+
+// The box each booster shortcut's glyph is painted into, and how big the glyph is drawn
+// inside it — two numbers for the reason emojiIcon spells out. The pixel size is chosen to
+// sit beside the button's own label rather than tower over it; the BOX is then measured,
+// not reasoned about, exactly as that header instructs. A 20x20 box at this pixel size
+// shipped for one commit and clipped both glyphs (ink reaching the left column and the
+// bottom row at alpha 162 and 213) — 15 x 1.33 lands at 19.95, right on the edge, and
+// drawText centring on the font's line box rather than on the ink pushes it over. 22x22
+// probes clean on both with a pixel to spare, and the two extra pixels per button are
+// nothing against the action row's width budget below. A button must also set this box as
+// its iconSize, or the style scales the pixmap we painted down into its default 16x16 one.
+constexpr QSize kShortcutIconSize{22, 22};
+constexpr int kShortcutGlyphPixelSize = 15;
 
 }  // namespace
 
@@ -120,12 +135,39 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
     // identity behind the user's back. Disabled until there is something to reuse (the
     // static memory survives this page being disposed on Back).
     //
-    // The labels are SHORT and static, with the last card/set named in the tooltip
-    // instead: the form's action row is one non-wrapping QHBoxLayout inside a pane
-    // capped at 560px, so interpolating a card name and a full set name into two of its
-    // four buttons overflows it and clips the trailing button — unclickable in exactly
-    // the same-booster flow it exists for. Any further action here has the same budget.
-    reuseCommentsButton_ = new QPushButton(tr("Reuse comments"), this);
+    // These are the two buttons in this row easiest to mix up — same shape, same grey, and
+    // labels that both used to open on a verb about "last". Two things separate them now.
+    // A GLYPH each, so the pair is told apart by shape before it is read: an icon rather
+    // than a prefix on the label (the rule emojiIcon records). What the sidebar's section
+    // glyphs get from a saturated fill, these two get from being LIGHT — neither is
+    // saturated (💬 is greyscale outright), but both are near-white with a dark outline,
+    // so they clear the failure the rule is really about: the app follows the system
+    // theme, and a glyph with one tone disappears against one of the two. Both were
+    // checked on a screenshot of each theme, enabled and disabled, rather than argued
+    // about. And short PARALLEL labels naming what is carried over, so the whole
+    // difference sits on the one word that differs.
+    //
+    // Both are ALWAYS in the row, disabled with a reason rather than absent. "Last set"
+    // used not to be constructed at all in name-search mode, which left the row three
+    // buttons wide there and put "Last comments" in the position "Last set" holds
+    // everywhere else — a control that changes place between openings is exactly what
+    // trains the mis-click this pair is being fixed for.
+    //
+    // The labels stay SHORT and static, with the last card/set named in the tooltip
+    // instead: the form's action row is one non-wrapping QHBoxLayout inside a pane capped
+    // at 560px, and it now carries four buttons in BOTH modes, so interpolating a card
+    // name or a full set name into one overflows it and clips the trailing button —
+    // unclickable in exactly the same-booster flow it exists for. Each glyph spends
+    // another ~24px of that same budget; anything further added here has what is left.
+    const auto addShortcut = [this](const QString& glyph, const QString& label) {
+        auto* button = new QPushButton(label, this);
+        button->setIcon(emojiIcon(glyph, kShortcutIconSize, kShortcutGlyphPixelSize));
+        button->setIconSize(kShortcutIconSize);
+        form_->addAction(button);
+        return button;
+    };
+
+    reuseCommentsButton_ = addShortcut(QStringLiteral("💬"), tr("Last comments"));
     // An empty comment is nothing to carry over, so don't offer the click — and say why,
     // rather than leaving a greyed button unexplained.
     const bool canReuseComments = lastAdded_.has && !lastAdded_.comments.empty();
@@ -143,29 +185,29 @@ AddCardCopyPage::AddCardCopyPage(CardSearchService& search, CardCopyService& cop
                         "that card's comments.")));
     connect(reuseCommentsButton_, &QPushButton::clicked, this,
             &AddCardCopyPage::reuseLastComments);
-    form_->addAction(reuseCommentsButton_);
 
-    // Only in species mode: the name-search finder takes a card name, so pointing it at
-    // a set would search nonsense — there the button simply doesn't exist.
-    if (dexNumber_) {
-        const QString setQuery = lastSetQuery(lastAdded_.setName, lastAdded_.expansionCode);
-        const bool canSearchLastSet = lastAdded_.has && !setQuery.isEmpty();
-        searchLastSetButton_ = new QPushButton(tr("Search last set"), this);
-        searchLastSetButton_->setEnabled(canSearchLastSet);
-        searchLastSetButton_->setToolTip(
-            canSearchLastSet
-                ? tr("List the printings of “%1” — the last card's set — in the search on "
-                     "the right. Nothing is filled in until you pick a card from the "
-                     "results.")
-                      .arg(setQuery)
-                : (lastAdded_.has
-                       ? tr("The last card you added recorded no set to search.")
-                       : tr("Available once you have added a card this session — it "
-                            "searches that card's set.")));
-        connect(searchLastSetButton_, &QPushButton::clicked, this,
-                &AddCardCopyPage::searchLastSet);
-        form_->addAction(searchLastSetButton_);
-    }
+    searchLastSetButton_ = addShortcut(QStringLiteral("🔍"), tr("Last set"));
+    // Permanently disabled in name-search mode: that finder takes a card NAME, so pointing
+    // it at a set would search nonsense. The button stays in place anyway (see above) and
+    // the tooltip says which of the four reasons is holding it — the convention the binder
+    // guide's Insert blank / Move… buttons follow, minus their update method, since this
+    // page's state cannot change while it lives (each add is a fresh page instance).
+    const QString setQuery = lastSetQuery(lastAdded_.setName, lastAdded_.expansionCode);
+    const bool canSearchLastSet = dexNumber_ && lastAdded_.has && !setQuery.isEmpty();
+    searchLastSetButton_->setEnabled(canSearchLastSet);
+    searchLastSetButton_->setToolTip(
+        !dexNumber_ ? tr("Searching a set applies when adding a copy of a Pokémon. This "
+                         "card is found by its printed name instead, so there is no set "
+                         "search to point at the last card's set.")
+        : canSearchLastSet
+            ? tr("List the printings of “%1” — the last card's set — in the search on "
+                 "the right. Nothing is filled in until you pick a card from the "
+                 "results.")
+                  .arg(setQuery)
+        : lastAdded_.has ? tr("The last card you added recorded no set to search.")
+                         : tr("Available once you have added a card this session — it "
+                              "searches that card's set."));
+    connect(searchLastSetButton_, &QPushButton::clicked, this, &AddCardCopyPage::searchLastSet);
 
     // --- Finder (right): the shared search + preview widget ----------------
     // Scoped: search the species' printings by set. Species-free: search by card name
@@ -305,7 +347,7 @@ void AddCardCopyPage::searchLastSet() {
     // from the results to decide what autofills (a programmatic searchFor deliberately
     // doesn't emit setChosen, so even the set fields stay untouched until then).
     const QString setQuery = lastSetQuery(lastAdded_.setName, lastAdded_.expansionCode);
-    if (!lastAdded_.has || setQuery.isEmpty()) {
+    if (!dexNumber_ || !lastAdded_.has || setQuery.isEmpty()) {
         return;  // button is disabled in these cases, but guard anyway
     }
     finder_->searchFor(setQuery);
