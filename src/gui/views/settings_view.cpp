@@ -24,7 +24,6 @@
 #include "core/storage/workspace.h"
 #include "gui/services/assistant_service.h"  // kAssistantApiKeyConfigKey
 #include "gui/views/datetime_label.h"
-#include "gui/views/empty_option.h"
 #include "gui/views/language_codes.h"
 #include "gui/views/primary_button.h"
 #include "gui/views/toast.h"
@@ -88,8 +87,9 @@ SettingsView::SettingsView(BackupService& backups, QWidget* parent)
     // whole collection (or booster) is one language. Shares the card form's code list so
     // the two pickers never drift; the leading blank entry means "no default".
     languageEdit_ = new QComboBox(this);
+    languageEdit_->setIconSize(kLanguageFlagIconSize);
     for (const QString& code : languageCodes()) {
-        languageEdit_->addItem(languageLabel(code), code);
+        languageEdit_->addItem(languageFlagIcon(code), languageLabel(code), code);
     }
     connect(languageEdit_, &QComboBox::activated, this, &SettingsView::refreshDirtyState);
 

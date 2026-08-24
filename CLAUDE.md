@@ -533,12 +533,16 @@ reads it (`readConfigValue(kDefaultLanguageConfigKey)`) fresh per open and pre-s
 form for a new copy (only a manual pick overrides it), so a change needs no restart.
 The language code list is the shared `gui/views/language_codes.h` (also the config-key constant),
 used by both the card form's Language picker and this screen so they can't drift. Both build their
-items through `languageLabel(code)`, which decorates a code with a purely decorative flag emoji
-(`languageFlag`) and renders the blank entry as the shared `noneOptionLabel()`; the item's *data*
-stays the bare code, so nothing decorative can reach a saved `CardReference`. A code with no ONE
-country gets no flag rather than an arbitrary one — `LA` is Latin-American Spanish, and the
-single-letter codes `C`/`F`/`T`/`I` are of unrecorded origin (they predate this file and no commit
-says what they stand for). Because leaving
+items as `addItem(languageFlagIcon(code), languageLabel(code), code)`: a decorative country flag,
+the bare code as the label (`— None —` for the blank entry, and `LA (Latin America)` for the one
+code whose icon is a globe rather than a country), and the bare code again as the item's *data* —
+which is the only part that reaches a saved `CardReference` or the `default_language` config key.
+The flag is an **icon, never a prefix on the label**: `QComboBox` type-ahead matches keystrokes
+against the displayed text, so a flag glyph in the text makes every code unreachable by keyboard
+(typing `F` stops finding `FR` and lands on the bare `F` entry). For the same reason a picker must
+set `setIconSize(kLanguageFlagIconSize)` — the default 16x16 box is square and a flag emoji is not,
+so it would shrink to a third of the row height. The single-letter codes are the Asian markets
+(`C` Simplified Chinese, `F` Traditional Chinese, `T` Thai, `I` Indonesian). Because leaving
 a staged form would silently drop edits, `MainWindow` **guards every section switch** (and the
 window close) through `SettingsView::confirmLeave` (Save / Discard / Cancel); on Cancel it snaps
 the sidebar selection back to Settings via a **queued** `setCurrentRow` (an inline revert gets

@@ -177,11 +177,12 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     // is reported so an edit host can enable its Save button.
     language_ = new QComboBox(this);
     // Each item carries the stored code as its data, while languageLabel() decides what
-    // is shown (the shared noneOptionLabel() for the leading blank in languageCodes(),
-    // a decorative flag ahead of the code for the rest) — so the display can be dressed
-    // up without any of it reaching a saved CardReference.
+    // is shown (the shared noneOptionLabel() for the leading blank in languageCodes())
+    // and languageFlagIcon() dresses it with a flag — so the decoration reaches neither
+    // a saved CardReference nor the text the picker's type-ahead searches.
+    language_->setIconSize(kLanguageFlagIconSize);
     for (const QString& code : languageCodes()) {
-        language_->addItem(languageLabel(code), code);
+        language_->addItem(languageFlagIcon(code), languageLabel(code), code);
     }
     // Every marked picker refreshes the "⚠" markers before reporting the change, so a
     // pick clears its own marker the instant it is made (and re-raises it on "— None —").
@@ -599,7 +600,7 @@ void CardCopyForm::setLanguage(const std::string& language) {
     }
     int li = language_->findData(code);
     if (li < 0) {
-        language_->addItem(languageLabel(code), code);
+        language_->addItem(languageFlagIcon(code), languageLabel(code), code);
         li = language_->count() - 1;
     }
     language_->setCurrentIndex(li);
