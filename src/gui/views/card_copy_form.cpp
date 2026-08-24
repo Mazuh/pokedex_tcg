@@ -279,7 +279,7 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     // "No fixed position" — the copy is filed in the binder but keeps no home sleeve, so
     // the guide lists it in a loose run at the end (see CardCopy). It sits with the binder
     // picker because it qualifies the same decision, and reports through its own signal so
-    // an edit host can persist it the instant it is toggled, exactly as it does the binder.
+    // an edit host can mark itself dirty — like every other field, it commits on Save.
     noFixedPosition_ = new QCheckBox(tr("No fixed position — keep at the end"), this);
     connect(noFixedPosition_, &QCheckBox::toggled, this,
             [this](bool) { Q_EMIT noFixedPositionChanged(); });
@@ -683,8 +683,8 @@ bool CardCopyForm::noFixedPosition() const { return noFixedPosition_->isChecked(
 
 void CardCopyForm::updateNoFixedPositionEnabled() {
     // "Keep at the end" names a position IN A BINDER, so with no binder picked there is
-    // nothing for it to mean — and left live it would let the add page report itself dirty,
-    // and the edit page toast "kept at the end of its binder", over a card that is in none.
+    // nothing for it to mean — and left live it would let either page report itself dirty
+    // over a card that is filed in none.
     // Shown-but-disabled with the reason in the tooltip, the idiom the guide's row actions
     // use; the box keeps whatever it holds, so unfiling a loose card hides nothing and
     // refiling it makes the setting editable again.

@@ -66,11 +66,10 @@ public:
                            std::optional<CardBinderId> selected, bool enabled);
 
     // Reveal an explicit "Remove from binder" button beside the binder combo (default
-    // hidden). Clicking it selects "— None —" and emits binderChanged(), so a host that
-    // persists the combo already handles the unassign — the button is a discoverable
-    // shortcut for the "pick — None —" gesture. Enabled only while a binder is actually
-    // selected (nothing to remove otherwise). The edit page opts in; the add flow leaves
-    // it hidden.
+    // hidden). Clicking it selects "— None —" and emits binderChanged(), so a host already
+    // handling the combo handles the unassign too — the button is a discoverable shortcut
+    // for the "pick — None —" gesture. Enabled only while a binder is actually selected
+    // (nothing to remove otherwise). The edit page opts in; the add flow leaves it hidden.
     void setBinderRemovable(bool removable);
 
     // Arm the "⚠ not filled in for you" markers beside the optional fields (rarity,
@@ -147,12 +146,12 @@ Q_SIGNALS:
     // A physical-copy attribute (language / condition / ownership) was changed by the
     // USER (activated, not a programmatic load). Lets an edit host enable its Save button.
     void detailsChanged();
-    // The user picked a different binder in the combo (not a programmatic load). Lets
-    // an edit host persist the reassignment immediately.
+    // The user picked a different binder in the combo (not a programmatic load). Lets an
+    // edit host mark itself dirty; the reassignment commits with the rest of the form.
     void binderChanged();
 
     // The "no fixed position" box was toggled BY THE USER (setNoFixedPosition and loadCopy
-    // are silent), so an edit host can persist it immediately, exactly as it does the binder.
+    // are silent) — the filing counterpart of binderChanged(), and staged exactly like it.
     void noFixedPositionChanged();
 
 private:

@@ -181,8 +181,8 @@ for the move planner, which must project one but can't reach the wishlist]),
 `PokemonBrowseService`
 (`listAll` → every catalog species paired with its owned-copy count, the unscoped
 Pokédex browser's data), `CardCopyService` (the copy verbs —
-`create`/`editDetails`/`assignToBinder`/`setNoFixedPosition`[the loose-filing verb, an
-immediate write like `assignToBinder`]/`remove`[soft, with an optional
+`create`/`editDetails`/`assignToBinder`/`setNoFixedPosition`[the loose-filing verb, the
+filing counterpart of `assignToBinder`]/`remove`[soft, with an optional
 note-append]/`hardDelete`/`listAll`/`listByBinder` — with an injectable clock and
 id generator like `BinderService`), `WishlistService` (the manage-sources verbs), and the
 **card-catalog seam** — `CardCatalogApi` (Qt-free interface, parallel to
@@ -1105,14 +1105,12 @@ It is the exact opposite of a `CardBinderPlacement`, and every rule follows from
   does hold a sleeve — which costs nothing, since the run is last.
 - **The checkbox is disabled while no binder is selected** (`updateNoFixedPositionEnabled`,
   kept in step from every path the picker changes by): it names a position IN a binder, so
-  left live it would let the add page report itself dirty — and the edit page toast "kept at
-  the end of its binder" — over a card filed in none.
+  left live it would let either page report itself dirty over a card filed in none.
 - **`planCardMove` refuses rows that break the trailing-run invariant** (a non-loose row
   after a loose one). It is a public core entry point taking an arbitrary span, and the
   truncation would otherwise index past the end of it.
-- **On the edit page it is an immediate write** (`CardCopyService::setNoFixedPosition`, refused
-  for a Removed copy), matching the binder picker beside it rather than the staged "Save
-  changes" — it is the same kind of decision, where the card lives rather than what it is.
+- **On the edit page it stages like every other field** (`CardCopyService::setNoFixedPosition`,
+  refused for a Removed copy) — see the one-form-one-commit note below.
 
 **Finding a card again: "Scroll to page".** A third selection-scoped button sits beside those
 two (`BinderView::revealSelectedRow` / `updateRevealButtonState`). It exists for a journey that
@@ -1494,6 +1492,29 @@ button (accepts any `QAbstractButton`; pass `withIcon=false` for a default icon-
 form — the commit action — never the secondary actions beside it (Upload a photo,
 "Same set as last…", Back), so the accent stays a reliable "this is the primary
 action" signal.
+
+**One form, one commit: every field on a form stages until its submit button.** A form
+must not mix staged fields with fields that write the instant they are touched. The edit
+copy page did — the binder picker and the "no fixed position" checkbox persisted on
+`binderChanged`/`noFixedPositionChanged` while the other ten fields waited for "Save
+changes" — on the reasoning that filing a card is a different *kind* of decision from
+describing it. That reasoning doesn't survive contact with the form: a user ticks a
+checkbox among ten look-alike rows, leaves with no dirty prompt and no Save press, and has
+no way to tell whether it took. Consistency across one screen beats a per-field
+distinction only the author can see.
+
+So `EditCardCopyPage::saveDetails` now fans one gesture out to the three verbs behind the
+form (`editDetails`, plus `assignToBinder` / `setNoFixedPosition` only when they changed),
+mirroring each into `copy_` as it lands so a mid-sequence failure reports itself and leaves
+the rest staged — nothing on the form is reverted behind the user. `isDirty()` covers all
+of them, which is what finally puts both filing fields under the Back guard. Two knock-on
+rules: a new field on `CardCopyForm` goes through the host's submit button, never its own
+write; and `AddCardCopyPage` was always this way, so the edit page was the outlier, not the
+precedent.
+
+The exception is a **button**, which is its own commit — the edit page's "Use this card's
+image" / "Upload a photo…", and everything on the prices page, still write immediately.
+Pressing a button is unambiguous in a way that leaving a checkbox ticked is not.
 
 **Long lists paginate by infinite scroll, not Prev/Next.** The default for a
 long, scannable list is incremental loading (`PokemonListView`): render a chunk,

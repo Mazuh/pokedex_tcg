@@ -37,8 +37,7 @@ EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardPriceLookupSer
       images_(images),
       copies_(copies),
       priceLookup_(priceLookup),
-      copy_(std::move(copy)),
-      binders_(binders) {
+      copy_(std::move(copy)) {
     // --- Top bar: Back + heading + current-image thumbnail -----------------
     auto* backButton = makeBackButton(this);
     connect(backButton, &QPushButton::clicked, this, &EditCardCopyPage::handleBack);
@@ -82,12 +81,28 @@ EditCardCopyPage::EditCardCopyPage(CardSearchService& search, CardPriceLookupSer
     form_->loadCopy(copy_);
     // Binder is editable — reassignment is supported here as it is elsewhere. An explicit
     // "Remove from binder" button beside the combo makes unassigning discoverable rather
-    // than hiding it behind the "— None —" entry; it drives the same saveBinder() path.
+    // than hiding it behind the "— None —" entry; it reports through the same
+    // binderChanged() signal a manual pick does, so both stage the same way.
     form_->setupBinderPicker(binders, copy_.binderId, /*enabled=*/true);
     form_->setBinderRemovable(true);
-    connect(form_, &CardCopyForm::binderChanged, this, &EditCardCopyPage::saveBinder);
+    // Take the baseline from what the picker actually SHOWS, not from the record. A host
+    // can hand us a copy whose binder is no longer in the list — PokemonListView caches its
+    // copies behind CardCopyService::revision(), which BinderService::remove doesn't bump,
+    // so a deleted binder lingers in that cache (the DB already unassigned the copy via ON
+    // DELETE SET NULL). fillBinderCombo quietly falls back to "— None —" there, and with the
+    // record's dead id as the baseline the page would open permanently dirty — Save lit and
+    // Back prompting over a card nobody touched. Re-reading it costs nothing when they agree
+    // (an unchanged field is never written) and is exactly right when they don't: the page
+    // cannot represent a binder it wasn't given.
+    copy_.binderId = form_->binderId();
+    // The filing fields stage like every other field on the form: they only mark the page
+    // dirty here, and "Save changes" commits them with the rest. They used to write the
+    // instant they were touched, which made two of a dozen fields behave unlike the other
+    // ten — the checkbox especially, since a tickbox reads as form state you are expected
+    // to save. One form, one commit.
+    connect(form_, &CardCopyForm::binderChanged, this, &EditCardCopyPage::updateSaveEnabled);
     connect(form_, &CardCopyForm::noFixedPositionChanged, this,
-            &EditCardCopyPage::saveNoFixedPosition);
+            &EditCardCopyPage::updateSaveEnabled);
     // Only the printed identity is locked; language/condition/ownership stay editable.
     form_->setReferenceEditable(false);
 
@@ -231,81 +246,84 @@ void EditCardCopyPage::refreshCurrentImage() {
 bool EditCardCopyPage::isDirty() const {
     // The printed identity is read-only, so form_->cardReference() equals the record
     // except for language (the one reference field that stays editable). Compare the
-    // editable fields against the stored copy.
+    // editable fields against the stored copy — ALL of them, including the two filing
+    // fields, which is what lets Back guard them too.
     return form_->comments() != copy_.comments || form_->condition() != copy_.condition ||
            form_->rarity() != copy_.rarity || form_->foil() != copy_.foil ||
            form_->ownership() != copy_.ownership ||
-           form_->cardReference().language != copy_.cardRef.language;
+           form_->cardReference().language != copy_.cardRef.language ||
+           form_->binderId() != copy_.binderId ||
+           form_->noFixedPosition() != copy_.noFixedPosition;
 }
 
 void EditCardCopyPage::updateSaveEnabled() { saveButton_->setEnabled(isDirty()); }
 
 bool EditCardCopyPage::saveDetails() {
+    // One gesture, but three service verbs — the details, the binder, and the loose flag
+    // are separate writes (each re-reads the copy, so the order between them is free).
+    // They run in sequence and each is mirrored into copy_ as it lands, so a failure
+    // part-way through reports itself and leaves the page holding exactly what is still
+    // unsaved; nothing on the form is silently reverted.
+    const auto persist = [this](const QString& failure, auto&& write) {
+        try {
+            write();
+            return true;
+        } catch (const std::exception& e) {
+            QMessageBox::warning(this, tr("Pokedex TCG"),
+                                 failure.arg(QString::fromUtf8(e.what())));
+            return false;
+        }
+    };
+
     // The identity fields are read-only, so form_->cardReference() carries the recorded
     // printing plus whatever language the user picked — editDetails persists that along
     // with ownership, condition, and comments in one write.
-    try {
-        copies_.editDetails(copy_.id, form_->cardReference(), form_->ownership(),
-                            form_->condition(), form_->rarity(), form_->foil(),
-                            form_->comments());
-    } catch (const std::exception& e) {
-        QMessageBox::warning(this, tr("Pokedex TCG"),
-                             tr("Could not save changes:\n%1").arg(QString::fromUtf8(e.what())));
+    if (!persist(tr("Could not save changes:\n%1"), [this] {
+            copies_.editDetails(copy_.id, form_->cardReference(), form_->ownership(),
+                                form_->condition(), form_->rarity(), form_->foil(),
+                                form_->comments());
+        })) {
         return false;
     }
-    // Mirror the write into the record so the button disables until re-edited.
     copy_.cardRef = form_->cardReference();
     copy_.ownership = form_->ownership();
     copy_.condition = form_->condition();
     copy_.rarity = form_->rarity();
     copy_.foil = form_->foil();
     copy_.comments = form_->comments();
-    saveButton_->setEnabled(false);
+
+    if (const std::optional<CardBinderId> target = form_->binderId(); target != copy_.binderId) {
+        if (!persist(tr("Could not file the card:\n%1"),
+                     [this, &target] { copies_.assignToBinder(copy_.id, target); })) {
+            return false;
+        }
+        copy_.binderId = target;
+    }
+
+    // Note this reads the box even while it is disabled (no binder picked), which is
+    // deliberate in BOTH directions: unfiling a loose card leaves the flag as it was, so
+    // refiling it restores the setting rather than silently dropping it — and ticking the
+    // box and then unfiling in the same visit likewise saves the tick, for a card that is
+    // now in no binder. The flag only means anything to a binder guide, so a stored one on
+    // an unfiled card is inert, and clearing it here would break the restore property the
+    // first half of this rule exists for.
+    if (const bool loose = form_->noFixedPosition(); loose != copy_.noFixedPosition) {
+        if (!persist(tr("Could not refile the card:\n%1"),
+                     [this, loose] { copies_.setNoFixedPosition(copy_.id, loose); })) {
+            return false;
+        }
+        copy_.noFixedPosition = loose;
+    }
+
+    updateSaveEnabled();  // every field now matches the record, so this disables the button
     showToast(this, tr("Changes saved."));
     return true;
 }
 
-void EditCardCopyPage::saveBinder() {
-    const std::optional<CardBinderId> target = form_->binderId();
-    if (target == copy_.binderId) {
-        return;  // no change (e.g. the user reselected the same entry)
-    }
-    try {
-        copies_.assignToBinder(copy_.id, target);
-    } catch (const std::exception& e) {
-        QMessageBox::warning(this, tr("Pokedex TCG"),
-                             tr("Could not file the card:\n%1").arg(QString::fromUtf8(e.what())));
-        // The write failed, so the combo now shows a binder the record doesn't have —
-        // restore it to the stored value.
-        form_->setupBinderPicker(binders_, copy_.binderId, /*enabled=*/true);
-        return;
-    }
-    copy_.binderId = target;
-    showToast(this, target ? tr("Card filed in its binder.")
-                           : tr("Card removed from its binder."));
-}
-
-void EditCardCopyPage::saveNoFixedPosition() {
-    const bool wanted = form_->noFixedPosition();
-    if (wanted == copy_.noFixedPosition) {
-        return;
-    }
-    try {
-        copies_.setNoFixedPosition(copy_.id, wanted);
-    } catch (const std::exception& e) {
-        QMessageBox::warning(this, tr("Pokedex TCG"),
-                             tr("Could not refile the card:\n%1").arg(QString::fromUtf8(e.what())));
-        form_->setNoFixedPosition(copy_.noFixedPosition);  // the box lied; put it back
-        return;
-    }
-    copy_.noFixedPosition = wanted;
-    showToast(this, wanted ? tr("Card kept at the end of its binder.")
-                           : tr("Card returned to its place in the binder."));
-}
-
 void EditCardCopyPage::handleBack() {
-    // The editable details (language/condition/ownership/comments) live unsaved on this
-    // page until "Save changes" (image and binder changes persist immediately). If any
+    // Every editable field on the form — details, comments, binder, "no fixed position" —
+    // lives unsaved on this page until "Save changes". (The image is the one exception:
+    // its two buttons ARE the commit, so pressing one is never ambiguous.) If any field
     // diverges from the record, don't drop the edit silently on Back — offer to save it,
     // discard it, or stay. (Save failing keeps the user here so nothing is lost.)
     if (isDirty()) {
