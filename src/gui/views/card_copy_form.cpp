@@ -4,6 +4,7 @@
 #include <QComboBox>
 #include <QEvent>
 #include <QFormLayout>
+#include <QLayoutItem>
 #include <QHBoxLayout>
 #include <QLineEdit>
 #include <QPalette>
@@ -305,7 +306,7 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     binder_ = new QComboBox(this);
     connect(binder_, &QComboBox::activated, this, [this](int) {
         updateBinderRemoveEnabled();  // a manual pick may move to/from "— None —"
-        updateNoFixedPositionEnabled();
+        updateNoFixedPositionRow();
         Q_EMIT binderChanged();
     });
 
@@ -324,7 +325,7 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
         }
         binder_->setCurrentIndex(0);
         updateBinderRemoveEnabled();
-        updateNoFixedPositionEnabled();
+        updateNoFixedPositionRow();
         Q_EMIT binderChanged();
     });
 
@@ -335,7 +336,7 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     noFixedPosition_ = new QCheckBox(tr("No fixed position — keep at the end"), this);
     connect(noFixedPosition_, &QCheckBox::toggled, this,
             [this](bool) { Q_EMIT noFixedPositionChanged(); });
-    updateNoFixedPositionEnabled();  // no binder picked yet, so nothing to keep at the end of
+    updateNoFixedPositionRow();  // no binder picked yet, so nothing to keep at the end of
 
     comments_ = new QPlainTextEdit(this);
     comments_->setPlaceholderText(
@@ -461,6 +462,17 @@ CardCopyForm::CardCopyForm(QWidget* parent) : QWidget(parent) {
     fieldRow(QString(), noFixedPosition_, QString(),
              QString(), tr("Cards with no fixed position"),
              [] { return noFixedPositionInfoHtml(); });
+    // Remember that row: it is hidden wholesale for a binder that reserves no positions
+    // (see updateNoFixedPositionRow). Grab its field LAYOUT — the QHBoxLayout fieldRow just
+    // built — rather than keeping the row index around: the index is read here, one
+    // statement after addRow, where it cannot yet be stale, and setRowVisible's layout
+    // overload does the lookup from then on. A stored index would silently point at the
+    // wrong row the day a field is inserted above this one.
+    form_ = form;
+    if (QLayoutItem* item = form->itemAt(form->rowCount() - 1, QFormLayout::FieldRole)) {
+        noFixedPositionRow_ = item->layout();
+    }
+    updateNoFixedPositionRow();  // the ctor's earlier call ran before this row existed
 
     languageHint_ = fieldRow(tr("Language"), language_,
                              tr("The card catalog is English-only, so it can't tell which "
@@ -543,10 +555,26 @@ void CardCopyForm::changeEvent(QEvent* event) {
 
 void CardCopyForm::setupBinderPicker(const std::vector<CardBinder>& binders,
                                      std::optional<CardBinderId> selected, bool enabled) {
+    // Which of them reserve positions, for the "no fixed position" row. Rebuilt wholesale
+    // rather than merged: this call is also how a host REPLACES the list.
+    //
+    // A recorded blank or placement counts as much as a region or a grid does. The grid is
+    // NOT gated on the binder being empty the way the regions are (BinderService::update
+    // lets it go back to "Not set" at any time), while buildEntries goes on honouring every
+    // blank and placement recorded against it — so a hand-arranged binder whose grid was
+    // cleared still HAS an arrangement, and hiding the box there would be the one case
+    // where a card could not be pulled out of one.
+    arrangingBinders_.clear();
+    for (const CardBinder& b : binders) {
+        if (!b.pokemonRegions.empty() || b.pocketGrid.has_value() ||
+            !b.pocketBlanks.empty() || !b.cardPlacements.empty()) {
+            arrangingBinders_.insert(b.id);
+        }
+    }
     fillBinderCombo(*binder_, binders, selected);
     binder_->setEnabled(enabled);
     updateBinderRemoveEnabled();  // reflect the loaded selection on the Remove button
-    updateNoFixedPositionEnabled();
+    updateNoFixedPositionRow();
 }
 
 void CardCopyForm::setMissingFieldHints(bool armed) {
@@ -679,6 +707,9 @@ void CardCopyForm::setNoFixedPosition(bool noFixedPosition) {
     // and an edit host would persist a value it had just loaded.
     const QSignalBlocker blocker(noFixedPosition_);
     noFixedPosition_->setChecked(noFixedPosition);
+    // A loaded copy that carries the flag keeps its row even in a binder that reserves
+    // nothing — that exception reads the checked state, so re-evaluate it here.
+    updateNoFixedPositionRow();
 }
 
 void CardCopyForm::loadCopy(const CardCopy& copy) {
@@ -743,18 +774,42 @@ std::optional<CardBinderId> CardCopyForm::binderId() const {
 
 bool CardCopyForm::noFixedPosition() const { return noFixedPosition_->isChecked(); }
 
-void CardCopyForm::updateNoFixedPositionEnabled() {
+void CardCopyForm::updateNoFixedPositionRow() {
     // "Keep at the end" names a position IN A BINDER, so with no binder picked there is
     // nothing for it to mean — and left live it would let either page report itself dirty
     // over a card that is filed in none.
     // Shown-but-disabled with the reason in the tooltip, the idiom the guide's row actions
     // use; the box keeps whatever it holds, so unfiling a loose card hides nothing and
     // refiling it makes the setting editable again.
-    const bool filed = binderId().has_value();
+    const std::optional<CardBinderId> id = binderId();
+    const bool filed = id.has_value();
     noFixedPosition_->setEnabled(filed);
     noFixedPosition_->setToolTip(
         filed ? QString()
               : tr("File this card in a binder first — this decides where it sits in one."));
+
+    if (form_ == nullptr || noFixedPositionRow_ == nullptr) {
+        return;  // called from the ctor before the rows exist
+    }
+    // A binder that reserves nothing — no region, no pocket grid, and no arrangement of its
+    // own — has no checklist slot and no page/pocket coordinate, so its guide is simply the
+    // order the cards were filed in, which is already where a new card lands. There is no
+    // fixed position there to opt out of, so don't offer the choice.
+    //
+    // The UNFILED case is the exception the other way: it keeps the shown-but-disabled row
+    // (the idiom the guide's Insert blank / Move… buttons use — say what it is and why it
+    // is unavailable), because a card with no binder yet is the ordinary mid-form state on
+    // the add page and the row is about to become relevant. That does mean the rows below
+    // shift as the picker moves between binders that can and cannot express the flag; no
+    // rule avoids that shift entirely, and offering a choice the binder cannot hold is the
+    // worse of the two.
+    const bool arranges = !filed || arrangingBinders_.contains(*id);
+    // The exception is a copy that already carries the flag: hiding its box would strand it
+    // in the loose run with nothing to untick. Deliberately NOT re-evaluated on toggle —
+    // the row must not vanish out from under the pointer that just unticked it.
+    // (QFormLayout::setRowVisible is Qt 6.4, exactly our floor — see the CI note in
+    // CLAUDE.md before reaching for anything newer.)
+    form_->setRowVisible(noFixedPositionRow_, arranges || noFixedPosition_->isChecked());
 }
 
 std::string CardCopyForm::comments() const {

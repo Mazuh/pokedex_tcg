@@ -1167,9 +1167,32 @@ It is the exact opposite of a `CardBinderPlacement`, and every rule follows from
 - **Page and Pocket render blank** (with a tooltip), because a coordinate for a card that is
   reshuffled weekly is wrong by tomorrow. The pocket counter still advances over the row — it
   does hold a sleeve — which costs nothing, since the run is last.
-- **The checkbox is disabled while no binder is selected** (`updateNoFixedPositionEnabled`,
-  kept in step from every path the picker changes by): it names a position IN a binder, so
-  left live it would let either page report itself dirty over a card filed in none.
+- **The checkbox is disabled while no binder is selected, and HIDDEN for a binder that
+  reserves no positions** (`CardCopyForm::updateNoFixedPositionRow`, kept in step from every
+  path the picker changes by — it replaced the enable-only `updateNoFixedPositionEnabled`).
+  Disabled-while-unfiled because the box names a position IN a binder, so left live it would
+  let either page report itself dirty over a card filed in none. Hidden when the selected
+  binder reserves nothing — no region, no pocket grid, AND no arrangement of its own (no
+  blank pocket, no moved card): such a binder has neither a checklist slot nor a page/pocket
+  coordinate, so its guide is just the order the cards were filed in — which is already
+  where a new card lands — and the box would be offering a choice the binder cannot express.
+  The blanks/placements clause is NOT redundant with the grid: `BinderService::update` gates
+  only the REGIONS on `hasContents`, so a grid can be cleared back to "Not set" at any time
+  while the blanks and placements recorded against it survive and `buildEntries` goes on
+  honouring them — without that clause, a hand-arranged binder whose grid was cleared is the
+  one place a card could not be pulled out of an arrangement. `setupBinderPicker` is what
+  teaches the form which binders arrange (it is handed the whole `CardBinder` list, whose
+  `listAll` attaches blanks and placements, so this needs no service of its own), and the
+  row is hidden WHOLESALE via `QFormLayout::setRowVisible` (Qt 6.4, exactly our CI floor)
+  rather than by hiding the box, which would leave an empty gap where it was. Address that
+  row by its field LAYOUT, never by a stored row index: the index is read once, the statement
+  after `addRow`, and an index kept across a later `insertRow` above it would silently hide
+  the wrong field with no test to catch it.
+  Two things about that rule are load-bearing: a copy that ALREADY carries the flag keeps
+  the row visible regardless (hiding it would strand the copy in the loose run with nothing
+  to untick — `setNoFixedPosition` therefore re-evaluates, since the exception reads the
+  checked state), and the rule is deliberately NOT re-evaluated on `toggled` (the row must
+  not vanish out from under the pointer that just unticked it).
 - **`planCardMove` refuses rows that break the trailing-run invariant** (a non-loose row
   after a loose one). It is a public core entry point taking an arbitrary span, and the
   truncation would otherwise index past the end of it.

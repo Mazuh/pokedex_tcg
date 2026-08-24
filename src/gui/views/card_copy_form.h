@@ -4,6 +4,7 @@
 
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "core/domain/card_condition.h"
@@ -16,6 +17,8 @@
 
 class QCheckBox;
 class QComboBox;
+class QFormLayout;
+class QLayout;
 class QHBoxLayout;
 class QLineEdit;
 class QPlainTextEdit;
@@ -165,9 +168,18 @@ private:
     // loadCopy), which emit nothing and are how the prefill flows write their values.
     void refreshMissingFieldHints();
 
-    // Enable the "no fixed position" box only while a binder is selected — it names a
-    // position in one. Called from every path the binder selection changes by.
-    void updateNoFixedPositionEnabled();
+    // Bring the "no fixed position" row into line with the selected binder. Called from
+    // every path that selection changes by. Two rules:
+    //   * ENABLED only while a binder is selected — the box names a position in one.
+    //   * SHOWN only while that binder reserves positions at all — it lists a region,
+    //     records a pocket grid, or already HOLDS an arrangement (a blank pocket or a moved
+    //     card). A binder with none of those has no checklist slot and no page/pocket
+    //     coordinate to opt out of: every card in it simply sits in the order it was filed,
+    //     which is where "keep at the end" would put a new one anyway — so the box would
+    //     claim a choice the binder cannot express. A copy that ALREADY carries the flag
+    //     keeps the row visible regardless, or filing it in such a binder would strand it
+    //     in the loose run with no way to bring it back.
+    void updateNoFixedPositionRow();
 
     QLineEdit* cardName_;
     QLineEdit* expansionCode_;
@@ -183,6 +195,16 @@ private:
     QCheckBox* noFixedPosition_;   // "keep this one at the end of the binder"
     QPlainTextEdit* comments_;
     QHBoxLayout* actions_;  // bottom row the host fills via addAction()
+    // The field grid and the "no fixed position" row's own field LAYOUT, kept so that row
+    // can be hidden wholesale (label, box and glyph slots) rather than leaving an empty gap
+    // where it was — see updateNoFixedPositionRow. Addressed by layout rather than by row
+    // INDEX on purpose: an index is only valid until someone inserts a row above it, and a
+    // silently shifted index would hide the wrong field with no test to catch it.
+    QFormLayout* form_ = nullptr;
+    QLayout* noFixedPositionRow_ = nullptr;
+    // The binders that reserve positions, rebuilt from every setupBinderPicker() call —
+    // the form is handed the whole CardBinder list, so this needs no service of its own.
+    std::unordered_set<CardBinderId> arrangingBinders_;
 
     // The "⚠ not filled in for you" markers, one per optional field, hidden until armed.
     // Ownership has none (it always carries a value) and neither does the binder (a filing
