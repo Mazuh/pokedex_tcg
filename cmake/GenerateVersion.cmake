@@ -23,8 +23,10 @@ endif()
 # a bare `cmake` configure — is a dev build and carries the -dev suffix.
 if(BUILD_TYPE STREQUAL "Release")
     set(version "${hash}")
+    set(is_dev "false")
 else()
     set(version "${hash}-dev")
+    set(is_dev "true")
 endif()
 
 set(content
@@ -32,6 +34,9 @@ set(content
 // Generated at build time from git — do not edit.
 namespace pokedex {
 inline constexpr const char* kAppVersion = \"${version}\";
+// True on any non-Release build (dev.sh, or a bare cmake configure); false on the
+// Release install (install.sh). MainWindow titles itself with it — see main_window.cpp.
+inline constexpr bool kIsDevBuild = ${is_dev};
 }  // namespace pokedex
 ")
 

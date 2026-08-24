@@ -33,6 +33,7 @@
 #include "gui/views/settings_view.h"
 #include "gui/views/splitter_style.h"
 #include "gui/views/wishlist_view.h"
+#include "gui/version.h"  // generated: pokedex::kIsDevBuild
 
 namespace pokedex {
 
@@ -99,7 +100,11 @@ MainWindow::MainWindow(BinderService& binderService, BinderGuideService& guide,
                        CardImageStore& cardImages, AssistantService& assistant,
                        BackupService& backups, const QString& collectionPath, QWidget* parent)
     : QWidget(parent) {
-    setWindowTitle(tr("Pokedex TCG"));
+    // A dev build (dev.sh / a bare configure) says so in its title bar: it can run beside
+    // the installed /Applications app, and the two are otherwise identical to the eye (same
+    // Dock name and icon) and to Accessibility (same bundle id) — the title is the only
+    // tell. The Release install (install.sh) stays plain.
+    setWindowTitle(kIsDevBuild ? tr("Pokedex TCG (dev)") : tr("Pokedex TCG"));
     resize(900, 600);
 
     // Opens the modal About box, parented to the window. Shared by the menu-bar

@@ -14,11 +14,17 @@
 #include <exception>
 
 #include "core/app/install_service.h"
+#include "gui/version.h"  // generated: pokedex::kIsDevBuild
 
 namespace pokedex {
 
 FirstRunDialog::FirstRunDialog(QWidget* parent) : QDialog(parent) {
-    setWindowTitle(tr("Welcome to Pokedex TCG"));
+    // Marked as a dev build for the same reason MainWindow is (see main_window.cpp) —
+    // and it matters more here: this wizard is what a scratch POKEDEX_TCG_CONFIG_DIR
+    // opens with, so it is precisely the window on screen while a dev build and the
+    // installed app are being told apart.
+    setWindowTitle(kIsDevBuild ? tr("Welcome to Pokedex TCG (dev)")
+                               : tr("Welcome to Pokedex TCG"));
 
     auto* intro = new QLabel(
         tr("Choose a folder for your collection workspace. It can live in a local\n"

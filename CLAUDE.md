@@ -881,7 +881,17 @@ ctest --test-dir build --output-on-failure
   built GUI to verify a change, launch it with
   `POKEDEX_TCG_CONFIG_DIR=<throwaway dir>` so you exercise a scratch workspace,
   not the user's — two instances writing the same DB also contend on SQLite's
-  file lock.
+  file lock. That override applies to the INSTALLED app too: if a check needs the
+  `/Applications` build running, give it its own scratch config rather than letting it
+  open the real collection.
+- **Confirm WHICH build you are driving by the window title.** A dev build titles itself
+  `Pokedex TCG (dev)` and the Release install plain `Pokedex TCG` (see the `kIsDevBuild`
+  note below); nothing else distinguishes them — the Dock name, icon and bundle id are
+  identical, so `whose bundle identifier is ...` cannot tell two simultaneous instances
+  apart. Address a process by its pid and read its title:
+  `osascript -e 'tell application "System Events" to tell (first process whose unix id is <pid>) to get name of every window'`.
+  (This is the AX-side companion to "verify a name change by reading the Dock, not the
+  plist" further down.)
 - **A `QTableWidget` row selection cannot be driven headlessly here.** macOS
   Accessibility marks the AX node but never updates Qt's `selectionModel`, so
   `itemSelectionChanged` never fires; synthetic `click at {x,y}` and focus-then-arrow-keys
@@ -1437,7 +1447,29 @@ target (`cmake/GenerateVersion.cmake`) as `pokedex::kAppVersion` = the last comm
 configure) and none on the `Release` install (install.sh); it degrades to
 `"unknown"` outside a git checkout. Build-time (not configure-time) generation is
 deliberate so the hash tracks HEAD across commits without a reconfigure — dev.sh
-only reconfigures when `build.ninja` is absent. Display
+only reconfigures when `build.ninja` is absent. **The same generator emits
+`pokedex::kIsDevBuild`** off that one `Release` test, and `MainWindow` titles itself
+`Pokedex TCG (dev)` when it is true (plain `Pokedex TCG` on the Release install) —
+because a dev build and the installed `/Applications` app run side by side and are
+otherwise indistinguishable: same Dock name, same icon, same bundle identifier, so the
+window title is the ONLY tell, for the user and for an AI addressing windows through
+Accessibility. Two things follow. A boolean generated beside the version beats sniffing
+`kAppVersion` for a `-dev` suffix in C++ — the policy stays in the one file that owns it,
+and a *display* string is the wrong thing to branch on. And it stops at the title: the
+`.app` bundle deliberately keeps ONE name across build types, since `POKEDEX_APP_NAME`
+reaches `Info.plist.in` (configure-time substitution) and `install(DIRECTORY)`'s source
+path, neither of which accepts a generator expression — so a per-config name would have
+to be a configure-time branch, which would leave the previously-named `*.app` sitting in
+`build/` for dev.sh's `"$BUILD"/*.app` glob to pick up (launching a stale binary — exactly
+the confusion this exists to remove) and would cost the dev bundle its TCC camera grant,
+which is attributed per signed bundle path. Changing only `CFBundleName`/`CFBundleDisplayName`
+is not an alternative either: macOS ignores a `CFBundleDisplayName` that disagrees with the
+`.app`'s file name (see the app-name note below). The ~17 `QMessageBox` titles that spell
+`tr("Pokedex TCG")` are left alone — a macOS alert shows no title bar at all, and each is
+parented to the window that already carries the marker. `FirstRunDialog` DOES carry it
+(`Welcome to Pokedex TCG (dev)`) — it is a real titled top-level window, and it is what a
+scratch `POKEDEX_TCG_CONFIG_DIR` opens with, i.e. the one on screen exactly when the two
+builds are being told apart. Any new parentless top-level window needs the same. Display
 strings stay out of Qt-free core: a GUI-side helper maps enums to labels
 (`region_labels.h`, `status_labels.h`), kept separate from the storage tokens.
 
