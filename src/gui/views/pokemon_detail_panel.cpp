@@ -22,8 +22,10 @@
 #include "gui/views/card_prices_summary.h"
 #include "gui/views/condition_labels.h"
 #include "gui/views/foil_labels.h"
+#include "gui/views/language_codes.h"
 #include "gui/views/rarity_labels.h"
 #include "gui/views/scaled_pixmap.h"
+#include "gui/views/tooltip_text.h"
 
 namespace pokedex {
 
@@ -91,6 +93,22 @@ PokemonDetailPanel::PokemonDetailPanel(MediaService& media, WishlistService& wis
     // and ownership is omitted so the card image dominates. Hidden outside copy mode.
     condFoilLine_ = new QLabel(this);
     condFoilLine_->setAlignment(Qt::AlignHCenter);
+    // The printed language rides on the same line as a flag + code, but as its OWN label:
+    // a flag is a picture of a country, not a word, so it has to carry a tooltip naming
+    // the language it stands for — and Qt can't put a tooltip on part of a label. Two
+    // labels in one centred row (stretch on both sides) is the shared idiom for a line
+    // whose parts each explain themselves.
+    langLabel_ = new QLabel(this);
+    langLabel_->setAlignment(Qt::AlignHCenter);
+    condFoilRow_ = new QWidget(this);
+    auto* condFoilLayout = new QHBoxLayout(condFoilRow_);
+    condFoilLayout->setContentsMargins(0, 0, 0, 0);
+    condFoilLayout->setSpacing(0);
+    condFoilLayout->addStretch();
+    condFoilLayout->addWidget(condFoilLine_);
+    condFoilLayout->addWidget(langLabel_);
+    condFoilLayout->addStretch();
+
     rarityCountLine_ = new QLabel(this);
     rarityCountLine_->setAlignment(Qt::AlignHCenter);
     rarityCountLine_->setEnabled(false);  // muted, secondary info
@@ -102,7 +120,7 @@ PokemonDetailPanel::PokemonDetailPanel(MediaService& media, WishlistService& wis
     copyDetail_ = new QWidget(this);
     auto* copyLayout = new QVBoxLayout(copyDetail_);
     copyLayout->setContentsMargins(0, 0, 0, 0);
-    copyLayout->addWidget(condFoilLine_);
+    copyLayout->addWidget(condFoilRow_);
     copyLayout->addWidget(rarityCountLine_);
     copyLayout->addWidget(copyComments_);
 
@@ -278,6 +296,19 @@ void PokemonDetailPanel::renderCopy(const CardCopy& copy, int copyTotal) {
     const QString condFoil = joinParts({condition, foil});
     condFoilLine_->setText(condFoil);
     condFoilLine_->setVisible(!condFoil.isEmpty());
+
+    // The printed language closes that line as a flag + code, with the language named on
+    // its own tooltip — a flag is a country, and only the tooltip can say which language
+    // it is standing for here. The " · " separator is baked into its LEADING edge, so
+    // hiding the label (an unrecorded language) takes the separator with it; the ternary
+    // is the fixup for the other direction, where the language is the line's only part.
+    const QString language = QString::fromStdString(copy.cardRef.language);
+    const QString languageText = languageDisplay(language);
+    langLabel_->setText(condFoil.isEmpty() ? languageText
+                                           : QStringLiteral(" · ") + languageText);
+    langLabel_->setToolTip(tooltipText(languageTooltip(language)));
+    langLabel_->setVisible(!languageText.isEmpty());
+    condFoilRow_->setVisible(!condFoil.isEmpty() || !languageText.isEmpty());
 
     const QString rarity = copy.rarity ? rarityLabel(*copy.rarity) : QString();
     // "N copies" is how many copies of this species exist on the surface — a total (the

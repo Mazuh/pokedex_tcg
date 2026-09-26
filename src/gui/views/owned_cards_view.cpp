@@ -31,6 +31,7 @@
 #include "gui/views/add_card_copy_page.h"
 #include "gui/views/binder_picker_dialog.h"
 #include "gui/views/card_copy_labels.h"
+#include "gui/views/language_codes.h"
 #include "gui/views/edit_card_copy_page.h"
 #include "gui/views/condition_labels.h"
 #include "gui/views/foil_labels.h"
@@ -117,6 +118,11 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
     table_->verticalHeader()->setVisible(false);
+    // The Lang column's flag rides as a cell ICON (see languageCell). An item view's
+    // default icon box is invalid and falls back to the style's small-icon size — a
+    // 16x16 SQUARE, which squashes a wide-and-short flag — so the shared picker size is
+    // set here too. No other cell in this table carries an icon.
+    table_->setIconSize(kLanguageFlagIconSize);
     auto* header = table_->horizontalHeader();
     // Pokémon (col 0) sizes to its content so the species name is never truncated —
     // names are short and bounded, so this stays a modest, stable width even with the
@@ -147,6 +153,12 @@ OwnedCardsView::OwnedCardsView(CardCopyService& copies, BinderService& binders,
         sortOrder_ = order;
         repopulate(selectedCopyId());
     });
+    // Lang shows a flag the header can't explain, so the header says what the column is
+    // and the cells' own tooltips name the language. AFTER installHeaderSort, whose
+    // install-time pass would overwrite it (see setHeaderTooltip).
+    setHeaderTooltip(table_, 3,
+                     tr("The language printed on the card. Hover a flag to see which "
+                        "language it stands for."));
 
     assignButton_ = new QPushButton(tr("Assign to binder…"), this);
     assignButton_->setIcon(style()->standardIcon(QStyle::SP_DirOpenIcon));
@@ -375,7 +387,12 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
         // them for both operands on every comparison — column 0's speciesOrCardName does
         // a catalog lookup + allocation, and the text columns allocate.
         struct Key {
-            QString species, setText, collector, language, ownership, binderName;
+            QString species, setText, collector, ownership, binderName;
+            // Language is optional so an unrecorded one sinks to the bottom in BOTH
+            // directions (compareOptional) rather than floating to the top of the
+            // ascending click — "no data" is not a low value. Mirrors the binder guide's
+            // Lang column, which keys it the same way.
+            std::optional<QString> language;
             std::optional<int> conditionRank, rarityRank, foilRank;
             std::optional<long long> priceCents;
         };
@@ -401,7 +418,11 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
                     case 0: key.species = speciesOrCardName(c); break;
                     case 1: key.setText = setLabel(c.cardRef); break;
                     case 2: key.collector = QString::fromStdString(c.cardRef.collectorNumber); break;
-                    case 3: key.language = QString::fromStdString(c.cardRef.language); break;
+                    case 3:
+                        if (!c.cardRef.language.empty()) {
+                            key.language = QString::fromStdString(c.cardRef.language);
+                        }
+                        break;
                     case 4: key.conditionRank = rank(c.condition); break;
                     case 5: key.rarityRank = rank(c.rarity); break;
                     case 6: key.foilRank = rank(c.foil); break;
@@ -439,7 +460,11 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
                     case 0: return a.species.localeAwareCompare(b.species);
                     case 1: return a.setText.localeAwareCompare(b.setText);
                     case 2: return a.collector.localeAwareCompare(b.collector);
-                    case 3: return a.language.localeAwareCompare(b.language);
+                    case 3:
+                        return compareOptional(a.language, b.language, ascending,
+                                               [](const QString& x, const QString& y) {
+                                                   return x.localeAwareCompare(y);
+                                               });
                     case 4: return compareOptional(a.conditionRank, b.conditionRank, ascending, rank);
                     case 5: return compareOptional(a.rarityRank, b.rarityRank, ascending, rank);
                     case 6: return compareOptional(a.foilRank, b.foilRank, ascending, rank);
@@ -490,7 +515,9 @@ void OwnedCardsView::repopulate(const std::string& keepSelectedId) {
         // cell() carries the full value as the tooltip.
         table_->setItem(row, 1, cell(setLabel(c.cardRef)));
         table_->setItem(row, 2, cell(QString::fromStdString(c.cardRef.collectorNumber)));
-        table_->setItem(row, 3, cell(QString::fromStdString(c.cardRef.language)));
+        // Language renders as its flag plus the code ("🇺🇸 EN"), the language spelled out
+        // on the cell's tooltip — see languageCell, shared with the binder guide.
+        table_->setItem(row, 3, languageCell(c.cardRef.language));
         // Condition is optional (ungraded copies) — blank renders as an em-dash.
         table_->setItem(row, 4, cell(c.condition ? conditionAbbrev(*c.condition) : QString()));
         // Rarity and foil are optional too — blank when unset. Full labels (no

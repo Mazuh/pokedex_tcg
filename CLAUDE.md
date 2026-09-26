@@ -402,7 +402,10 @@ it is counted although its slot shows a placeholder — see the loose-cards note
 non-Pokémon cards each count — rendered as "Cards 42 of 360 (12%)" when the binder records a
 capacity, and deliberately UNCLAMPED, since an over-full album is exactly what the figure
 exists to reveal] · market value. Its first two columns, `Page` and `Pocket`, say where a row
-physically sits — see the binder-layout note below), the
+physically sits — see the binder-layout note below; its LAST, after `Prices`, is `Lang`, the
+card's printed language — the code as text, the flag as the cell's icon — sorted on the code
+and keyed `std::optional` so an unrecorded language sinks in both directions, exactly as My
+Cards' own Lang column now does; see the language note above), the
 Pokémon browser (`PokemonListView`, which hosts an inner stack for the add-copy
 page; its `showRegion` is how the capture-progress section narrows it to one region — see the
 capture-progress note below), and two card-copy pages built from the same two shared blocks — the reusable
@@ -568,7 +571,30 @@ so it would shrink to a third of the row height. The single-letter codes are the
 by how often a card in hand actually carries the code — English, Spanish, Portuguese, Japanese, the
 two Chinese markets, the remaining European languages, then the rare ones — not alphabetical and
 not by region, so the picker opened for nearly every added card needs no scrolling. Only the blank
-entry's position is load-bearing (index 0, which is how an unset language resolves). Because leaving
+entry's position is load-bearing (index 0, which is how an unset language resolves).
+**Read-only surfaces show the same flag, but in the TEXT rather than as an icon, and always
+with a tooltip naming the language.** A flag is a picture of a country, not a word — 🇧🇷 for
+`PT`, 🇺🇸 for `EN`, and 🇨🇳/🇹🇼 for two codes that are both "Chinese" — so a flag shown with
+nothing to decode it is a riddle. `language_codes.h` therefore also owns `languageName`
+(the language spelled out), `languageDisplay` (`"🇺🇸 EN"` — flag plus the bare code, which is
+what is actually printed on the card and what My Cards' search box filters on) and
+`languageTooltip` (`"English (EN)"`, falling back to the bare code for a value we don't
+recognize). **The flag is in the TEXT only where nothing searches that text — an icon
+everywhere else**, and `languageDisplay` exists solely for the one such place, the
+inspector's `QLabel`. Both a `QComboBox` and an item view do type-ahead over their displayed
+text (a table's `keyboardSearch` matches the CURRENT COLUMN with `MatchStartsWith`), so a
+flag baked into a cell would make every row of the Lang column unreachable by keyboard —
+typing `e` stops finding `EN`, since each cell then starts with a regional-indicator pair.
+The two card tables therefore build their Lang cell through the one shared `languageCell`
+(`card_copy_labels.h`): the bare code as the text, the flag as the cell's **icon**, the
+language on the tooltip. Any table showing it must `setIconSize(kLanguageFlagIconSize)`, for
+the same reason a picker must. `languageCell` is also the single place allowed to
+`setToolTip` over `cell()`'s own, because `languageTooltip` already repeats the code, so
+nothing an elided column needed is lost. The inspector's copy of it is
+its own `QLabel` beside the condition/foil one (Qt has no per-span tooltip inside a label —
+see the multi-figure status line note below), carrying its leading `" · "` separator so
+hiding it takes the separator too. Any new surface showing a flag goes through these, never
+`languageFlag` raw. Because leaving
 a staged form would silently drop edits, `MainWindow` **guards every section switch** (and the
 window close) through `SettingsView::confirmLeave` (Save / Discard / Cancel); on Cancel it snaps
 the sidebar selection back to Settings via a **queued** `setCurrentRow` (an inline revert gets
@@ -580,7 +606,8 @@ the Pokémon browser, the binder guide, and My Cards (`CardImagePanel` was delet
 to bottom it renders: the card's name (falling back to the species name), a printed
 identity line (the set abbreviation — or the full set name when there's no abbreviation —
 plus the collector number, via `collectorLine`), the image (the copy's card scan, falling
-back to the Pokémon artwork when there's a species), a condition + foil line, a rarity +
+back to the Pokémon artwork when there's a species), a condition + foil + language line
+(the language as a flag + code with its own tooltip — see the language note above), a rarity +
 "N copies" line (N is the count of that species' live copies on this surface — a total,
 soft-Removed copies excluded), the copy's comments, the read-only `CardPricesSummary` (figures
 + links + ⓘ + a "Manage prices" button; see the pricing note above), an **Add + Edit** button

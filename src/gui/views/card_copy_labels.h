@@ -7,6 +7,9 @@
 #include "core/domain/card_reference.h"
 #include "core/domain/pokemon_catalog.h"
 #include "core/domain/types.h"
+#include "gui/views/language_codes.h"
+#include "gui/views/table_cell.h"
+#include "gui/views/tooltip_text.h"
 
 namespace pokedex {
 
@@ -91,6 +94,34 @@ inline QString titleFor(const CardCopy& copy) {
     const QString label = speciesOrCardName(copy);
     const QString card = cardText(copy.cardRef);
     return label.isEmpty() ? card : label + QStringLiteral(" · ") + card;
+}
+
+// The "Lang" column's cell for a copy's printed language: the bare code as the text, the
+// flag as the cell's ICON, and the language SPELLED OUT on its tooltip. Shared by the two
+// card tables (My Cards, the binder guide) so a flag can never appear in one of them
+// meaning something it doesn't mean in the other.
+//
+// The flag is an icon for exactly the reason the pickers' is (see languageFlagIcon): an
+// item view's keyboardSearch does type-ahead against the CURRENT COLUMN's display text
+// with MatchStartsWith, so a flag baked into the text makes every row of this column
+// unreachable by keyboard — typing "e" stops finding "EN", because every cell now starts
+// with a regional-indicator pair instead. The rule is therefore uniform: a flag is in the
+// text only where nothing searches that text (the inspector's QLabel), and an icon
+// everywhere else. A table showing these MUST setIconSize(kLanguageFlagIconSize), or Qt
+// falls back to the style's small-icon box and squashes a wide-and-short flag.
+//
+// The tooltip REPLACES cell()'s own rather than appending to it (addToolTip), which is the
+// one place that is right: languageTooltip already repeats the code, so nothing an elided
+// column needed is lost, and what it adds is the only thing a flag by itself cannot say.
+// An unset language keeps cell()'s em-dash, gets no icon, and gets no tooltip.
+inline QTableWidgetItem* languageCell(const std::string& code) {
+    const QString language = QString::fromStdString(code);
+    QTableWidgetItem* item = cell(language);
+    if (!language.isEmpty()) {
+        item->setIcon(languageFlagIcon(language));
+        item->setToolTip(tooltipText(languageTooltip(language)));
+    }
+    return item;
 }
 
 }  // namespace pokedex

@@ -2,6 +2,7 @@
 
 #include <QHash>
 #include <QIcon>
+#include <QObject>
 #include <QSize>
 #include <QString>
 #include <QStringList>
@@ -50,6 +51,62 @@ inline QString languageFlag(const QString& code) {
         {"LA", QStringLiteral("🌎")},
     };
     return flags.value(code);
+}
+
+// GUI — the language a code actually names, spelled out. The codes are what is printed
+// on the card and the flags carry the recognition, but neither SAYS anything: "F", "C"
+// and "LA" are unreadable to anyone who hasn't memorized the list, and a flag is a
+// country, not a language (🇧🇷 for PT, 🇺🇸 for EN). So every surface that shows a flag
+// pairs it with this on a tooltip — see languageTooltip. Empty for a code this project
+// doesn't recognize (a legacy or hand-edited value), which is why the tooltip has a
+// fallback rather than assuming a hit.
+inline QString languageName(const QString& code) {
+    static const QHash<QString, QString> names = {
+        {"EN", QObject::tr("English")},
+        {"ES", QObject::tr("Spanish")},
+        {"PT", QObject::tr("Portuguese (Brazil)")},
+        {"JP", QObject::tr("Japanese")},
+        {"C", QObject::tr("Simplified Chinese")},
+        {"F", QObject::tr("Traditional Chinese")},
+        {"FR", QObject::tr("French")},
+        {"DE", QObject::tr("German")},
+        {"IT", QObject::tr("Italian")},
+        {"KO", QObject::tr("Korean")},
+        {"I", QObject::tr("Indonesian")},
+        {"T", QObject::tr("Thai")},
+        {"LA", QObject::tr("Latin-American Spanish")},
+    };
+    return names.value(code);
+}
+
+// GUI — a card's language as ONE short read-only display string: the flag then the bare
+// code ("🇺🇸 EN"). For the ONE surface where the glyph may ride in the text: a plain
+// QLabel, which nothing searches. Everywhere a widget does type-ahead over its displayed
+// text — a picker (languageFlagIcon) or a table column (languageCell) — the flag must be an
+// icon instead, or the entries become unreachable by keyboard. The code stays beside the
+// flag because it is what is actually printed on the card, and because a flag alone can't
+// tell the two Chinese markets apart at a glance. Empty for an unset language, and just the
+// bare code for one we have no flag for.
+inline QString languageDisplay(const QString& code) {
+    const QString flag = languageFlag(code);
+    if (code.isEmpty() || flag.isEmpty()) {
+        return code;
+    }
+    return flag + QStringLiteral(" ") + code;
+}
+
+// GUI — what a shown flag is trying to say, for the tooltip that must accompany every
+// one of them. Names the language and repeats the code, so the tooltip both decodes the
+// glyph and survives a table column eliding its cell. Falls back to the bare code for an
+// unrecognized value rather than going empty, which would leave that one cell the only
+// unexplained flag-less thing on screen.
+inline QString languageTooltip(const QString& code) {
+    if (code.isEmpty()) {
+        return QString();
+    }
+    const QString name = languageName(code);
+    return name.isEmpty() ? QObject::tr("Language: %1").arg(code)
+                          : QObject::tr("%1 (%2)").arg(name, code);
 }
 
 // GUI — that flag as a picker ICON rather than as label text. The distinction is not

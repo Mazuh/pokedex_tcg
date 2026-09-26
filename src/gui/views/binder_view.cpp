@@ -48,6 +48,7 @@
 #include "gui/views/binder_layout_labels.h"
 #include "gui/views/bulk_refresh_controller.h"
 #include "gui/views/card_copy_labels.h"
+#include "gui/views/language_codes.h"
 #include "gui/views/condition_labels.h"
 #include "gui/views/copy_row_activation.h"
 #include "gui/views/edit_copy_page_host.h"
@@ -77,7 +78,7 @@ namespace {
 // (a mismatch would either reintroduce the O(rows^2) reopen freeze or convert the Set
 // slack column). Note column 3 carries a Pokémon name OR a card name (a species-free
 // row has no species to name it). Mirrors OwnedCardsView's kAutoFitColumns.
-constexpr int kAutoFitColumns[] = {0, 1, 2, 3, 5, 6, 7, 8, 9, 10};
+constexpr int kAutoFitColumns[] = {0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11};
 
 // The Prices column alone — the subset updatePricesFor() rewrites in place. It needs the
 // same BulkTablePopulate treatment as a full rebuild (col 10 is content-sized), but must
@@ -299,18 +300,19 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     // A read-only table: the binder page this slot falls on, dex number, name, then the
     // printed-identity columns mirroring
     // My Cards (set, collector, condition, rarity, foil) for the row's own filed copy,
-    // its Status, and finally that copy's cached market Prices ("$… · €…", cache-only —
-    // never a network read). Whole-row selection, no editing. The Set column takes the
+    // its Status, that copy's cached market Prices ("$… · €…", cache-only —
+    // never a network read), and last its printed Language as a flag + code.
+    // Whole-row selection, no editing. The Set column takes the
     // slack (as in My Cards); the name column sizes to content so it is never truncated.
     // A placeholder row (a listed species with nothing filed here — most rows in a fresh
     // binder) leaves the copy columns blank; a species-free card's row leaves "#" blank,
     // since it has no Pokédex number.
     table_ = new QTableWidget(this);
-    table_->setColumnCount(11);
+    table_->setColumnCount(12);
     table_->setHorizontalHeaderLabels({tr("Page"), tr("Pocket"), tr("#"), tr("Pokémon / Card"),
                                        tr("Set name / expansion code"),
                                        tr("Collector"), tr("Cond."), tr("Rarity"), tr("Foil"),
-                                       tr("Status"), tr("Prices")});
+                                       tr("Status"), tr("Prices"), tr("Lang")});
     table_->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     // "Page" and "#" sit over right-aligned numbers, so right-align them to match.
     table_->horizontalHeaderItem(0)->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -322,10 +324,16 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
     table_->verticalHeader()->setVisible(false);
+    // The Lang column's flag rides as a cell ICON (see languageCell). An item view's
+    // default icon box is invalid and falls back to the style's small-icon size — a
+    // 16x16 SQUARE, which squashes a wide-and-short flag — so the shared picker size is
+    // set here too. No other cell in this guide carries an icon.
+    table_->setIconSize(kLanguageFlagIconSize);
     auto* header = table_->horizontalHeader();
     // The name column (col 3) and the short metadata columns size to content; Set (col 4) is the
     // flexible slack absorber that grows when there's room and elides when space is tight —
-    // mirroring OwnedCardsView. Prices (col 10) sizes to its "$… · €…" content.
+    // mirroring OwnedCardsView. Prices (col 10) sizes to its "$… · €…" content, and Lang
+    // (col 11) to its narrow flag + code.
     for (const int col : kAutoFitColumns) {  // all but the Set slack column
         header->setSectionResizeMode(col, QHeaderView::ResizeToContents);
     }
@@ -370,6 +378,12 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
             repopulate();
         },
         {0, 1});
+    // Lang shows a flag the header can't explain, so the header says what the column is
+    // and the cells' own tooltips name the language. AFTER installHeaderSort, whose
+    // install-time pass would overwrite it (see setHeaderTooltip).
+    setHeaderTooltip(table_, 11,
+                     tr("The language printed on the card. Hover a flag to see which "
+                        "language it stands for."));
     // The detail panel's "Add copy" relays up to an in-place page push. Which of the two
     // it emits depends on the shown row: a species row keeps the species flow, a
     // species-free card's row switches the button to the "add a card" flow so it is never
@@ -846,6 +860,12 @@ void BinderView::repopulate() {
                                                     *copy, priceScratch),
                                finishForFoil(copy->foil))
                          : QString()));
+            // The card's printed language, as its flag plus the code — the language
+            // spelled out on the cell's tooltip (languageCell, shared with My Cards).
+            // It sits last, after Prices, so the columns the eye scans for (name, set,
+            // number) keep their place. A placeholder or blank row has no card, hence
+            // no language, and renders cell()'s em-dash.
+            table_->setItem(i, 11, languageCell(copy ? copy->cardRef.language : std::string()));
             if (copy && isRemoved(*copy)) {
                 for (int col = 0; col < table_->columnCount(); ++col) {
                     table_->item(i, col)->setForeground(removedForeground);
@@ -915,6 +935,7 @@ void BinderView::sortEntries() {
         std::optional<int> foilRank;
         std::optional<int> statusRank;
         std::optional<long long> priceCents;
+        std::optional<QString> language;
     };
     const bool ascending = sortOrder_ == Qt::AscendingOrder;
     const int column = sortColumn_;
@@ -924,7 +945,7 @@ void BinderView::sortEntries() {
             // Build ONLY the clicked column's key (as OwnedCardsView::repopulate does):
             // the comparator reads a single field, so materializing every column on each
             // header click — five QString allocations plus a copyFor() lookup per row — is
-            // pure waste that grows with the guide. Only the copy-derived columns (4–8, 10)
+            // pure waste that grows with the guide. Only the copy-derived columns (4–8, 10, 11)
             // need the row's copy, so the dex/status columns skip that lookup entirely.
             // Unset fields keep their default (empty QString / 0 / nullopt), which the
             // comparator never consults for other columns. There are no cases 0/1: the
@@ -996,6 +1017,17 @@ void BinderView::sortEntries() {
                         }
                     }
                     break;
+                case 11:
+                    // Keyed on the bare CODE, not the displayed flag + code: the flag is a
+                    // decoration whose codepoints would order the column by country rather
+                    // than by the letters the user reads. A row with no card (a placeholder,
+                    // a blank pocket) and a card with no language recorded both stay nullopt
+                    // and sink in either direction.
+                    if (const CardCopy* copy = copyFor(e);
+                        copy && !copy->cardRef.language.empty()) {
+                        key.language = QString::fromStdString(copy->cardRef.language);
+                    }
+                    break;
             }
             return key;
         },
@@ -1027,6 +1059,8 @@ void BinderView::sortEntries() {
                 case 10:
                     return compareOptional(a.priceCents, b.priceCents, ascending,
                                            [](long long x, long long y) { return compareValues(x, y); });
+                case 11:
+                    return compareOptional(a.language, b.language, ascending, text);
             }
             return 0;
         });

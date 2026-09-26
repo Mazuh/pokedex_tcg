@@ -29,7 +29,8 @@ class WishlistService;
 //   • the printed collector identity (only in copy mode),
 //   • the card image (the copy's own scan, falling back to the Pokémon's official
 //     artwork when the copy has no saved scan and depicts a species),
-//   • one line of condition + foil, one line of rarity + copy count ("N copies"),
+//   • one line of condition + foil + the printed language as a flag, one line of
+//     rarity + copy count ("N copies"),
 //   • the copy's comments,
 //   • the reusable market-prices block,
 //   • an Add + Edit button row (side by side), and an optional "Wishlist (N)" button.
@@ -176,6 +177,13 @@ private:
     QLabel* collector_;  // printed collector identity ("BS 44/102"); copy mode only
     QLabel* image_;
     QLabel* condFoilLine_;      // "NM · Reverse Holo" (present parts only; hidden if none)
+    // The printed language as a flag + code ("🇺🇸 EN"), a SEPARATE label sitting after
+    // condFoilLine_ in one row rather than more text inside it: a flag says nothing on its
+    // own, so it needs a tooltip naming the language, and Qt has no per-span tooltip inside
+    // a label (see the multi-figure status line note in CLAUDE.md). Carries its own leading
+    // " · " separator so hiding it takes the separator with it.
+    QLabel* langLabel_;
+    QWidget* condFoilRow_;  // condFoilLine_ + langLabel_, centred; hidden when both are empty
     QLabel* rarityCountLine_;   // "Rare Holo · 3 copies" (present parts only; hidden if none)
     QLabel* copyComments_;
     QWidget* copyDetail_;  // container for the copy detail lines; hidden outside copy mode
