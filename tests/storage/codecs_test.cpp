@@ -156,7 +156,8 @@ TEST(CodecsTest, TokensAlreadyInDatabasesStillDecode) {
     for (const char* token :
          {"Common", "Uncommon", "Rare", "DoubleRare", "IllustrationRare", "UltraRare",
           "SpecialIllustrationRare", "HyperRare", "Promo", "RareHolo", "RareHoloEX",
-          "RarePrime", "RareLegend", "AmazingRare", "Shining", "Radiant", "AceSpec"}) {
+          "RarePrime", "RareLegend", "AmazingRare", "Shining", "Radiant", "AceSpec",
+          "PikachuRare"}) {
         EXPECT_NE(pokedex::rarityFromText(token), std::nullopt) << "rarity token " << token;
     }
     for (const char* token :

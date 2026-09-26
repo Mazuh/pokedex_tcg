@@ -42,6 +42,7 @@ enum class CardRarity {
     BlackWhiteRare,   // monochrome art, Black Bolt / White Flare
     MegaAttackRare,   // Mega ex with the attack written across the art
     FuturisticRare,   // 30th Celebration onward
+    PikachuRare,      // the 30 Pikachu of 30th Celebration, numbered XX/30
 
     // Legacy — rarities of earlier eras, kept selectable for older cards.
     RareHolo,       // standard holographic rare
@@ -92,6 +93,7 @@ inline constexpr CardRarity kAllRarities[] = {
     CardRarity::BlackWhiteRare,
     CardRarity::MegaAttackRare,
     CardRarity::FuturisticRare,
+    CardRarity::PikachuRare,
     CardRarity::RareHolo,
     CardRarity::RareHoloEX,
     CardRarity::RareHoloGX,
@@ -135,6 +137,7 @@ constexpr CardRarityGroup rarityGroup(CardRarity rarity) {
         case CardRarity::BlackWhiteRare:
         case CardRarity::MegaAttackRare:
         case CardRarity::FuturisticRare:
+        case CardRarity::PikachuRare:
             return CardRarityGroup::Special;
 
         case CardRarity::RareHolo:

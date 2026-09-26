@@ -30,6 +30,7 @@ inline QString rarityLabel(CardRarity rarity) {
         case CardRarity::BlackWhiteRare:          return QStringLiteral("Black White Rare");
         case CardRarity::MegaAttackRare:          return QStringLiteral("Mega Attack Rare");
         case CardRarity::FuturisticRare:          return QStringLiteral("Futuristic Rare");
+        case CardRarity::PikachuRare:             return QStringLiteral("Pikachu Rare");
         case CardRarity::RareHolo:                return QStringLiteral("Rare Holo");
         case CardRarity::RareHoloEX:              return QStringLiteral("Rare Holo EX");
         case CardRarity::RareHoloGX:              return QStringLiteral("Rare Holo GX");
@@ -161,6 +162,12 @@ inline QString rarityDescription(CardRarity rarity) {
         case CardRarity::FuturisticRare:
             return QStringLiteral(
                 "Evocative, futuristic visuals, debuting with the 30th Celebration set.");
+        case CardRarity::PikachuRare:
+            return QStringLiteral(
+                "One of the thirty Pikachu of the 30th Celebration set, each by a "
+                "different artist. Fireworks-pattern holofoil over the artwork and "
+                "border, a big 30th Anniversary logo behind the text, and its subset "
+                "number (1/30 … 30/30) where the rarity symbol would be.");
         case CardRarity::RareHolo:
             return QStringLiteral(
                 "A standard Rare given a holographic treatment — the distinction that "

@@ -150,6 +150,7 @@ std::string rarityToText(std::optional<CardRarity> rarity) {
         case CardRarity::BlackWhiteRare:          return "BlackWhiteRare";
         case CardRarity::MegaAttackRare:          return "MegaAttackRare";
         case CardRarity::FuturisticRare:          return "FuturisticRare";
+        case CardRarity::PikachuRare:             return "PikachuRare";
         case CardRarity::RareHolo:                return "RareHolo";
         case CardRarity::RareHoloEX:              return "RareHoloEX";
         case CardRarity::RareHoloGX:              return "RareHoloGX";
