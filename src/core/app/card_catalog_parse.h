@@ -103,6 +103,14 @@ std::optional<std::string> resolveTcgdexCardId(const CardReference& ref,
 // of the ~150 sets. Returns every match (a code can map to two sets; a name
 // substring to many); empty when nothing matches or the input is blank.
 //
+// One exception outranks all of that: when any set's whole NAME equals the filter, only
+// the exact-name matches are returned — instead of, never merged with, every set that
+// merely contains it. So a set that is the prefix of a sibling's name ("30th
+// Celebration" inside "30th Celebration: Classic Collection") resolves to exactly
+// itself rather than reading as ambiguous to a caller that acts only on a single match.
+// It is still MANY-matching: two sets sharing one name stay ambiguous, so a caller must
+// keep testing the size rather than assuming this path yields one id.
+//
 // Matching per word rather than as one substring is deliberately FORGIVING, and is
 // strictly more permissive than a whole-string substring (if the filter is a
 // substring of the name, so is each of its words). It buys two things: a "CODE — Name"

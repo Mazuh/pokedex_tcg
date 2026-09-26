@@ -105,10 +105,25 @@ TEST(ResolveSetFilterToIdsTest, ReturnsEveryIdForADuplicatedCode) {
 TEST(ResolveSetFilterToIdsTest, MatchesASubstringOfTheSetName) {
     const std::vector<CardSetInfo> sets = sampleSets();
     EXPECT_EQ(resolveSetFilterToIds("pop", sets), std::vector<std::string>{"pop1"});
-    // "cel" matches both the CEL code and the "Celebrations" names — still the two
-    // CEL sets, each matched once.
-    EXPECT_EQ(resolveSetFilterToIds("celebrations", sets),
+    // "celebration" is a substring of both "Celebrations" names and the exact name of
+    // neither — still the two CEL sets, each matched once.
+    EXPECT_EQ(resolveSetFilterToIds("celebration", sets),
               (std::vector<std::string>{"cel25", "cel25c"}));
+}
+
+// The "Last set" bug: a set whose name is the PREFIX of a sibling's ("30th Celebration"
+// vs "30th Celebration: Classic Collection", and here Celebrations vs Celebrations:
+// Classic Collection) resolved to two candidates, so the caller — which acts only on a
+// single match — refused to narrow and made the user pick the set it had just been
+// handed by name. An exact whole-name match now wins outright.
+TEST(ResolveSetFilterToIdsTest, AnExactNameBeatsTheSiblingThatMerelyContainsIt) {
+    const std::vector<CardSetInfo> sets = sampleSets();
+    EXPECT_EQ(resolveSetFilterToIds("Celebrations", sets), std::vector<std::string>{"cel25"});
+    EXPECT_EQ(resolveSetFilterToIds("  celebrations ", sets),
+              std::vector<std::string>{"cel25"});
+    // The longer sibling still resolves to itself, by the ordinary word-wise path.
+    EXPECT_EQ(resolveSetFilterToIds("Celebrations: Classic Collection", sets),
+              std::vector<std::string>{"cel25c"});
 }
 
 TEST(ResolveSetFilterToIdsTest, UnknownOrBlankFilterYieldsNothing) {

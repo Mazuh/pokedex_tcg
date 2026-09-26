@@ -542,9 +542,21 @@ std::vector<std::string> resolveSetFilterToIds(const std::string& typed,
     // so a short trailing word in a longer filter ("Base Set 2") still participates —
     // it is only ever an additional constraint, never a broadening one.
     const bool allowNameMatch = want.size() >= 3;
+    // A set whose whole NAME is exactly the filter beats every set that merely contains
+    // it: "30th Celebration" is both a set and the prefix of "30th Celebration: Classic
+    // Collection", so a word-wise match alone reports two candidates and the caller
+    // refuses to narrow — for a filter that named one set perfectly. Collected here and
+    // returned INSTEAD of the loose matches below (never merged), and deliberately
+    // outside the 3-char floor and the per-word test, since an exact whole-name equality
+    // is unambiguous at any length. Name, not code: a printed code is genuinely shared
+    // by sibling sets (CEL, 30C), so an exact code match settles nothing.
+    std::vector<std::string> exactNameIds;
     for (const CardSetInfo& s : sets) {
         const std::string code = toLowerAscii(s.ptcgoCode);
         const std::string name = toLowerAscii(s.name);
+        if (name == want) {
+            exactNameIds.push_back(s.id);
+        }
         // Every word must land, each either ON the exact printed code (e.g. "OBF") or
         // as a substring of the set name (e.g. "mcdonald" → every McDonald's
         // Collection year — the only way to narrow to a code-less set).
@@ -560,6 +572,9 @@ std::vector<std::string> resolveSetFilterToIds(const std::string& typed,
         if (everyWord) {
             ids.push_back(s.id);
         }
+    }
+    if (!exactNameIds.empty()) {
+        return exactNameIds;  // two sets can still share a name; that stays ambiguous
     }
     return ids;
 }

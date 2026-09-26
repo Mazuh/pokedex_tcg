@@ -457,7 +457,13 @@ panel selected on a host's behalf. `searchFor(query)` [the scanner / search-the-
 prefill seam] keeps its signature but now RESOLVES: `resolveSetFilterToIds` locally, selecting
 the dropdown entry and searching once on a single match, saying so and spending nothing
 on none-or-several, and holding the query until `setsReady` when the table hasn't landed
-yet. **Name mode [misc/Trainer cards] is untouched**: still a free-text card-name box,
+yet. That resolution matches word-wise and so is deliberately MANY-matching, with one
+exception: a set whose whole NAME equals the filter is returned alone, outranking every
+set that merely contains it — otherwise a name that is the prefix of a sibling's ("30th
+Celebration" inside "30th Celebration: Classic Collection", Celebrations inside
+Celebrations: Classic Collection) reads as ambiguous and "Last set" makes the user pick
+the set it was just handed by name. An exact printed CODE gets no such promotion: sibling
+sets genuinely share one (CEL, 30C), so it settles nothing. **Name mode [misc/Trainer cards] is untouched**: still a free-text card-name box,
 typed, 3+ characters, debounced by the service). The
 `AddCardCopyPage` assembles them editable (finder pick autofills the form; submit
 creates a copy). For the same-booster flow it carries **two narrow shortcuts** off the
