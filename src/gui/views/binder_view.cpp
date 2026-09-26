@@ -353,6 +353,13 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     // just fire showRow twice per click. (cellActivated would be double-click/Enter
     // — the wrong gesture.)
     connect(table_, &QTableWidget::currentCellChanged, this, &BinderView::showRow);
+    // The row actions under the table follow the SELECTION, which on a mouse click is
+    // applied only AFTER currentCellChanged above has already fired — so they are
+    // recomputed here too, once it has settled. See updateRowActionButtons. Both signals
+    // are blocked around the setCurrentCell calls in reselectRow()/repopulate(), which
+    // recompute the state on their own path instead.
+    connect(table_, &QTableWidget::itemSelectionChanged, this,
+            &BinderView::updateRowActionButtons);
     // Double-click / Enter is the confirm-then-act shortcut (edit the shown copy, or add
     // one if none is filed here). cellActivated is exactly that gesture and never fires on
     // plain selection, so it won't race showRow — by the time it fires the row is selected
@@ -449,7 +456,9 @@ BinderView::BinderView(BinderGuideService& guide, const CardBinder& binder,
     // as blankButton_'s adapts to the selected row — so both come from the state update.
     revealButton_ = new QPushButton(this);
     connect(revealButton_, &QPushButton::clicked, this, &BinderView::revealSelectedRow);
-    updateRevealButtonState();  // label + tooltip before the first paint, not just first show
+    // Labels + enabled state for all three before the first paint, not just the first
+    // show: two of them carry no ctor text at all.
+    updateRowActionButtons();
     auto* rowActions = new QHBoxLayout;
     rowActions->addWidget(blankButton_);
     rowActions->addWidget(moveButton_);
@@ -726,7 +735,14 @@ void BinderView::repopulate() {
     // card), falling back to the dex number for a placeholder row. Restoring by row index
     // would be wrong outright. Empty / -1 when nothing is shown.
     const QString shownCopyBefore = detail_->shownCopyId();
-    const bool hadSelection = !table_->selectedItems().isEmpty();
+    // hasSelection(), NOT selectedItems().isEmpty(): the latter skips rows the search box
+    // has hidden (see updateRowActionButtons), so a selected row the filter excludes would
+    // read here as "nothing was selected" and skip the restore below — leaving the
+    // highlight on a stale ROW INDEX over freshly rebuilt entries_, which is the silent
+    // retarget restoring by identity exists to prevent. The panel was cleared when that
+    // row was hidden, so the lookup finds nothing and the highlight is dropped outright,
+    // which is the right answer: it pointed at a record this rebuild may have moved.
+    const bool hadSelection = table_->selectionModel()->hasSelection();
     const int selectedDex = hadSelection ? shownDex_ : -1;
 
     sortEntries();
@@ -1114,9 +1130,7 @@ void BinderView::applyFilter(const QString& filter) {
             shownStillVisible = true;
         }
     }
-    updateBlankButtonState();  // the selected row may have just been hidden
-    updateMoveButtonState();
-    updateRevealButtonState();
+    updateRowActionButtons();  // the selected row may have just been hidden
     if (shownStillVisible) {
         return;
     }
@@ -1160,9 +1174,7 @@ void BinderView::showEntryInPanel(int row) {
             sameSpeciesTotal = it == ownedCountsByDex_.end() ? 0 : it->second;
         }
         detail_->showSingleCopy(*copy, sameSpeciesTotal);
-        updateBlankButtonState();
-        updateMoveButtonState();
-        updateRevealButtonState();
+        updateRowActionButtons();
         return;
     }
     // A blank pocket: it stands for no species and no card, so there is nothing to
@@ -1178,9 +1190,7 @@ void BinderView::showEntryInPanel(int row) {
     detail_->setWishlistVisible(true);
     shownDex_ = entry.pokemon->dexNumber;
     detail_->showPokemon(shownDex_, QString::fromStdString(entry.pokemon->name));
-    updateBlankButtonState();
-    updateMoveButtonState();
-    updateRevealButtonState();
+    updateRowActionButtons();
 }
 
 void BinderView::clearPanel() {
@@ -1190,9 +1200,7 @@ void BinderView::clearPanel() {
     detail_->setWishlistVisible(true);
     detail_->clear();
     shownDex_ = -1;
-    updateBlankButtonState();
-    updateMoveButtonState();
-    updateRevealButtonState();
+    updateRowActionButtons();
 }
 
 void BinderView::activateRow(int row) {
@@ -1655,6 +1663,12 @@ void BinderView::updateRevealButtonState() {
                  "order — so you can see which page it is on and which cards sit around it.")
             : tr("Clear the search and any column sort, then scroll to this row in filed "
                  "order — so you can see which cards sit around it."));
+}
+
+void BinderView::updateRowActionButtons() {
+    updateBlankButtonState();
+    updateMoveButtonState();
+    updateRevealButtonState();
 }
 
 void BinderView::revealSelectedRow() {

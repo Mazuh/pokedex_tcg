@@ -244,6 +244,21 @@ private:
     // re-derives it through the Back callback's refresh() -> repopulate() -> applyFilter(),
     // the same chain the other two buttons' grid gates already rely on.
     void updateRevealButtonState();
+    // The three above, together — every path that can change which row the row actions
+    // apply to goes through this rather than calling them one by one, so a fourth button
+    // can't be wired to two of the three places.
+    //
+    // It is connected to itemSelectionChanged as well as to the current-cell change that
+    // drives the panel, and that is not belt-and-braces: on a MOUSE click Qt sets the
+    // current index with NoUpdate FIRST (emitting currentCellChanged) and applies the
+    // SELECTION only afterwards, so a state computed from currentCellChanged alone reads
+    // the PREVIOUS selection. selectedItems() also skips rows hidden by the search box —
+    // so clicking a visible row while the previously selected row was filtered out (or
+    // clicking the very first row after opening the guide, when nothing is selected yet)
+    // saw an empty selection and left all three buttons disabled until some unrelated
+    // event recomputed them. Clearing the search was the usual one, which is what made
+    // "Scroll to page" look like it only worked once the filter was gone.
+    void updateRowActionButtons();
     // Re-set the Page column's tooltip for the binder's current grid (it changes under
     // Edit binder, and says something different when no grid is recorded).
     void updatePocketHeaderTooltips();

@@ -1833,6 +1833,34 @@ run before a later same-method pass (e.g. `OwnedCardsView` measures widths befor
 filter/selection pass), with the destructor as the exception backstop. `BinderView`
 and `OwnedCardsView` use it; do the same for any new table that can grow large.
 
+**A row-scoped button's enabled state is recomputed on `itemSelectionChanged`, never
+on `currentCellChanged` alone.** On a MOUSE click Qt sets the current index with
+`QItemSelectionModel::NoUpdate` FIRST — emitting `currentCellChanged`, which is what
+drives the detail panel — and applies the SELECTION only afterwards. So anything asked
+about the selection from that handler reads the PREVIOUS one. Compounding it,
+`QTableWidget::selectedItems()` skips rows hidden by a search box, so the stale answer is
+*empty* exactly when the previously selected row has just been filtered out. The binder
+guide's three row actions (Insert blank / Move… / Scroll to page) were wired that way and
+went dead on the first click after a filter — and on the very first click after opening a
+guide, when nothing is selected yet — until some unrelated event (clearing the search)
+recomputed them, which is precisely the journey "Scroll to page" exists for.
+`OwnedCardsView`, `BindersPage` and `WishlistView` were already on
+`itemSelectionChanged`; `BinderView` now is too (`updateRowActionButtons`, which is also
+the one place its three per-button updates are called from, so a fourth can't be wired to
+two of the three). Keep the panel on `currentCellChanged` — it reads a row index, not the
+selection — and remember that a `blockSignals` around `setCurrentCell` suppresses BOTH,
+so those paths must recompute the state explicitly (`reselectRow`/`repopulate` do).
+Verifying this needs no GUI drive-through, which is blocked here: a throwaway
+`QApplication` under `QT_QPA_PLATFORM=offscreen` that posts a `QMouseEvent` at
+`visualItemRect(...).center()` on the viewport prints the signal order and both answers.
+
+The hidden-row half of that trap bites anywhere `selectedItems()` is used to mean "was
+something highlighted", as opposed to "is there a usable row on screen". A row-action
+gate wants the second and rightly uses it; `repopulate()`'s `hadSelection` wants the
+first and must use `selectionModel()->hasSelection()`, which doesn't skip hidden rows —
+otherwise a refresh while the search hides the selected row skips the restore-by-identity
+block entirely and leaves the highlight on a stale ROW INDEX over the rebuilt vector.
+
 Two rules keep a header-click cheap and correct. **A sort is a pure in-memory
 reorder — it must not re-hit storage.** Split each view's "load data" from its
 "sort + rebuild rows": the data load (`reload()`/`refresh()`) queries and then
